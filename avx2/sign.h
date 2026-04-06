@@ -1,0 +1,37 @@
+/*
+ * sign.h - Signature API for NGCC_SIGN.
+ *
+ * Provides key generation, signing, and verification.
+ */
+
+#ifndef NGCC_SIGN_SIGN_H
+#define NGCC_SIGN_SIGN_H
+
+#include <stddef.h>
+#include <stdint.h>
+#include "params.h"
+
+#define crypto_sign_keypair NGCC_SIGN_NAMESPACE(keypair)
+int crypto_sign_keypair(uint8_t *pk, uint8_t *sk);
+
+#define crypto_sign_signature NGCC_SIGN_NAMESPACE(signature)
+int crypto_sign_signature(uint8_t *sig, size_t *siglen,
+                          const uint8_t *m, size_t mlen,
+                          const uint8_t *sk);
+
+#define crypto_sign_verify NGCC_SIGN_NAMESPACE(verify)
+int crypto_sign_verify(const uint8_t *sig, size_t siglen,
+                       const uint8_t *m, size_t mlen,
+                       const uint8_t *pk);
+
+#define crypto_sign NGCC_SIGN_NAMESPACE(sign)
+int crypto_sign(uint8_t *sm, size_t *smlen,
+                const uint8_t *m, size_t mlen,
+                const uint8_t *sk);
+
+#define crypto_sign_open NGCC_SIGN_NAMESPACE(open)
+int crypto_sign_open(uint8_t *m, size_t *mlen,
+                     const uint8_t *sm, size_t smlen,
+                     const uint8_t *pk);
+
+#endif /* NGCC_SIGN_SIGN_H */

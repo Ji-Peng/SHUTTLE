@@ -28,13 +28,13 @@ static int sample_gauss_sigma128(int16_t *r, const uint8_t *rand,
                                  int16_t x, const uint8_t *signs,
                                  size_t idx) {
     uint32_t y = rand[0] & 0x3FU;
-    int32_t candidate = (int32_t)x * NGCC_SIGN_K + (int32_t)y;
+    int32_t candidate = (int32_t)x * NGCC_SIGN_GAUSS_K + (int32_t)y;
 
     uint64_t rand_tail = load_le64(rand + 1);
     uint8_t sign_r0 = rand_tail & 1;
     uint64_t rand_rej_63 = rand_tail >> 1;
 
-    uint32_t t = y + (uint32_t)(2 * NGCC_SIGN_K) * (uint32_t)x;
+    uint32_t t = y + (uint32_t)(2 * NGCC_SIGN_GAUSS_K) * (uint32_t)x;
     uint64_t num = (uint64_t)y * (uint64_t)t;
     uint64_t exp_q60 = num << 45;
 

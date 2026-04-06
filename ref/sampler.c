@@ -97,7 +97,7 @@ static int sample_gauss_sigma128(int16_t *r, const uint8_t *rand,
     uint32_t y = rand[0] & 0x3FU;
 
     /* candidate = x * 64 + y (unsigned magnitude) */
-    int32_t candidate = (int32_t)x * NGCC_SIGN_K + (int32_t)y;
+    int32_t candidate = (int32_t)x * NGCC_SIGN_GAUSS_K + (int32_t)y;
 
     /* sign_r0 + rejection from rand[1..8] */
     uint64_t rand_tail = load_le64(rand + 1);
@@ -112,7 +112,7 @@ static int sample_gauss_sigma128(int16_t *r, const uint8_t *rand,
      * Max: 63*(63+128*22) = 63*2879 = 181377
      * 181377 << 45 = 6.38e18 < 2^63, fits in uint64_t.
      */
-    uint32_t t = y + (uint32_t)(2 * NGCC_SIGN_K) * (uint32_t)x;
+    uint32_t t = y + (uint32_t)(2 * NGCC_SIGN_GAUSS_K) * (uint32_t)x;
     uint64_t num = (uint64_t)y * (uint64_t)t;
     uint64_t exp_q60 = num << 45;  /* / 2^15 * 2^60 = << 45 */
 
