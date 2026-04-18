@@ -152,7 +152,7 @@ int64_t polyvec_sq_norm(const polyvec *v);
 /**************************************************************/
 
 /*
- * NGCC public matrix structure:
+ * SHUTTLE public matrix structure:
  * The public matrix B = [a | A | I_m] is m x (1+l+m) = 2 x 6.
  * - a_gen: polyveck (m=2 polys), the first column
  * - A_gen: polyveck[L] (3 columns of m=2 polys each)

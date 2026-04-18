@@ -11,7 +11,7 @@
  * Output: ell = -ln(r_rand / 2^64) in Q62 fixed-point
  *         Range: [0, 64*ln(2)] ~ [0, 44.36], representable in Q62
  *
- * Precision: ~57 bits absolute (see docs/NGCC_Sign/ApproxLog.md)
+ * Precision: ~57 bits absolute (see the project ApproxLog notes)
  *
  * Method: CLZ range reduction + 64-entry table + degree-8 polynomial
  * All operations are constant-time (no data-dependent branches).

@@ -25,7 +25,7 @@
 #include <string.h>
 #include "rejsample.h"
 #include "approx_log.h"
-#include "approx_exp.h"  /* for ngcc_int128, ngcc_uint128 */
+#include "approx_exp.h"  /* for wide_int128, wide_uint128 */
 
 /* ============================================================
  * Constants
@@ -146,7 +146,7 @@ static void polyvec_cyclic_shift(polyvec *v, const polyvec *sk, unsigned int j) 
  *
  * Returns the scalar sum: sum_{i=0}^{VECLEN-1} sum_{k=0}^{N-1} z[i][k] * v[i][k]
  *
- * Uses int64_t accumulator. For NGCC parameters:
+ * Uses int64_t accumulator. For SHUTTLE parameters:
  *   |z[i][k]| <= ~5000 (Gaussian bounded), |v[i][k]| <= 26 (secret key bound)
  *   Max single product: 5000 * 26 = 130000
  *   Max sum: 6 * 256 * 130000 = 199,680,000
@@ -211,7 +211,7 @@ static int irs_step(polyvec *z,
      * u_real = inner / sigma^2, where sigma^2 = 2^14 = 16384.
      * u_q62 = u_real * 2^62 = inner * 2^62 / 2^14 = inner * 2^48.
      *
-     * For NGCC parameters, |inner| can reach ~2e8 (Cauchy-Schwarz bound),
+    * For SHUTTLE parameters, |inner| can reach ~2e8 (Cauchy-Schwarz bound),
      * so inner * 2^48 can reach ~5.6e22, which overflows int64 (max ~9.2e18).
      * We compute in __int128 and clamp: when |u| is very large, the step
      * always rejects (signing restarts), so clamping is safe.
@@ -219,11 +219,11 @@ static int irs_step(polyvec *z,
     int64_t inner = polyvec_inner_product(z, v);
 
     /* u_q62 = inner * 2^48 via __int128, then clamp to int64 */
-    ngcc_int128 u_wide = (ngcc_int128)inner << 48;
+    wide_int128 u_wide = (wide_int128)inner << 48;
     int64_t u_q62;
-    if (u_wide > (ngcc_int128)INT64_MAX)
+    if (u_wide > (wide_int128)INT64_MAX)
         u_q62 = INT64_MAX;
-    else if (u_wide < (ngcc_int128)INT64_MIN)
+    else if (u_wide < (wide_int128)INT64_MIN)
         u_q62 = INT64_MIN;
     else
         u_q62 = (int64_t)u_wide;
@@ -232,7 +232,7 @@ static int irs_step(polyvec *z,
     int64_t ell = approx_neg_ln(r_rand);
 
     /* Step 3: Acceptance check: ell >= ln_M */
-    /* If ell < ln_M, reject. For NGCC with alpha >= 3, ln_M ~ 0 (nearly always accepts). */
+    /* If ell < ln_M, reject. For SHUTTLE with alpha >= 3, ln_M ~ 0 (nearly always accepts). */
     if (ell < ln_M_q62) {
         return 0;
     }

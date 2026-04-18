@@ -26,15 +26,15 @@
 
 #if defined(__GNUC__) || defined(__clang__)
 
-__extension__ typedef unsigned __int128 ngcc_uint128;
-__extension__ typedef __int128 ngcc_int128;
+__extension__ typedef unsigned __int128 wide_uint128;
+__extension__ typedef __int128 wide_int128;
 
 static inline uint64_t mulh64(uint64_t a, uint64_t b) {
-    return (uint64_t)(((ngcc_uint128)a * b) >> 64);
+    return (uint64_t)(((wide_uint128)a * b) >> 64);
 }
 
 static inline int64_t smulh64(int64_t a, int64_t b) {
-    return (int64_t)(((ngcc_int128)a * b) >> 64);
+    return (int64_t)(((wide_int128)a * b) >> 64);
 }
 
 #elif defined(_MSC_VER)

@@ -34,7 +34,7 @@ int main(void) {
     /* ---- 1. sampler_sigma2 (batched CDT, BATCH=16) ---- */
     {
         uint8_t cdt_rand[SIGMA2_RAND_BYTES];
-        int16_t z[NGCC_GAUSS_BATCH];
+        int16_t z[GAUSS_BATCH];
         randombytes(cdt_rand, sizeof(cdt_rand));
 
         for (int i = 0; i < NTESTS; i++) {

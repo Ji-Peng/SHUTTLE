@@ -12,7 +12,7 @@
 #include <immintrin.h>
 
 /* Compile-time check: AVX2 sampler_sigma2 is tuned for BATCH=16 (2x8) */
-typedef char static_assert_batch16[(NGCC_GAUSS_BATCH == 16) ? 1 : -1];
+typedef char static_assert_batch16[(GAUSS_BATCH == 16) ? 1 : -1];
 
 /* ============================================================
  * RCDT Table: 8-lane AVX2 broadcast format.
@@ -117,7 +117,7 @@ int sampler_sigma2(int16_t *z_out, const uint8_t *rand) {
     packed = _mm256_permute4x64_epi64(packed, 0xD8);  /* [0,2,1,3] */
     _mm256_storeu_si256((__m256i *)z_out, packed);
 
-    return NGCC_GAUSS_BATCH;
+    return GAUSS_BATCH;
 }
 
 /* ============================================================
@@ -172,7 +172,7 @@ void sample_gauss_N(int16_t *r,
     size_t avail = init_nblocks * STREAM256_BLOCKBYTES - sign_bytes;
 
     size_t coefcnt = 0;
-    int16_t z[NGCC_GAUSS_BATCH];
+    int16_t z[GAUSS_BATCH];
 
     while (coefcnt < len) {
         if (avail < (size_t)MINIBATCH_RAND_BYTES) {
@@ -187,7 +187,7 @@ void sample_gauss_N(int16_t *r,
         pos += SIGMA2_RAND_BYTES;
         avail -= SIGMA2_RAND_BYTES;
 
-        for (int j = 0; j < NGCC_GAUSS_BATCH && coefcnt < len; j++) {
+        for (int j = 0; j < GAUSS_BATCH && coefcnt < len; j++) {
             int accepted = sample_gauss_sigma128(&r[coefcnt],
                                                   buf + pos, z[j],
                                                   signs, coefcnt);

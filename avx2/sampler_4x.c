@@ -15,7 +15,7 @@
  * sign_bytes(32) + 308 * (192/16 + 9) = 32 + 308*21 = 6500 bytes
  * ceil(6500/136) = 48 blocks. Use 56 blocks = 7616 bytes for margin.
  *
- * Note: NGCC has smaller per-attempt bytes (9 vs 20) than SM_Sign,
+ * Note: SHUTTLE has smaller per-attempt bytes (9 vs 20) than SM_Sign,
  * so we need fewer blocks.
  */
 #define INIT_4X_NBLOCKS 56
@@ -126,12 +126,12 @@ void sample_gauss_N_4x(int16_t *r0, int16_t *r1,
             if (coefcnt[j] >= len[j]) continue;
             if (avail[j] < (size_t)MINIBATCH_RAND_BYTES) continue;
 
-            int16_t z[NGCC_GAUSS_BATCH];
+            int16_t z[GAUSS_BATCH];
             sampler_sigma2(z, buf[j] + pos[j]);
             pos[j] += SIGMA2_RAND_BYTES;
             avail[j] -= SIGMA2_RAND_BYTES;
 
-            for (int k = 0; k < NGCC_GAUSS_BATCH && coefcnt[j] < len[j]; k++) {
+            for (int k = 0; k < GAUSS_BATCH && coefcnt[j] < len[j]; k++) {
                 int accepted = sample_gauss_sigma128(
                     &r[j][coefcnt[j]], buf[j] + pos[j], z[k],
                     signs[j], coefcnt[j]);

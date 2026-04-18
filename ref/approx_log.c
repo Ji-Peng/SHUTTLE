@@ -1,7 +1,7 @@
 /*
  * approx_log.c - ApproxNegLn implementation for SHUTTLE.
  *
- * Algorithm (from docs/NGCC_Sign/ApproxLog.md):
+ * Algorithm documented in the project ApproxLog notes:
  *   Given r_rand in (0, 2^64) representing r in (0, 1):
  *
  *   1) Range Reduction (CLZ):
@@ -36,7 +36,7 @@
  */
 
 #include "approx_log.h"
-#include "approx_exp.h"  /* for mulh64, smulh64, ngcc_uint128, ngcc_int128 */
+#include "approx_exp.h"  /* for mulh64, smulh64, wide_uint128, wide_int128 */
 
 /* ============================================================
  * Constants
@@ -211,7 +211,7 @@ static const int64_t table_inv[64] = {
  * Both a, b are Q62; result is Q62.
  * ============================================================ */
 static inline int64_t mul_q62(int64_t a, int64_t b) {
-    return (int64_t)(((ngcc_int128)a * b) >> 62);
+    return (int64_t)(((wide_int128)a * b) >> 62);
 }
 
 /* ============================================================
@@ -277,7 +277,7 @@ int64_t approx_neg_ln(uint64_t r_rand) {
      * rem is in [0, 2^57), InvD is in [2^61, 2^62], so the product fits in 128 bits.
      * s is in [0, 1/64) in Q62, i.e., s < 2^62/64 = 2^56.
      */
-    int64_t s = (int64_t)(((ngcc_uint128)rem * (uint64_t)InvD) >> 63);
+    int64_t s = (int64_t)(((wide_uint128)rem * (uint64_t)InvD) >> 63);
 
     /*
      * Step 5: Horner Evaluation of Q(s) = c_0 + c_1*s + ... + c_8*s^8.
@@ -316,18 +316,18 @@ int64_t approx_neg_ln(uint64_t r_rand) {
 
     /* (e+1) * LN2_Q62 can be up to 64 * 3.2e18 ~ 2.04e20, which exceeds
      * int64 range (2^63 ~ 9.2e18). We compute in __int128 and clamp.
-     * For NGCC parameters, ell values exceeding int64 only occur for
+    * For SHUTTLE parameters, ell values exceeding int64 only occur for
      * extremely small r_rand, which always leads to acceptance (ell >> ln_M)
      * and lands in a parity-invariant region (ell' > c_99). Clamping is safe. */
-    ngcc_int128 ell_wide = (ngcc_int128)(int64_t)(e + 1) * (ngcc_int128)LN2_Q62
-                         - (ngcc_int128)ln_m;
+    wide_int128 ell_wide = (wide_int128)(int64_t)(e + 1) * (wide_int128)LN2_Q62
+                         - (wide_int128)ln_m;
 
-    /* Clamp to int64 range. For NGCC parameters, ell values that exceed
+    /* Clamp to int64 range. For SHUTTLE parameters, ell values that exceed
      * int64 max only occur for extremely small r_rand, and those values
      * always lead to acceptance (ell >> ln_M) and land in a parity-invariant
      * region (ell' > c_99). So clamping is safe. */
     int64_t ell;
-    if (ell_wide > (ngcc_int128)INT64_MAX)
+    if (ell_wide > (wide_int128)INT64_MAX)
         ell = INT64_MAX;
     else
         ell = (int64_t)ell_wide;

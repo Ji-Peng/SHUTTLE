@@ -38,9 +38,9 @@
  *                          length VECLEN=6, each polynomial has N=256 int32
  *                          coefficients.
  *   gamma_q62     [in]     ||sk||^2 / (2 * sigma^2) in Q62 fixed-point.
- *                          For NGCC: gamma = ||v||^2 / (2*128^2).
+ *                          For SHUTTLE: gamma = ||v||^2 / (2*128^2).
  *   ln_M_q62      [in]     ln(M_alpha) in Q62 fixed-point.
- *                          For NGCC with alpha >= 3, this is approximately 0.
+ *                          For SHUTTLE with alpha >= 3, this is approximately 0.
  *   rng_state     [in/out] SHAKE-256 state for squeezing random bytes.
  *                          Must be initialized and finalized before calling.
  *

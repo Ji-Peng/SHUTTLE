@@ -330,7 +330,7 @@ make clean && make
 ```
 
 Raw profiling outputs are saved in:
-- `agent/data/ngcc_sign_profile_ref.txt`
-- `agent/data/ngcc_sign_profile_avx2.txt`
-- `agent/data/ngcc_ref_benchmark_20260406.txt`
-- `agent/data/ngcc_avx2_benchmark_20260406.txt`
+- `agent/data/shuttle_sign_profile_ref.txt`
+- `agent/data/shuttle_sign_profile_avx2.txt`
+- `agent/data/shuttle_ref_benchmark_20260406.txt`
+- `agent/data/shuttle_avx2_benchmark_20260406.txt`

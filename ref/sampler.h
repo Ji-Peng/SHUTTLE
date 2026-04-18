@@ -13,7 +13,7 @@
  *
  * Unified buffer design:
  *   One SHAKE-256 stream per sample_gauss_N call produces ALL randomness
- *   (signs, CDT, y, rejection). Processing in mini-batches of NGCC_GAUSS_BATCH
+ *   (signs, CDT, y, rejection). Processing in mini-batches of GAUSS_BATCH
  *   attempts for low memory footprint. This ensures KAT compatibility between
  *   ref and AVX2 implementations.
  *
@@ -37,21 +37,21 @@
  * Mini-batch size (number of attempts per batch).
  * Must be a multiple of 8 for AVX2 register alignment.
  * ============================================================ */
-#ifndef NGCC_GAUSS_BATCH
-#define NGCC_GAUSS_BATCH 16
+#ifndef GAUSS_BATCH
+#define GAUSS_BATCH 16
 #endif
 
 /* CDT random bytes per mini-batch: 12 bytes/sample in AVX2 3x31 layout.
  *   Layout: groups of 8 samples, each group = 3 x 32 bytes (low, mid, high).
  *   BATCH=16: 2 groups x 96 bytes = 192 bytes. */
-#define SIGMA2_RAND_BYTES   (NGCC_GAUSS_BATCH * 12)
+#define SIGMA2_RAND_BYTES   (GAUSS_BATCH * 12)
 
 /* Per-attempt random bytes (excluding CDT):
  *   1 byte for y (6 bits) + 8 bytes for sign_r0+rejection = 9 bytes. */
 #define GAUSS_RAND_BYTES    9
 
 /* Total random bytes per mini-batch: CDT + attempts. */
-#define MINIBATCH_RAND_BYTES (SIGMA2_RAND_BYTES + NGCC_GAUSS_BATCH * GAUSS_RAND_BYTES)
+#define MINIBATCH_RAND_BYTES (SIGMA2_RAND_BYTES + GAUSS_BATCH * GAUSS_RAND_BYTES)
 
 /* SHAKE-256 blocks per refill (enough for one mini-batch). */
 #define SQUEEZE_NBLOCKS \
@@ -91,9 +91,9 @@ static inline uint32_t ct_lt_u32(uint32_t a, uint32_t b) {
  * Batched CDT sampler: sampler_sigma2 (pure function)
  *
  * Input:  rand - SIGMA2_RAND_BYTES random bytes in AVX2-friendly layout.
- * Output: z_out - NGCC_GAUSS_BATCH int16_t values in [0, 22].
+ * Output: z_out - GAUSS_BATCH int16_t values in [0, 22].
  *         Internal computation in 32-bit for precision.
- * Returns: NGCC_GAUSS_BATCH (always).
+ * Returns: GAUSS_BATCH (always).
  * ============================================================ */
 int sampler_sigma2(int16_t *z_out, const uint8_t *rand);
 

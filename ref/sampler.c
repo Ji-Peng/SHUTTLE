@@ -6,7 +6,7 @@
  *
  * Unified buffer design: one SHAKE-256 stream per sample_gauss_N call
  * produces ALL randomness (signs, CDT, y, rejection). Processing in
- * mini-batches of NGCC_GAUSS_BATCH attempts for low memory (~0.7 KB buffer).
+ * mini-batches of GAUSS_BATCH attempts for low memory (~0.7 KB buffer).
  *
  * KAT-compatible with the AVX2 implementation: same SHAKE consumption order.
  */
@@ -59,7 +59,7 @@ static const uint32_t RCDT_3x31[RCDT_ENTRIES][3] = {
  * Internal computation in 32-bit. Output stored as int16_t.
  * ============================================================ */
 int sampler_sigma2(int16_t *z_out, const uint8_t *rand) {
-    for (int s = 0; s < NGCC_GAUSS_BATCH; s++) {
+    for (int s = 0; s < GAUSS_BATCH; s++) {
         int group = s >> 3;          /* s / 8 */
         int lane  = s & 7;           /* s % 8 */
         int byte_base = group * 96 + lane * 4;
@@ -78,7 +78,7 @@ int sampler_sigma2(int16_t *z_out, const uint8_t *rand) {
         }
         z_out[s] = (int16_t)z;
     }
-    return NGCC_GAUSS_BATCH;
+    return GAUSS_BATCH;
 }
 
 /* ============================================================
@@ -140,7 +140,7 @@ static int sample_gauss_sigma128(int16_t *r, const uint8_t *rand,
  *   [0 .. len/8-1]:    sign bytes (one bit per accepted sample)
  *   [len/8 .. ]:       repeating mini-batches:
  *     [SIGMA2_RAND_BYTES bytes]    CDT randomness (AVX2-friendly layout)
- *     [NGCC_GAUSS_BATCH * 9 bytes] y + rejection per attempt
+ *     [GAUSS_BATCH * 9 bytes] y + rejection per attempt
  *
  * Buffer management:
  *   ~0.7 KB buffer (for BATCH=16), refilled with SQUEEZE_NBLOCKS blocks.
@@ -167,7 +167,7 @@ void sample_gauss_N(int16_t *r,
 
     /* Mini-batch loop */
     size_t coefcnt = 0;
-    int16_t z[NGCC_GAUSS_BATCH];
+    int16_t z[GAUSS_BATCH];
 
     while (coefcnt < len) {
         /* Refill buffer if not enough for a full mini-batch */
@@ -184,8 +184,8 @@ void sample_gauss_N(int16_t *r,
         pos += SIGMA2_RAND_BYTES;
         avail -= SIGMA2_RAND_BYTES;
 
-        /* Process NGCC_GAUSS_BATCH attempts */
-        for (int j = 0; j < NGCC_GAUSS_BATCH && coefcnt < len; j++) {
+        /* Process GAUSS_BATCH attempts */
+        for (int j = 0; j < GAUSS_BATCH && coefcnt < len; j++) {
             int accepted = sample_gauss_sigma128(&r[coefcnt],
                                                   buf + pos, z[j],
                                                   signs, coefcnt);
