@@ -1,5 +1,5 @@
 /*
- * approx_log.h - ApproxNegLn module for NGCC_SIGN rejection sampling.
+ * approx_log.h - ApproxNegLn module for SHUTTLE rejection sampling.
  *
  * Computes -ln(r_rand) in Q62 fixed-point using:
  *   1) CLZ range reduction: r_rand = 2^{-(e+1)} * m_frac, m_frac in [1, 2)
@@ -17,8 +17,8 @@
  * All operations are constant-time (no data-dependent branches).
  */
 
-#ifndef NGCC_SIGN_APPROX_LOG_H
-#define NGCC_SIGN_APPROX_LOG_H
+#ifndef SHUTTLE_APPROX_LOG_H
+#define SHUTTLE_APPROX_LOG_H
 
 #include <stdint.h>
 
@@ -32,4 +32,4 @@
  */
 int64_t approx_neg_ln(uint64_t r_rand);
 
-#endif /* NGCC_SIGN_APPROX_LOG_H */
+#endif /* SHUTTLE_APPROX_LOG_H */

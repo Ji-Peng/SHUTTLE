@@ -1,6 +1,6 @@
-# NGCC_SIGN: Implementation and Benchmark Report
+# SHUTTLE: Implementation and Benchmark Report
 
-This repository contains the reference (`ref/`) and AVX2-optimized (`avx2/`) implementations of the **NGCC_SIGN** lattice-based post-quantum digital signature scheme.
+This repository contains the reference (`ref/`) and AVX2-optimized (`avx2/`) implementations of the **SHUTTLE** lattice-based post-quantum digital signature scheme.
 
 ## Test Environment
 

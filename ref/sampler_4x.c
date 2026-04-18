@@ -10,7 +10,7 @@
 
 void sample_gauss_N_4x(int16_t *r0, int16_t *r1,
                         int16_t *r2, int16_t *r3,
-                        const uint8_t seed[NGCC_SIGN_SEEDBYTES],
+                        const uint8_t seed[SHUTTLE_SEEDBYTES],
                         uint64_t nonce0, uint64_t nonce1,
                         uint64_t nonce2, uint64_t nonce3,
                         size_t len0, size_t len1,

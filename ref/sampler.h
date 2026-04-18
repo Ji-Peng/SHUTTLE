@@ -1,5 +1,5 @@
 /*
- * sampler.h - Discrete Gaussian sampler for NGCC_SIGN.
+ * sampler.h - Discrete Gaussian sampler for SHUTTLE.
  *
  * Algorithm (BLISS-style convolution):
  *   sigma = 128 = 2^7, decomposed as sigma = k * sigma_2 where k = 2^6, sigma_2 = 2.
@@ -20,8 +20,8 @@
  * Renyi divergence from ideal: 1 + 2^{-93.85}
  */
 
-#ifndef NGCC_SIGN_SAMPLER_H
-#define NGCC_SIGN_SAMPLER_H
+#ifndef SHUTTLE_SAMPLER_H
+#define SHUTTLE_SAMPLER_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -107,7 +107,7 @@ int sampler_sigma2(int16_t *z_out, const uint8_t *rand);
  * One nonce per call. KAT-compatible between ref and AVX2.
  * ============================================================ */
 void sample_gauss_N(int16_t *r,
-                    const uint8_t seed[NGCC_SIGN_SEEDBYTES],
+                    const uint8_t seed[SHUTTLE_SEEDBYTES],
                     uint64_t nonce, size_t len);
 
 /* ============================================================
@@ -121,10 +121,10 @@ void sample_gauss_N(int16_t *r,
  * ============================================================ */
 void sample_gauss_N_4x(int16_t *r0, int16_t *r1,
                         int16_t *r2, int16_t *r3,
-                        const uint8_t seed[NGCC_SIGN_SEEDBYTES],
+                        const uint8_t seed[SHUTTLE_SEEDBYTES],
                         uint64_t nonce0, uint64_t nonce1,
                         uint64_t nonce2, uint64_t nonce3,
                         size_t len0, size_t len1,
                         size_t len2, size_t len3);
 
-#endif /* NGCC_SIGN_SAMPLER_H */
+#endif /* SHUTTLE_SAMPLER_H */

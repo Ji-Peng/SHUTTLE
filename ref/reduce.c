@@ -15,8 +15,8 @@
 int32_t montgomery_reduce(int64_t a) {
   int32_t t;
 
-  t = (int64_t)(int32_t)a * NGCC_SIGN_QINV;
-  t = (a - (int64_t)t * NGCC_SIGN_Q) >> 32;
+  t = (int64_t)(int32_t)a * SHUTTLE_QINV;
+  t = (a - (int64_t)t * SHUTTLE_Q) >> 32;
   return t;
 }
 
@@ -36,7 +36,7 @@ int32_t reduce32(int32_t a) {
   int32_t t;
 
   t = (a + (1 << 13)) >> 14;
-  t = a - t * NGCC_SIGN_Q;
+  t = a - t * SHUTTLE_Q;
   return t;
 }
 
@@ -50,7 +50,7 @@ int32_t reduce32(int32_t a) {
 * Returns r.
 **************************************************/
 int32_t caddq(int32_t a) {
-  a += (a >> 31) & NGCC_SIGN_Q;
+  a += (a >> 31) & SHUTTLE_Q;
   return a;
 }
 

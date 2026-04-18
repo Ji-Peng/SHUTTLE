@@ -1,5 +1,5 @@
 /*
- * speed_sampler.c - Performance benchmarks for NGCC_SIGN components.
+ * speed_sampler.c - Performance benchmarks for SHUTTLE components.
  *
  * Benchmarks:
  *   1) sampler_sigma2 (batched CDT)
@@ -22,14 +22,14 @@
 #define N 256
 
 int main(void) {
-    uint8_t seed[NGCC_SIGN_SEEDBYTES];
+    uint8_t seed[SHUTTLE_SEEDBYTES];
     int16_t r[N];
     uint64_t t[NTESTS];
 
-    randombytes(seed, NGCC_SIGN_SEEDBYTES);
+    randombytes(seed, SHUTTLE_SEEDBYTES);
 
-    printf("=== NGCC_SIGN Component Benchmarks (sigma=%d) ===\n\n",
-           NGCC_SIGN_SIGMA);
+    printf("=== SHUTTLE Component Benchmarks (sigma=%d) ===\n\n",
+           SHUTTLE_SIGMA);
 
     /* ---- 1. sampler_sigma2 (batched CDT, BATCH=16) ---- */
     {

@@ -1,5 +1,5 @@
-#ifndef NGCC_SIGN_POLYVEC_H
-#define NGCC_SIGN_POLYVEC_H
+#ifndef SHUTTLE_POLYVEC_H
+#define SHUTTLE_POLYVEC_H
 
 #include <stdint.h>
 #include "params.h"
@@ -11,140 +11,140 @@
 
 /* Vector of L polynomials (secret s-vector) */
 typedef struct {
-  poly vec[NGCC_SIGN_L];
+  poly vec[SHUTTLE_L];
 } polyvecl;
 
 /* Vector of M polynomials (secret e-vector, public b) */
 typedef struct {
-  poly vec[NGCC_SIGN_M];
+  poly vec[SHUTTLE_M];
 } polyveck;
 
 /* Vector of VECLEN=1+L+M polynomials (full secret key [1,s,e]) */
 typedef struct {
-  poly vec[NGCC_SIGN_VECLEN];
+  poly vec[SHUTTLE_VECLEN];
 } polyvec;
 
 /**************************************************************/
 /*** polyvecl operations (length L = 3)                     ***/
 /**************************************************************/
 
-#define polyvecl_uniform_eta NGCC_SIGN_NAMESPACE(polyvecl_uniform_eta)
-void polyvecl_uniform_eta(polyvecl *v, const uint8_t seed[NGCC_SIGN_CRHBYTES],
+#define polyvecl_uniform_eta SHUTTLE_NAMESPACE(polyvecl_uniform_eta)
+void polyvecl_uniform_eta(polyvecl *v, const uint8_t seed[SHUTTLE_CRHBYTES],
                           uint16_t nonce);
 
-#define polyvecl_reduce NGCC_SIGN_NAMESPACE(polyvecl_reduce)
+#define polyvecl_reduce SHUTTLE_NAMESPACE(polyvecl_reduce)
 void polyvecl_reduce(polyvecl *v);
 
-#define polyvecl_caddq NGCC_SIGN_NAMESPACE(polyvecl_caddq)
+#define polyvecl_caddq SHUTTLE_NAMESPACE(polyvecl_caddq)
 void polyvecl_caddq(polyvecl *v);
 
-#define polyvecl_add NGCC_SIGN_NAMESPACE(polyvecl_add)
+#define polyvecl_add SHUTTLE_NAMESPACE(polyvecl_add)
 void polyvecl_add(polyvecl *w, const polyvecl *u, const polyvecl *v);
 
-#define polyvecl_sub NGCC_SIGN_NAMESPACE(polyvecl_sub)
+#define polyvecl_sub SHUTTLE_NAMESPACE(polyvecl_sub)
 void polyvecl_sub(polyvecl *w, const polyvecl *u, const polyvecl *v);
 
-#define polyvecl_ntt NGCC_SIGN_NAMESPACE(polyvecl_ntt)
+#define polyvecl_ntt SHUTTLE_NAMESPACE(polyvecl_ntt)
 void polyvecl_ntt(polyvecl *v);
 
-#define polyvecl_invntt_tomont NGCC_SIGN_NAMESPACE(polyvecl_invntt_tomont)
+#define polyvecl_invntt_tomont SHUTTLE_NAMESPACE(polyvecl_invntt_tomont)
 void polyvecl_invntt_tomont(polyvecl *v);
 
 #define polyvecl_pointwise_poly_montgomery \
-        NGCC_SIGN_NAMESPACE(polyvecl_pointwise_poly_montgomery)
+        SHUTTLE_NAMESPACE(polyvecl_pointwise_poly_montgomery)
 void polyvecl_pointwise_poly_montgomery(polyvecl *r, const poly *a,
                                         const polyvecl *v);
 
 #define polyvecl_pointwise_acc_montgomery \
-        NGCC_SIGN_NAMESPACE(polyvecl_pointwise_acc_montgomery)
+        SHUTTLE_NAMESPACE(polyvecl_pointwise_acc_montgomery)
 void polyvecl_pointwise_acc_montgomery(poly *w,
                                        const polyvecl *u,
                                        const polyvecl *v);
 
-#define polyvecl_chknorm NGCC_SIGN_NAMESPACE(polyvecl_chknorm)
+#define polyvecl_chknorm SHUTTLE_NAMESPACE(polyvecl_chknorm)
 int polyvecl_chknorm(const polyvecl *v, int32_t B);
 
-#define polyvecl_sq_norm NGCC_SIGN_NAMESPACE(polyvecl_sq_norm)
+#define polyvecl_sq_norm SHUTTLE_NAMESPACE(polyvecl_sq_norm)
 int64_t polyvecl_sq_norm(const polyvecl *v);
 
 /**************************************************************/
 /*** polyveck operations (length M = 2)                     ***/
 /**************************************************************/
 
-#define polyveck_uniform_eta NGCC_SIGN_NAMESPACE(polyveck_uniform_eta)
-void polyveck_uniform_eta(polyveck *v, const uint8_t seed[NGCC_SIGN_CRHBYTES],
+#define polyveck_uniform_eta SHUTTLE_NAMESPACE(polyveck_uniform_eta)
+void polyveck_uniform_eta(polyveck *v, const uint8_t seed[SHUTTLE_CRHBYTES],
                           uint16_t nonce);
 
-#define polyveck_reduce NGCC_SIGN_NAMESPACE(polyveck_reduce)
+#define polyveck_reduce SHUTTLE_NAMESPACE(polyveck_reduce)
 void polyveck_reduce(polyveck *v);
 
-#define polyveck_caddq NGCC_SIGN_NAMESPACE(polyveck_caddq)
+#define polyveck_caddq SHUTTLE_NAMESPACE(polyveck_caddq)
 void polyveck_caddq(polyveck *v);
 
-#define polyveck_add NGCC_SIGN_NAMESPACE(polyveck_add)
+#define polyveck_add SHUTTLE_NAMESPACE(polyveck_add)
 void polyveck_add(polyveck *w, const polyveck *u, const polyveck *v);
 
-#define polyveck_sub NGCC_SIGN_NAMESPACE(polyveck_sub)
+#define polyveck_sub SHUTTLE_NAMESPACE(polyveck_sub)
 void polyveck_sub(polyveck *w, const polyveck *u, const polyveck *v);
 
-#define polyveck_ntt NGCC_SIGN_NAMESPACE(polyveck_ntt)
+#define polyveck_ntt SHUTTLE_NAMESPACE(polyveck_ntt)
 void polyveck_ntt(polyveck *v);
 
-#define polyveck_invntt_tomont NGCC_SIGN_NAMESPACE(polyveck_invntt_tomont)
+#define polyveck_invntt_tomont SHUTTLE_NAMESPACE(polyveck_invntt_tomont)
 void polyveck_invntt_tomont(polyveck *v);
 
 #define polyveck_pointwise_poly_montgomery \
-        NGCC_SIGN_NAMESPACE(polyveck_pointwise_poly_montgomery)
+        SHUTTLE_NAMESPACE(polyveck_pointwise_poly_montgomery)
 void polyveck_pointwise_poly_montgomery(polyveck *r, const poly *a,
                                         const polyveck *v);
 
-#define polyveck_chknorm NGCC_SIGN_NAMESPACE(polyveck_chknorm)
+#define polyveck_chknorm SHUTTLE_NAMESPACE(polyveck_chknorm)
 int polyveck_chknorm(const polyveck *v, int32_t B);
 
-#define polyveck_sq_norm NGCC_SIGN_NAMESPACE(polyveck_sq_norm)
+#define polyveck_sq_norm SHUTTLE_NAMESPACE(polyveck_sq_norm)
 int64_t polyveck_sq_norm(const polyveck *v);
 
-#define polyveck_decompose NGCC_SIGN_NAMESPACE(polyveck_decompose)
+#define polyveck_decompose SHUTTLE_NAMESPACE(polyveck_decompose)
 void polyveck_decompose(polyveck *v1, polyveck *v0, const polyveck *v);
 
-#define polyveck_make_hint NGCC_SIGN_NAMESPACE(polyveck_make_hint)
+#define polyveck_make_hint SHUTTLE_NAMESPACE(polyveck_make_hint)
 unsigned int polyveck_make_hint(polyveck *h,
                                 const polyveck *v0,
                                 const polyveck *v1);
 
-#define polyveck_use_hint NGCC_SIGN_NAMESPACE(polyveck_use_hint)
+#define polyveck_use_hint SHUTTLE_NAMESPACE(polyveck_use_hint)
 void polyveck_use_hint(polyveck *w, const polyveck *v, const polyveck *h);
 
-#define polyveck_pack_w1 NGCC_SIGN_NAMESPACE(polyveck_pack_w1)
-void polyveck_pack_w1(uint8_t r[NGCC_SIGN_M * NGCC_SIGN_POLYW1_PACKEDBYTES],
+#define polyveck_pack_w1 SHUTTLE_NAMESPACE(polyveck_pack_w1)
+void polyveck_pack_w1(uint8_t r[SHUTTLE_M * SHUTTLE_POLYW1_PACKEDBYTES],
                       const polyveck *w1);
 
 /**************************************************************/
 /*** polyvec operations (full length VECLEN = 6)            ***/
 /**************************************************************/
 
-#define polyvec_ntt NGCC_SIGN_NAMESPACE(polyvec_ntt)
+#define polyvec_ntt SHUTTLE_NAMESPACE(polyvec_ntt)
 void polyvec_ntt(polyvec *v);
 
-#define polyvec_invntt_tomont NGCC_SIGN_NAMESPACE(polyvec_invntt_tomont)
+#define polyvec_invntt_tomont SHUTTLE_NAMESPACE(polyvec_invntt_tomont)
 void polyvec_invntt_tomont(polyvec *v);
 
-#define polyvec_reduce NGCC_SIGN_NAMESPACE(polyvec_reduce)
+#define polyvec_reduce SHUTTLE_NAMESPACE(polyvec_reduce)
 void polyvec_reduce(polyvec *v);
 
-#define polyvec_caddq NGCC_SIGN_NAMESPACE(polyvec_caddq)
+#define polyvec_caddq SHUTTLE_NAMESPACE(polyvec_caddq)
 void polyvec_caddq(polyvec *v);
 
-#define polyvec_add NGCC_SIGN_NAMESPACE(polyvec_add)
+#define polyvec_add SHUTTLE_NAMESPACE(polyvec_add)
 void polyvec_add(polyvec *w, const polyvec *u, const polyvec *v);
 
-#define polyvec_sub NGCC_SIGN_NAMESPACE(polyvec_sub)
+#define polyvec_sub SHUTTLE_NAMESPACE(polyvec_sub)
 void polyvec_sub(polyvec *w, const polyvec *u, const polyvec *v);
 
-#define polyvec_chknorm NGCC_SIGN_NAMESPACE(polyvec_chknorm)
+#define polyvec_chknorm SHUTTLE_NAMESPACE(polyvec_chknorm)
 int polyvec_chknorm(const polyvec *v, int32_t B);
 
-#define polyvec_sq_norm NGCC_SIGN_NAMESPACE(polyvec_sq_norm)
+#define polyvec_sq_norm SHUTTLE_NAMESPACE(polyvec_sq_norm)
 int64_t polyvec_sq_norm(const polyvec *v);
 
 /**************************************************************/
@@ -161,10 +161,10 @@ int64_t polyvec_sq_norm(const polyvec *v);
  * For matrix expansion, we generate a_gen and A_gen from seedA.
  */
 
-#define polyvec_matrix_expand NGCC_SIGN_NAMESPACE(polyvec_matrix_expand)
+#define polyvec_matrix_expand SHUTTLE_NAMESPACE(polyvec_matrix_expand)
 void polyvec_matrix_expand(polyveck *a_gen,
-                           polyveck A_gen[NGCC_SIGN_L],
-                           const uint8_t rho[NGCC_SIGN_SEEDBYTES]);
+                           polyveck A_gen[SHUTTLE_L],
+                           const uint8_t rho[SHUTTLE_SEEDBYTES]);
 
 /*
  * polyvec_matrix_pointwise_montgomery:
@@ -177,10 +177,10 @@ void polyvec_matrix_expand(polyveck *a_gen,
  * All inputs must be in NTT domain.
  */
 #define polyvec_matrix_pointwise_montgomery \
-        NGCC_SIGN_NAMESPACE(polyvec_matrix_pointwise_montgomery)
+        SHUTTLE_NAMESPACE(polyvec_matrix_pointwise_montgomery)
 void polyvec_matrix_pointwise_montgomery(polyveck *w,
                                          const polyveck *a_gen,
-                                         const polyveck A_gen[NGCC_SIGN_L],
+                                         const polyveck A_gen[SHUTTLE_L],
                                          const polyvec *v);
 
 #endif

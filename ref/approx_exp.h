@@ -1,5 +1,5 @@
 /*
- * approx_exp.h - ApproxExp module for NGCC_SIGN discrete Gaussian sampler.
+ * approx_exp.h - ApproxExp module for SHUTTLE discrete Gaussian sampler.
  *
  * Computes exp(-x) in Q63 fixed-point using the exp(+) approach (V2 variant):
  *   1) Transform: u = N*ln2 - x, so exp(-x) = exp(u) * 2^{-N}
@@ -15,8 +15,8 @@
  * Sufficient for sigma=128 sampler: max exponent ~5.535.
  */
 
-#ifndef NGCC_SIGN_APPROX_EXP_H
-#define NGCC_SIGN_APPROX_EXP_H
+#ifndef SHUTTLE_APPROX_EXP_H
+#define SHUTTLE_APPROX_EXP_H
 
 #include <stdint.h>
 
@@ -71,4 +71,4 @@ static inline int64_t smulh64(int64_t a, int64_t b) {
  */
 uint64_t approx_exp(uint64_t x_q60);
 
-#endif /* NGCC_SIGN_APPROX_EXP_H */
+#endif /* SHUTTLE_APPROX_EXP_H */

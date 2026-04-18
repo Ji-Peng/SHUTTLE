@@ -3,7 +3,7 @@
 #include "ntt.h"
 #include "reduce.h"
 
-static const int32_t zetas[NGCC_SIGN_N] = {
+static const int32_t zetas[SHUTTLE_N] = {
          0,    -6140,     5618,     3413,     6932,    -5375,    -3513,    -7157,
       2405,     3859,     7532,    -5530,     -484,     -387,    -6766,     3540,
      -1285,      972,     5205,    -7105,     5017,     -400,     3168,     5326,
@@ -44,15 +44,15 @@ static const int32_t zetas[NGCC_SIGN_N] = {
 * Description: Forward NTT, in-place. No modular reduction is performed after
 *              additions or subtractions. Output vector is in bitreversed order.
 *
-* Arguments:   - int32_t a[NGCC_SIGN_N]: input/output coefficient array
+* Arguments:   - int32_t a[SHUTTLE_N]: input/output coefficient array
 **************************************************/
-void ntt(int32_t a[NGCC_SIGN_N]) {
+void ntt(int32_t a[SHUTTLE_N]) {
   unsigned int len, start, j, k;
   int32_t zeta, t;
 
   k = 0;
   for(len = 128; len > 0; len >>= 1) {
-    for(start = 0; start < NGCC_SIGN_N; start = j + len) {
+    for(start = 0; start < SHUTTLE_N; start = j + len) {
       zeta = zetas[++k];
       for(j = start; j < start + len; ++j) {
         t = montgomery_reduce((int64_t)zeta * a[j + len]);
@@ -72,16 +72,16 @@ void ntt(int32_t a[NGCC_SIGN_N]) {
 *              Q in absolute value. Output coefficients are smaller than Q in
 *              absolute value.
 *
-* Arguments:   - int32_t a[NGCC_SIGN_N]: input/output coefficient array
+* Arguments:   - int32_t a[SHUTTLE_N]: input/output coefficient array
 **************************************************/
-void invntt_tomont(int32_t a[NGCC_SIGN_N]) {
+void invntt_tomont(int32_t a[SHUTTLE_N]) {
   unsigned int start, len, j, k;
   int32_t t, zeta;
   const int32_t f = 7306; /* mont^2/256 mod q */
 
   k = 256;
-  for(len = 1; len < NGCC_SIGN_N; len <<= 1) {
-    for(start = 0; start < NGCC_SIGN_N; start = j + len) {
+  for(len = 1; len < SHUTTLE_N; len <<= 1) {
+    for(start = 0; start < SHUTTLE_N; start = j + len) {
       zeta = -zetas[--k];
       for(j = start; j < start + len; ++j) {
         t = a[j];
@@ -92,7 +92,7 @@ void invntt_tomont(int32_t a[NGCC_SIGN_N]) {
     }
   }
 
-  for(j = 0; j < NGCC_SIGN_N; ++j) {
+  for(j = 0; j < SHUTTLE_N; ++j) {
     a[j] = montgomery_reduce((int64_t)f * a[j]);
   }
 }

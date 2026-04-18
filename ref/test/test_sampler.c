@@ -1,5 +1,5 @@
 /*
- * test_sampler.c - Test the NGCC_SIGN discrete Gaussian sampler.
+ * test_sampler.c - Test the SHUTTLE discrete Gaussian sampler.
  *
  * Tests:
  *   1) Basic statistical properties (mean ~0, variance ~sigma^2)
@@ -19,16 +19,16 @@
 #define N 256
 
 int main(void) {
-    uint8_t seed[NGCC_SIGN_SEEDBYTES];
+    uint8_t seed[SHUTTLE_SEEDBYTES];
     int16_t r[N];
     int ok = 1;
 
     /* Fixed seed for reproducibility */
-    memset(seed, 0x42, NGCC_SIGN_SEEDBYTES);
+    memset(seed, 0x42, SHUTTLE_SEEDBYTES);
 
     /* Test 1: Basic sampling and statistics */
-    printf("=== NGCC_SIGN Gaussian Sampler Test (sigma=%d, N=%d) ===\n\n",
-           NGCC_SIGN_SIGMA, N);
+    printf("=== SHUTTLE Gaussian Sampler Test (sigma=%d, N=%d) ===\n\n",
+           SHUTTLE_SIGMA, N);
 
     sample_gauss_N(r, seed, 0, N);
 
@@ -45,13 +45,13 @@ int main(void) {
 
     printf("Statistics:\n");
     printf("  Mean:     %.2f (expected ~0)\n", mean);
-    printf("  Variance: %.2f (expected ~%.2f)\n", var, (double)NGCC_SIGN_SIGMA * NGCC_SIGN_SIGMA);
-    printf("  Max|r|:   %d (bound: %d = 11*sigma)\n", max_abs, NGCC_SIGN_BOUND);
+    printf("  Variance: %.2f (expected ~%.2f)\n", var, (double)SHUTTLE_SIGMA * SHUTTLE_SIGMA);
+    printf("  Max|r|:   %d (bound: %d = 11*sigma)\n", max_abs, SHUTTLE_BOUND);
 
     /* Test 2: Bound check */
     printf("\nBound check: ");
     for (int i = 0; i < N; i++) {
-        if (r[i] > NGCC_SIGN_BOUND || r[i] < -NGCC_SIGN_BOUND) {
+        if (r[i] > SHUTTLE_BOUND || r[i] < -SHUTTLE_BOUND) {
             printf("FAIL (r[%d] = %d out of bounds!)\n", i, r[i]);
             ok = 0;
         }
@@ -97,7 +97,7 @@ int main(void) {
 
     /* Test 5: Larger statistical test with random seed */
     printf("\nLarge statistical test (10 x N=%d):\n", N);
-    randombytes(seed, NGCC_SIGN_SEEDBYTES);
+    randombytes(seed, SHUTTLE_SEEDBYTES);
     double total_mean = 0, total_var = 0;
     int total_max = 0;
     int total_samples = 10 * N;
@@ -109,7 +109,7 @@ int main(void) {
             total_var += (double)r[i] * r[i];
             int a = abs(r[i]);
             if (a > total_max) total_max = a;
-            if (r[i] > NGCC_SIGN_BOUND || r[i] < -NGCC_SIGN_BOUND) {
+            if (r[i] > SHUTTLE_BOUND || r[i] < -SHUTTLE_BOUND) {
                 printf("  ERROR: round %d, r[%d] = %d out of bounds!\n",
                        round, i, r[i]);
                 ok = 0;
@@ -121,7 +121,7 @@ int main(void) {
 
     printf("  Mean:     %.2f\n", total_mean);
     printf("  Variance: %.2f (expected ~%.2f)\n", total_var,
-           (double)NGCC_SIGN_SIGMA * NGCC_SIGN_SIGMA);
+           (double)SHUTTLE_SIGMA * SHUTTLE_SIGMA);
     printf("  Max|r|:   %d\n", total_max);
 
     printf("\n=== Overall: %s ===\n", ok ? "ALL PASSED" : "SOME FAILED");

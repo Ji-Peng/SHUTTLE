@@ -1,5 +1,5 @@
 /*
- * rejsample.c - Iterative Rejection Sampling for NGCC_SIGN.
+ * rejsample.c - Iterative Rejection Sampling for SHUTTLE.
  *
  * Implements Algorithm 6 (Simplified Log-Domain) from InteractiveRejection.tex.
  *
@@ -16,10 +16,10 @@
  * All operations are constant-time to prevent side-channel leakage.
  *
  * Key parameters:
- *   - sigma = NGCC_SIGN_SIGMA = 128, so sigma^2 = 16384
- *   - N = NGCC_SIGN_N = 256 (polynomial ring degree)
+ *   - sigma = SHUTTLE_SIGMA = 128, so sigma^2 = 16384
+ *   - N = SHUTTLE_N = 256 (polynomial ring degree)
  *   - VECLEN = 6 (full secret key vector length)
- *   - tau = NGCC_SIGN_TAU = 30 (challenge Hamming weight)
+ *   - tau = SHUTTLE_TAU = 30 (challenge Hamming weight)
  */
 
 #include <string.h>
@@ -121,7 +121,7 @@ static int interval_parity(int64_t ell_prime, int64_t abs_u, int64_t gamma) {
  * wrapped-around part due to the x^N + 1 relation.
  * ============================================================ */
 static void poly_cyclic_shift(poly *v, const poly *p, unsigned int j) {
-    unsigned int n = NGCC_SIGN_N;
+    unsigned int n = SHUTTLE_N;
     for (unsigned int k = 0; k < n; k++) {
         if (k >= j) {
             v->coeffs[k] = p->coeffs[k - j];
@@ -136,7 +136,7 @@ static void poly_cyclic_shift(poly *v, const poly *p, unsigned int j) {
  * of a polyvec (length VECLEN = 6).
  * ============================================================ */
 static void polyvec_cyclic_shift(polyvec *v, const polyvec *sk, unsigned int j) {
-    for (int i = 0; i < NGCC_SIGN_VECLEN; i++) {
+    for (int i = 0; i < SHUTTLE_VECLEN; i++) {
         poly_cyclic_shift(&v->vec[i], &sk->vec[i], j);
     }
 }
@@ -154,8 +154,8 @@ static void polyvec_cyclic_shift(polyvec *v, const polyvec *sk, unsigned int j) 
  * ============================================================ */
 static int64_t polyvec_inner_product(const polyvec *z, const polyvec *v) {
     int64_t sum = 0;
-    for (int i = 0; i < NGCC_SIGN_VECLEN; i++) {
-        for (int k = 0; k < NGCC_SIGN_N; k++) {
+    for (int i = 0; i < SHUTTLE_VECLEN; i++) {
+        for (int k = 0; k < SHUTTLE_N; k++) {
             sum += (int64_t)z->vec[i].coeffs[k] * (int64_t)v->vec[i].coeffs[k];
         }
     }
@@ -165,17 +165,17 @@ static int64_t polyvec_inner_product(const polyvec *z, const polyvec *v) {
 /* ============================================================
  * Extract challenge positions from the challenge polynomial c.
  *
- * The challenge polynomial has exactly NGCC_SIGN_TAU nonzero coefficients,
+ * The challenge polynomial has exactly SHUTTLE_TAU nonzero coefficients,
  * each in {-1, +1}. We extract their positions and signs.
  *
  * positions[i] = index where c has a nonzero coefficient
  * signs[i]     = +1 or -1 (the coefficient value)
  * ============================================================ */
-static void extract_challenge(unsigned int positions[NGCC_SIGN_TAU],
-                              int32_t signs[NGCC_SIGN_TAU],
+static void extract_challenge(unsigned int positions[SHUTTLE_TAU],
+                              int32_t signs[SHUTTLE_TAU],
                               const poly *c) {
     int count = 0;
-    for (int k = 0; k < NGCC_SIGN_N && count < NGCC_SIGN_TAU; k++) {
+    for (int k = 0; k < SHUTTLE_N && count < SHUTTLE_TAU; k++) {
         if (c->coeffs[k] != 0) {
             positions[count] = (unsigned int)k;
             signs[count] = c->coeffs[k];
@@ -283,8 +283,8 @@ static int irs_step(polyvec *z,
      *
      * sign_update is +1 or -1.
      */
-    for (int i = 0; i < NGCC_SIGN_VECLEN; i++) {
-        for (int k = 0; k < NGCC_SIGN_N; k++) {
+    for (int i = 0; i < SHUTTLE_VECLEN; i++) {
+        for (int k = 0; k < SHUTTLE_N; k++) {
             z->vec[i].coeffs[k] += sign_update * v->vec[i].coeffs[k];
         }
     }
@@ -314,8 +314,8 @@ static int irs_loop(polyvec *z,
                     keccak_state *rng_state) {
 
     /* Extract challenge positions and signs */
-    unsigned int positions[NGCC_SIGN_TAU];
-    int32_t signs[NGCC_SIGN_TAU];
+    unsigned int positions[SHUTTLE_TAU];
+    int32_t signs[SHUTTLE_TAU];
     extract_challenge(positions, signs, c);
 
     /* Temporary storage for the rotated secret key vector */
@@ -325,7 +325,7 @@ static int irs_loop(polyvec *z,
     uint8_t randbuf[8];
 
     /* Process each of the tau challenge monomials */
-    for (int step = 0; step < NGCC_SIGN_TAU; step++) {
+    for (int step = 0; step < SHUTTLE_TAU; step++) {
         unsigned int j = positions[step];
         int32_t c_sign = signs[step];
 
@@ -335,8 +335,8 @@ static int irs_loop(polyvec *z,
 
         /* Apply challenge sign: if c_sign == -1, negate all of v */
         if (c_sign == -1) {
-            for (int i = 0; i < NGCC_SIGN_VECLEN; i++) {
-                for (int k = 0; k < NGCC_SIGN_N; k++) {
+            for (int i = 0; i < SHUTTLE_VECLEN; i++) {
+                for (int k = 0; k < SHUTTLE_N; k++) {
                     v.vec[i].coeffs[k] = -v.vec[i].coeffs[k];
                 }
             }
@@ -392,7 +392,7 @@ int irs_sign(polyvec *z,
  * irs_sign_with_signs - IRS loop that also outputs sign choices.
  * ============================================================ */
 int irs_sign_with_signs(polyvec *z,
-                        int8_t sign_choices[NGCC_SIGN_TAU],
+                        int8_t sign_choices[SHUTTLE_TAU],
                         const poly *c,
                         const polyvec *sk_stretched,
                         int64_t gamma_q62,

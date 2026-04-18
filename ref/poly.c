@@ -18,7 +18,7 @@
 void poly_reduce(poly *a) {
   unsigned int i;
 
-  for(i = 0; i < NGCC_SIGN_N; ++i)
+  for(i = 0; i < SHUTTLE_N; ++i)
     a->coeffs[i] = reduce32(a->coeffs[i]);
 }
 
@@ -33,7 +33,7 @@ void poly_reduce(poly *a) {
 void poly_caddq(poly *a) {
   unsigned int i;
 
-  for(i = 0; i < NGCC_SIGN_N; ++i)
+  for(i = 0; i < SHUTTLE_N; ++i)
     a->coeffs[i] = caddq(a->coeffs[i]);
 }
 
@@ -49,7 +49,7 @@ void poly_caddq(poly *a) {
 void poly_add(poly *c, const poly *a, const poly *b) {
   unsigned int i;
 
-  for(i = 0; i < NGCC_SIGN_N; ++i)
+  for(i = 0; i < SHUTTLE_N; ++i)
     c->coeffs[i] = a->coeffs[i] + b->coeffs[i];
 }
 
@@ -66,7 +66,7 @@ void poly_add(poly *c, const poly *a, const poly *b) {
 void poly_sub(poly *c, const poly *a, const poly *b) {
   unsigned int i;
 
-  for(i = 0; i < NGCC_SIGN_N; ++i)
+  for(i = 0; i < SHUTTLE_N; ++i)
     c->coeffs[i] = a->coeffs[i] - b->coeffs[i];
 }
 
@@ -109,7 +109,7 @@ void poly_invntt_tomont(poly *a) {
 void poly_pointwise_montgomery(poly *c, const poly *a, const poly *b) {
   unsigned int i;
 
-  for(i = 0; i < NGCC_SIGN_N; ++i)
+  for(i = 0; i < SHUTTLE_N; ++i)
     c->coeffs[i] = montgomery_reduce((int64_t)a->coeffs[i] * b->coeffs[i]);
 }
 
@@ -128,10 +128,10 @@ int poly_chknorm(const poly *a, int32_t B) {
   unsigned int i;
   int32_t t;
 
-  if(B > (NGCC_SIGN_Q - 1) / 8)
+  if(B > (SHUTTLE_Q - 1) / 8)
     return 1;
 
-  for(i = 0; i < NGCC_SIGN_N; ++i) {
+  for(i = 0; i < SHUTTLE_N; ++i) {
     /* Absolute value */
     t = a->coeffs[i] >> 31;
     t = a->coeffs[i] - (t & 2 * a->coeffs[i]);
@@ -157,7 +157,7 @@ int64_t poly_sq_norm(const poly *a) {
   unsigned int i;
   int64_t norm = 0;
 
-  for(i = 0; i < NGCC_SIGN_N; ++i)
+  for(i = 0; i < SHUTTLE_N; ++i)
     norm += (int64_t)a->coeffs[i] * a->coeffs[i];
 
   return norm;
@@ -195,7 +195,7 @@ static unsigned int rej_uniform(int32_t *a,
     t |= (uint32_t)buf[pos++] << 8;
     t &= 0x3FFF; /* mask to 14 bits */
 
-    if(t < NGCC_SIGN_Q)
+    if(t < SHUTTLE_Q)
       a[ctr++] = t;
   }
 
@@ -217,7 +217,7 @@ static unsigned int rej_uniform(int32_t *a,
 /* Need at least 256 * 2 / 0.938 ~ 546 bytes; use 4 SHAKE128 blocks = 672 */
 #define POLY_UNIFORM_NBLOCKS ((546 + SHAKE128_RATE - 1) / SHAKE128_RATE)
 void poly_uniform(poly *a,
-                  const uint8_t seed[NGCC_SIGN_SEEDBYTES],
+                  const uint8_t seed[SHUTTLE_SEEDBYTES],
                   uint16_t nonce)
 {
   unsigned int i, ctr, off;
@@ -226,24 +226,24 @@ void poly_uniform(poly *a,
   keccak_state state;
 
   /* Absorb seed || nonce (LE 2 bytes) */
-  uint8_t inbuf[NGCC_SIGN_SEEDBYTES + 2];
-  memcpy(inbuf, seed, NGCC_SIGN_SEEDBYTES);
-  inbuf[NGCC_SIGN_SEEDBYTES + 0] = (uint8_t)(nonce);
-  inbuf[NGCC_SIGN_SEEDBYTES + 1] = (uint8_t)(nonce >> 8);
+  uint8_t inbuf[SHUTTLE_SEEDBYTES + 2];
+  memcpy(inbuf, seed, SHUTTLE_SEEDBYTES);
+  inbuf[SHUTTLE_SEEDBYTES + 0] = (uint8_t)(nonce);
+  inbuf[SHUTTLE_SEEDBYTES + 1] = (uint8_t)(nonce >> 8);
 
-  shake128_absorb_once(&state, inbuf, NGCC_SIGN_SEEDBYTES + 2);
+  shake128_absorb_once(&state, inbuf, SHUTTLE_SEEDBYTES + 2);
   shake128_squeezeblocks(buf, POLY_UNIFORM_NBLOCKS, &state);
 
-  ctr = rej_uniform(a->coeffs, NGCC_SIGN_N, buf, buflen);
+  ctr = rej_uniform(a->coeffs, SHUTTLE_N, buf, buflen);
 
-  while(ctr < NGCC_SIGN_N) {
+  while(ctr < SHUTTLE_N) {
     off = buflen % 2;
     for(i = 0; i < off; ++i)
       buf[i] = buf[buflen - off + i];
 
     shake128_squeezeblocks(buf + off, 1, &state);
     buflen = SHAKE128_RATE + off;
-    ctr += rej_uniform(a->coeffs + ctr, NGCC_SIGN_N - ctr, buf, buflen);
+    ctr += rej_uniform(a->coeffs + ctr, SHUTTLE_N - ctr, buf, buflen);
   }
 }
 
@@ -261,7 +261,7 @@ void poly_uniform(poly *a,
 *              - uint16_t nonce: 2-byte nonce
 **************************************************/
 void poly_uniform_eta(poly *a,
-                      const uint8_t seed[NGCC_SIGN_CRHBYTES],
+                      const uint8_t seed[SHUTTLE_CRHBYTES],
                       uint16_t nonce)
 {
   uint8_t buf[SHAKE256_RATE]; /* 136 bytes, >= 64 needed */
@@ -269,16 +269,16 @@ void poly_uniform_eta(poly *a,
   unsigned int i;
 
   /* Absorb seed || nonce (LE 2 bytes) */
-  uint8_t inbuf[NGCC_SIGN_CRHBYTES + 2];
-  memcpy(inbuf, seed, NGCC_SIGN_CRHBYTES);
-  inbuf[NGCC_SIGN_CRHBYTES + 0] = (uint8_t)(nonce);
-  inbuf[NGCC_SIGN_CRHBYTES + 1] = (uint8_t)(nonce >> 8);
+  uint8_t inbuf[SHUTTLE_CRHBYTES + 2];
+  memcpy(inbuf, seed, SHUTTLE_CRHBYTES);
+  inbuf[SHUTTLE_CRHBYTES + 0] = (uint8_t)(nonce);
+  inbuf[SHUTTLE_CRHBYTES + 1] = (uint8_t)(nonce >> 8);
 
-  shake256_absorb_once(&state, inbuf, NGCC_SIGN_CRHBYTES + 2);
+  shake256_absorb_once(&state, inbuf, SHUTTLE_CRHBYTES + 2);
   shake256_squeezeblocks(buf, 1, &state);
 
   /* CBD(eta=1): 2 bits per coefficient, 4 coefficients per byte */
-  for(i = 0; i < NGCC_SIGN_N / 4; ++i) {
+  for(i = 0; i < SHUTTLE_N / 4; ++i) {
     uint8_t byte = buf[i];
     int32_t a0, b0, a1, b1, a2, b2, a3, b3;
 
@@ -311,14 +311,14 @@ void poly_uniform_eta(poly *a,
 *              - const uint8_t seed[]: byte array containing seed of length
 *                                      CTILDEBYTES
 **************************************************/
-void poly_challenge(poly *c, const uint8_t seed[NGCC_SIGN_CTILDEBYTES]) {
+void poly_challenge(poly *c, const uint8_t seed[SHUTTLE_CTILDEBYTES]) {
   unsigned int i, b, pos;
   uint64_t signs;
   uint8_t buf[SHAKE256_RATE];
   keccak_state state;
 
   shake256_init(&state);
-  shake256_absorb(&state, seed, NGCC_SIGN_CTILDEBYTES);
+  shake256_absorb(&state, seed, SHUTTLE_CTILDEBYTES);
   shake256_finalize(&state);
   shake256_squeezeblocks(buf, 1, &state);
 
@@ -327,10 +327,10 @@ void poly_challenge(poly *c, const uint8_t seed[NGCC_SIGN_CTILDEBYTES]) {
     signs |= (uint64_t)buf[i] << 8 * i;
   pos = 8;
 
-  for(i = 0; i < NGCC_SIGN_N; ++i)
+  for(i = 0; i < SHUTTLE_N; ++i)
     c->coeffs[i] = 0;
 
-  for(i = NGCC_SIGN_N - NGCC_SIGN_TAU; i < NGCC_SIGN_N; ++i) {
+  for(i = SHUTTLE_N - SHUTTLE_TAU; i < SHUTTLE_N; ++i) {
     do {
       if(pos >= SHAKE256_RATE) {
         shake256_squeezeblocks(buf, 1, &state);
@@ -364,7 +364,7 @@ void poly_challenge(poly *c, const uint8_t seed[NGCC_SIGN_CTILDEBYTES]) {
 void poly_decompose(poly *a1, poly *a0, const poly *a) {
   unsigned int i;
 
-  for(i = 0; i < NGCC_SIGN_N; ++i)
+  for(i = 0; i < SHUTTLE_N; ++i)
     a1->coeffs[i] = decompose(&a0->coeffs[i], a->coeffs[i]);
 }
 
@@ -382,7 +382,7 @@ void poly_decompose(poly *a1, poly *a0, const poly *a) {
 unsigned int poly_make_hint(poly *h, const poly *a0, const poly *a1) {
   unsigned int i, s = 0;
 
-  for(i = 0; i < NGCC_SIGN_N; ++i) {
+  for(i = 0; i < SHUTTLE_N; ++i) {
     h->coeffs[i] = make_hint(a0->coeffs[i], a1->coeffs[i]);
     s += h->coeffs[i];
   }
@@ -402,7 +402,7 @@ unsigned int poly_make_hint(poly *h, const poly *a0, const poly *a1) {
 void poly_use_hint(poly *b, const poly *a, const poly *h) {
   unsigned int i;
 
-  for(i = 0; i < NGCC_SIGN_N; ++i)
+  for(i = 0; i < SHUTTLE_N; ++i)
     b->coeffs[i] = use_hint(a->coeffs[i], h->coeffs[i]);
 }
 
@@ -418,18 +418,18 @@ void poly_use_hint(poly *b, const poly *a, const poly *h) {
 *              via t = ETA - coeff, stored as 2 bits. 4 coefficients per byte.
 *
 * Arguments:   - uint8_t *r: pointer to output byte array with at least
-*                            NGCC_SIGN_POLYETA_PACKEDBYTES bytes
+*                            SHUTTLE_POLYETA_PACKEDBYTES bytes
 *              - const poly *a: pointer to input polynomial
 **************************************************/
 void polyeta_pack(uint8_t *r, const poly *a) {
   unsigned int i;
   uint8_t t[4];
 
-  for(i = 0; i < NGCC_SIGN_N / 4; ++i) {
-    t[0] = (uint8_t)(NGCC_SIGN_ETA - a->coeffs[4 * i + 0]);
-    t[1] = (uint8_t)(NGCC_SIGN_ETA - a->coeffs[4 * i + 1]);
-    t[2] = (uint8_t)(NGCC_SIGN_ETA - a->coeffs[4 * i + 2]);
-    t[3] = (uint8_t)(NGCC_SIGN_ETA - a->coeffs[4 * i + 3]);
+  for(i = 0; i < SHUTTLE_N / 4; ++i) {
+    t[0] = (uint8_t)(SHUTTLE_ETA - a->coeffs[4 * i + 0]);
+    t[1] = (uint8_t)(SHUTTLE_ETA - a->coeffs[4 * i + 1]);
+    t[2] = (uint8_t)(SHUTTLE_ETA - a->coeffs[4 * i + 2]);
+    t[3] = (uint8_t)(SHUTTLE_ETA - a->coeffs[4 * i + 3]);
 
     r[i] = (t[0] & 0x03)
          | ((t[1] & 0x03) << 2)
@@ -449,11 +449,11 @@ void polyeta_pack(uint8_t *r, const poly *a) {
 void polyeta_unpack(poly *r, const uint8_t *a) {
   unsigned int i;
 
-  for(i = 0; i < NGCC_SIGN_N / 4; ++i) {
-    r->coeffs[4 * i + 0] = NGCC_SIGN_ETA - ((a[i] >> 0) & 0x03);
-    r->coeffs[4 * i + 1] = NGCC_SIGN_ETA - ((a[i] >> 2) & 0x03);
-    r->coeffs[4 * i + 2] = NGCC_SIGN_ETA - ((a[i] >> 4) & 0x03);
-    r->coeffs[4 * i + 3] = NGCC_SIGN_ETA - ((a[i] >> 6) & 0x03);
+  for(i = 0; i < SHUTTLE_N / 4; ++i) {
+    r->coeffs[4 * i + 0] = SHUTTLE_ETA - ((a[i] >> 0) & 0x03);
+    r->coeffs[4 * i + 1] = SHUTTLE_ETA - ((a[i] >> 2) & 0x03);
+    r->coeffs[4 * i + 2] = SHUTTLE_ETA - ((a[i] >> 4) & 0x03);
+    r->coeffs[4 * i + 3] = SHUTTLE_ETA - ((a[i] >> 6) & 0x03);
   }
 }
 
@@ -464,13 +464,13 @@ void polyeta_unpack(poly *r, const uint8_t *a) {
 *              7 bytes per 4 coefficients (14 * 4 = 56 bits = 7 bytes).
 *
 * Arguments:   - uint8_t *r: pointer to output byte array with at least
-*                            NGCC_SIGN_POLYPK_PACKEDBYTES bytes
+*                            SHUTTLE_POLYPK_PACKEDBYTES bytes
 *              - const poly *a: pointer to input polynomial
 **************************************************/
 void polypk_pack(uint8_t *r, const poly *a) {
   unsigned int i;
 
-  for(i = 0; i < NGCC_SIGN_N / 4; ++i) {
+  for(i = 0; i < SHUTTLE_N / 4; ++i) {
     uint32_t c0 = (uint32_t)a->coeffs[4 * i + 0];
     uint32_t c1 = (uint32_t)a->coeffs[4 * i + 1];
     uint32_t c2 = (uint32_t)a->coeffs[4 * i + 2];
@@ -497,7 +497,7 @@ void polypk_pack(uint8_t *r, const poly *a) {
 void polypk_unpack(poly *r, const uint8_t *a) {
   unsigned int i;
 
-  for(i = 0; i < NGCC_SIGN_N / 4; ++i) {
+  for(i = 0; i < SHUTTLE_N / 4; ++i) {
     r->coeffs[4 * i + 0] = ((uint32_t)a[7 * i + 0]
                            | ((uint32_t)a[7 * i + 1] << 8)) & 0x3FFF;
     r->coeffs[4 * i + 1] = (((uint32_t)a[7 * i + 1] >> 6)
@@ -517,23 +517,23 @@ void polypk_unpack(poly *r, const uint8_t *a) {
 * Description: Bit-pack polynomial with signed coefficients.
 *              For q=15361, signature coefficients are bounded and fit in
 *              14 bits when stored as unsigned values in [0, 2*BOUND].
-*              We store c + NGCC_SIGN_BOUND as a 14-bit unsigned value.
+*              We store c + SHUTTLE_BOUND as a 14-bit unsigned value.
 *              7 bytes per 4 coefficients.
 *
 * Arguments:   - uint8_t *r: pointer to output byte array with at least
-*                            NGCC_SIGN_POLYZ_PACKEDBYTES bytes
+*                            SHUTTLE_POLYZ_PACKEDBYTES bytes
 *              - const poly *a: pointer to input polynomial
 **************************************************/
 void polyz_pack(uint8_t *r, const poly *a) {
   unsigned int i;
   uint32_t t[4];
 
-  for(i = 0; i < NGCC_SIGN_N / 4; ++i) {
+  for(i = 0; i < SHUTTLE_N / 4; ++i) {
     /* Map from [-BOUND, BOUND] to [0, 2*BOUND] */
-    t[0] = (uint32_t)(NGCC_SIGN_BOUND - a->coeffs[4 * i + 0]);
-    t[1] = (uint32_t)(NGCC_SIGN_BOUND - a->coeffs[4 * i + 1]);
-    t[2] = (uint32_t)(NGCC_SIGN_BOUND - a->coeffs[4 * i + 2]);
-    t[3] = (uint32_t)(NGCC_SIGN_BOUND - a->coeffs[4 * i + 3]);
+    t[0] = (uint32_t)(SHUTTLE_BOUND - a->coeffs[4 * i + 0]);
+    t[1] = (uint32_t)(SHUTTLE_BOUND - a->coeffs[4 * i + 1]);
+    t[2] = (uint32_t)(SHUTTLE_BOUND - a->coeffs[4 * i + 2]);
+    t[3] = (uint32_t)(SHUTTLE_BOUND - a->coeffs[4 * i + 3]);
 
     r[7 * i + 0] = (uint8_t)(t[0]);
     r[7 * i + 1] = (uint8_t)(t[0] >> 8) | (uint8_t)(t[1] << 6);
@@ -557,7 +557,7 @@ void polyz_pack(uint8_t *r, const poly *a) {
 void polyz_unpack(poly *r, const uint8_t *a) {
   unsigned int i;
 
-  for(i = 0; i < NGCC_SIGN_N / 4; ++i) {
+  for(i = 0; i < SHUTTLE_N / 4; ++i) {
     uint32_t t0, t1, t2, t3;
 
     t0 = ((uint32_t)a[7 * i + 0]
@@ -572,10 +572,10 @@ void polyz_unpack(poly *r, const uint8_t *a) {
         | ((uint32_t)a[7 * i + 6] << 6)) & 0x3FFF;
 
     /* Map back from [0, 2*BOUND] to [-BOUND, BOUND] */
-    r->coeffs[4 * i + 0] = NGCC_SIGN_BOUND - (int32_t)t0;
-    r->coeffs[4 * i + 1] = NGCC_SIGN_BOUND - (int32_t)t1;
-    r->coeffs[4 * i + 2] = NGCC_SIGN_BOUND - (int32_t)t2;
-    r->coeffs[4 * i + 3] = NGCC_SIGN_BOUND - (int32_t)t3;
+    r->coeffs[4 * i + 0] = SHUTTLE_BOUND - (int32_t)t0;
+    r->coeffs[4 * i + 1] = SHUTTLE_BOUND - (int32_t)t1;
+    r->coeffs[4 * i + 2] = SHUTTLE_BOUND - (int32_t)t2;
+    r->coeffs[4 * i + 3] = SHUTTLE_BOUND - (int32_t)t3;
   }
 }
 
@@ -587,13 +587,13 @@ void polyz_unpack(poly *r, const uint8_t *a) {
 *              3 bytes per 4 coefficients (6 * 4 = 24 bits = 3 bytes).
 *
 * Arguments:   - uint8_t *r: pointer to output byte array with at least
-*                            NGCC_SIGN_POLYW1_PACKEDBYTES bytes
+*                            SHUTTLE_POLYW1_PACKEDBYTES bytes
 *              - const poly *a: pointer to input polynomial
 **************************************************/
 void polyw1_pack(uint8_t *r, const poly *a) {
   unsigned int i;
 
-  for(i = 0; i < NGCC_SIGN_N / 4; ++i) {
+  for(i = 0; i < SHUTTLE_N / 4; ++i) {
     r[3 * i + 0] = (uint8_t)(a->coeffs[4 * i + 0])
                  | (uint8_t)(a->coeffs[4 * i + 1] << 6);
     r[3 * i + 1] = (uint8_t)(a->coeffs[4 * i + 1] >> 2)

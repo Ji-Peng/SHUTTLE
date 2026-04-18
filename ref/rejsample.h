@@ -1,8 +1,8 @@
 /*
- * rejsample.h - Iterative Rejection Sampling for NGCC_SIGN.
+ * rejsample.h - Iterative Rejection Sampling for SHUTTLE.
  *
  * Implements the Simplified Log-Domain iterative rejection sampling method
- * (InteractiveRejection.tex, Algorithm 6) for the NGCC_SIGN signature scheme.
+ * (InteractiveRejection.tex, Algorithm 6) for the SHUTTLE signature scheme.
  *
  * For each monomial x^{j_i} in the challenge c (tau=30 terms):
  *   1. Compute v_i = x^{j_i} * sk (cyclic shift of secret key vector)
@@ -16,8 +16,8 @@
  * Returns 1 on success, 0 if any step rejects (caller must restart signing).
  */
 
-#ifndef NGCC_SIGN_REJSAMPLE_H
-#define NGCC_SIGN_REJSAMPLE_H
+#ifndef SHUTTLE_REJSAMPLE_H
+#define SHUTTLE_REJSAMPLE_H
 
 #include <stdint.h>
 #include "params.h"
@@ -48,7 +48,7 @@
  *   1 if all tau steps accepted (z is a valid response).
  *   0 if any step rejected (caller must restart with new y).
  */
-#define irs_sign NGCC_SIGN_NAMESPACE(irs_sign)
+#define irs_sign SHUTTLE_NAMESPACE(irs_sign)
 int irs_sign(polyvec *z,
              const poly *c,
              const polyvec *sk_stretched,
@@ -66,13 +66,13 @@ int irs_sign(polyvec *z,
  *
  *   The caller uses these to reconstruct c_eff for the verifier.
  */
-#define irs_sign_with_signs NGCC_SIGN_NAMESPACE(irs_sign_with_signs)
+#define irs_sign_with_signs SHUTTLE_NAMESPACE(irs_sign_with_signs)
 int irs_sign_with_signs(polyvec *z,
-                        int8_t sign_choices[NGCC_SIGN_TAU],
+                        int8_t sign_choices[SHUTTLE_TAU],
                         const poly *c,
                         const polyvec *sk_stretched,
                         int64_t gamma_q62,
                         int64_t ln_M_q62,
                         keccak_state *rng_state);
 
-#endif /* NGCC_SIGN_REJSAMPLE_H */
+#endif /* SHUTTLE_REJSAMPLE_H */

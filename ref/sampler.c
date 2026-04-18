@@ -1,5 +1,5 @@
 /*
- * sampler.c - Discrete Gaussian sampler for NGCC_SIGN (ref version).
+ * sampler.c - Discrete Gaussian sampler for SHUTTLE (ref version).
  *
  * sigma = 128 = 2^7. Decomposition: k = 2^6, sigma_2 = 2.
  * Output: signed int16_t samples with |r| <= 11*128 = 1408.
@@ -97,7 +97,7 @@ static int sample_gauss_sigma128(int16_t *r, const uint8_t *rand,
     uint32_t y = rand[0] & 0x3FU;
 
     /* candidate = x * 64 + y (unsigned magnitude) */
-    int32_t candidate = (int32_t)x * NGCC_SIGN_GAUSS_K + (int32_t)y;
+    int32_t candidate = (int32_t)x * SHUTTLE_GAUSS_K + (int32_t)y;
 
     /* sign_r0 + rejection from rand[1..8] */
     uint64_t rand_tail = load_le64(rand + 1);
@@ -112,7 +112,7 @@ static int sample_gauss_sigma128(int16_t *r, const uint8_t *rand,
      * Max: 63*(63+128*22) = 63*2879 = 181377
      * 181377 << 45 = 6.38e18 < 2^63, fits in uint64_t.
      */
-    uint32_t t = y + (uint32_t)(2 * NGCC_SIGN_GAUSS_K) * (uint32_t)x;
+    uint32_t t = y + (uint32_t)(2 * SHUTTLE_GAUSS_K) * (uint32_t)x;
     uint64_t num = (uint64_t)y * (uint64_t)t;
     uint64_t exp_q60 = num << 45;  /* / 2^15 * 2^60 = << 45 */
 
@@ -146,7 +146,7 @@ static int sample_gauss_sigma128(int16_t *r, const uint8_t *rand,
  *   ~0.7 KB buffer (for BATCH=16), refilled with SQUEEZE_NBLOCKS blocks.
  * ============================================================ */
 void sample_gauss_N(int16_t *r,
-                    const uint8_t seed[NGCC_SIGN_SEEDBYTES],
+                    const uint8_t seed[SHUTTLE_SEEDBYTES],
                     uint64_t nonce, size_t len) {
     uint8_t buf[GAUSS_BUF_SIZE];
     stream256_state state;
@@ -160,7 +160,7 @@ void sample_gauss_N(int16_t *r,
     stream256_squeezeblocks(buf, init_nblocks, &state);
 
     /* Extract sign bits */
-    uint8_t signs[NGCC_SIGN_N / 8];  /* max len = N = 256, so 32 bytes */
+    uint8_t signs[SHUTTLE_N / 8];  /* max len = N = 256, so 32 bytes */
     memcpy(signs, buf, sign_bytes);
     size_t pos = sign_bytes;
     size_t avail = init_nblocks * STREAM256_BLOCKBYTES - sign_bytes;

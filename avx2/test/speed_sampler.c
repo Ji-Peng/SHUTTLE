@@ -1,5 +1,5 @@
 /*
- * speed_sampler.c - Performance benchmarks for NGCC_SIGN components
+ * speed_sampler.c - Performance benchmarks for SHUTTLE components
  * (AVX2).
  *
  * Benchmarks:
@@ -26,14 +26,14 @@
 
 int main(void)
 {
-    uint8_t seed[NGCC_SIGN_SEEDBYTES];
+    uint8_t seed[SHUTTLE_SEEDBYTES];
     int16_t r[N];
     uint64_t t[NTESTS];
 
-    randombytes(seed, NGCC_SIGN_SEEDBYTES);
+    randombytes(seed, SHUTTLE_SEEDBYTES);
 
-    printf("=== NGCC_SIGN Component Benchmarks - AVX2 (sigma=%d) ===\n\n",
-           NGCC_SIGN_SIGMA);
+    printf("=== SHUTTLE Component Benchmarks - AVX2 (sigma=%d) ===\n\n",
+           SHUTTLE_SIGMA);
 
     /* ---- 1. sampler_sigma2 (AVX2 batched CDT, BATCH=16) ---- */
     {
@@ -78,20 +78,20 @@ int main(void)
 
         uint8_t buf0[STREAM_BYTES], buf1[STREAM_BYTES];
         uint8_t buf2[STREAM_BYTES], buf3[STREAM_BYTES];
-        uint8_t inbuf[4][NGCC_SIGN_SEEDBYTES + 8];
+        uint8_t inbuf[4][SHUTTLE_SEEDBYTES + 8];
         keccakx4_state state4x;
 
         /* Prepare 4 input buffers */
         for (int j = 0; j < 4; j++) {
-            memcpy(inbuf[j], seed, NGCC_SIGN_SEEDBYTES);
+            memcpy(inbuf[j], seed, SHUTTLE_SEEDBYTES);
             uint64_t nonce = (uint64_t)j;
             for (int k = 0; k < 8; k++)
-                inbuf[j][NGCC_SIGN_SEEDBYTES + k] =
+                inbuf[j][SHUTTLE_SEEDBYTES + k] =
                     (uint8_t)(nonce >> (8 * k));
         }
 
         shake256x4_absorb_once(&state4x, inbuf[0], inbuf[1], inbuf[2],
-                               inbuf[3], NGCC_SIGN_SEEDBYTES + 8);
+                               inbuf[3], SHUTTLE_SEEDBYTES + 8);
 
         for (int i = 0; i < NTESTS; i++) {
             t[i] = cpucycles();
@@ -105,7 +105,7 @@ int main(void)
         /* Per-byte cost */
         uint64_t med;
         shake256x4_absorb_once(&state4x, inbuf[0], inbuf[1], inbuf[2],
-                               inbuf[3], NGCC_SIGN_SEEDBYTES + 8);
+                               inbuf[3], SHUTTLE_SEEDBYTES + 8);
         for (int i = 0; i < NTESTS; i++) {
             t[i] = cpucycles();
             shake256x4_squeezeblocks(buf0, buf1, buf2, buf3,

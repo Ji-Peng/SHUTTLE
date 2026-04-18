@@ -1,5 +1,5 @@
 /*
- * approx_log.c - ApproxNegLn implementation for NGCC_SIGN.
+ * approx_log.c - ApproxNegLn implementation for SHUTTLE.
  *
  * Algorithm (from docs/NGCC_Sign/ApproxLog.md):
  *   Given r_rand in (0, 2^64) representing r in (0, 1):

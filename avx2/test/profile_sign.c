@@ -1,5 +1,5 @@
 /*
- * profile_sign.c - Profiling experiment for NGCC_SIGN Sign().
+ * profile_sign.c - Profiling experiment for SHUTTLE Sign().
  *
  * Measures cycle counts of each component inside the signing flow:
  *   1. SK decode + precomputation (matrix expand, NTT, mu, rhoprime)
@@ -66,18 +66,18 @@ static void build_sk_full(polyvec *sk_full,
                           const polyveck *e)
 {
   unsigned int i, j;
-  for(j = 0; j < NGCC_SIGN_N; ++j)
+  for(j = 0; j < SHUTTLE_N; ++j)
     sk_full->vec[0].coeffs[j] = 0;
   sk_full->vec[0].coeffs[0] = 1;
-  for(i = 0; i < NGCC_SIGN_L; ++i)
+  for(i = 0; i < SHUTTLE_L; ++i)
     sk_full->vec[1 + i] = s->vec[i];
-  for(i = 0; i < NGCC_SIGN_M; ++i)
-    sk_full->vec[1 + NGCC_SIGN_L + i] = e->vec[i];
+  for(i = 0; i < SHUTTLE_M; ++i)
+    sk_full->vec[1 + SHUTTLE_L + i] = e->vec[i];
 }
 
 static void compute_commitment(polyveck *w,
                                const polyveck *a_gen_hat,
-                               const polyveck A_gen_hat[NGCC_SIGN_L],
+                               const polyveck A_gen_hat[SHUTTLE_L],
                                const polyvec *v)
 {
   polyvec v_hat;
@@ -89,30 +89,30 @@ static void compute_commitment(polyveck *w,
   polyveck_caddq(w);
 }
 
-static void compute_mu(uint8_t mu[NGCC_SIGN_CRHBYTES],
-                       const uint8_t tr[NGCC_SIGN_TRBYTES],
+static void compute_mu(uint8_t mu[SHUTTLE_CRHBYTES],
+                       const uint8_t tr[SHUTTLE_TRBYTES],
                        const uint8_t *m, size_t mlen)
 {
   keccak_state state;
   shake256_init(&state);
-  shake256_absorb(&state, tr, NGCC_SIGN_TRBYTES);
+  shake256_absorb(&state, tr, SHUTTLE_TRBYTES);
   shake256_absorb(&state, m, mlen);
   shake256_finalize(&state);
-  shake256_squeeze(mu, NGCC_SIGN_CRHBYTES, &state);
+  shake256_squeeze(mu, SHUTTLE_CRHBYTES, &state);
 }
 
-static void compute_seed_c(uint8_t seed_c[NGCC_SIGN_CTILDEBYTES],
+static void compute_seed_c(uint8_t seed_c[SHUTTLE_CTILDEBYTES],
                            const polyveck *w1,
-                           const uint8_t mu[NGCC_SIGN_CRHBYTES])
+                           const uint8_t mu[SHUTTLE_CRHBYTES])
 {
   keccak_state state;
-  uint8_t w1_packed[NGCC_SIGN_M * NGCC_SIGN_POLYW1_PACKEDBYTES];
+  uint8_t w1_packed[SHUTTLE_M * SHUTTLE_POLYW1_PACKEDBYTES];
   polyveck_pack_w1(w1_packed, w1);
   shake256_init(&state);
-  shake256_absorb(&state, w1_packed, NGCC_SIGN_M * NGCC_SIGN_POLYW1_PACKEDBYTES);
-  shake256_absorb(&state, mu, NGCC_SIGN_CRHBYTES);
+  shake256_absorb(&state, w1_packed, SHUTTLE_M * SHUTTLE_POLYW1_PACKEDBYTES);
+  shake256_absorb(&state, mu, SHUTTLE_CRHBYTES);
   shake256_finalize(&state);
-  shake256_squeeze(seed_c, NGCC_SIGN_CTILDEBYTES, &state);
+  shake256_squeeze(seed_c, SHUTTLE_CTILDEBYTES, &state);
 }
 
 /* Component cycle arrays */
@@ -126,18 +126,18 @@ static uint64_t t_total[NRUNS];
 
 int main(void)
 {
-  uint8_t pk[NGCC_SIGN_PUBLICKEYBYTES];
-  uint8_t sk[NGCC_SIGN_SECRETKEYBYTES];
-  uint8_t sig[NGCC_SIGN_BYTES];
+  uint8_t pk[SHUTTLE_PUBLICKEYBYTES];
+  uint8_t sk[SHUTTLE_SECRETKEYBYTES];
+  uint8_t sig[SHUTTLE_BYTES];
   size_t siglen;
   uint8_t msg[32];
   unsigned int run;
   uint64_t c0, c1, c2, c3, c4, c5, c6;
 
-  printf("=== NGCC_SIGN Signing Profiler ===\n");
+  printf("=== SHUTTLE Signing Profiler ===\n");
   printf("Parameters: N=%d, Q=%d, L=%d, M=%d, SIGMA=%d, TAU=%d\n",
-         NGCC_SIGN_N, NGCC_SIGN_Q, NGCC_SIGN_L, NGCC_SIGN_M,
-         NGCC_SIGN_SIGMA, NGCC_SIGN_TAU);
+         SHUTTLE_N, SHUTTLE_Q, SHUTTLE_L, SHUTTLE_M,
+         SHUTTLE_SIGMA, SHUTTLE_TAU);
   printf("Runs: %d\n\n", NRUNS);
 
   /* Generate a key pair to use */
@@ -148,27 +148,27 @@ int main(void)
     randombytes(msg, 32);
 
     /* ---- Inline sign with timing ---- */
-    uint8_t rho[NGCC_SIGN_SEEDBYTES];
-    uint8_t tr[NGCC_SIGN_TRBYTES];
-    uint8_t key[NGCC_SIGN_SEEDBYTES];
-    uint8_t mu[NGCC_SIGN_CRHBYTES];
-    uint8_t rhoprime[NGCC_SIGN_CRHBYTES];
-    uint8_t seed_c[NGCC_SIGN_CTILDEBYTES];
-    uint8_t rnd[NGCC_SIGN_RNDBYTES];
+    uint8_t rho[SHUTTLE_SEEDBYTES];
+    uint8_t tr[SHUTTLE_TRBYTES];
+    uint8_t key[SHUTTLE_SEEDBYTES];
+    uint8_t mu[SHUTTLE_CRHBYTES];
+    uint8_t rhoprime[SHUTTLE_CRHBYTES];
+    uint8_t seed_c[SHUTTLE_CTILDEBYTES];
+    uint8_t rnd[SHUTTLE_RNDBYTES];
     polyvecl s;
     polyveck e;
     polyveck a_gen_hat_store;
-    polyveck A_gen_hat[NGCC_SIGN_L];
+    polyveck A_gen_hat[SHUTTLE_L];
     polyvec sk_full, y, z;
     polyveck w, w1, w0;
     poly c_poly;
-    int8_t irs_signs[NGCC_SIGN_TAU];
+    int8_t irs_signs[SHUTTLE_TAU];
     int64_t gamma_q62, norm_sq;
     unsigned int j, n;
     unsigned int nonce = 0;
     int irs_ok;
-    int16_t y_buf0[NGCC_SIGN_N], y_buf1[NGCC_SIGN_N];
-    int16_t y_buf2[NGCC_SIGN_N], y_buf3[NGCC_SIGN_N];
+    int16_t y_buf0[SHUTTLE_N], y_buf1[SHUTTLE_N];
+    int16_t y_buf2[SHUTTLE_N], y_buf3[SHUTTLE_N];
 
     /* === PHASE 1: Precomputation === */
     c0 = cpucycles();
@@ -183,22 +183,22 @@ int main(void)
 
     {
       keccak_state state;
-      randombytes(rnd, NGCC_SIGN_RNDBYTES);
+      randombytes(rnd, SHUTTLE_RNDBYTES);
       shake256_init(&state);
-      shake256_absorb(&state, key, NGCC_SIGN_SEEDBYTES);
-      shake256_absorb(&state, rnd, NGCC_SIGN_RNDBYTES);
-      shake256_absorb(&state, mu, NGCC_SIGN_CRHBYTES);
+      shake256_absorb(&state, key, SHUTTLE_SEEDBYTES);
+      shake256_absorb(&state, rnd, SHUTTLE_RNDBYTES);
+      shake256_absorb(&state, mu, SHUTTLE_CRHBYTES);
       shake256_finalize(&state);
-      shake256_squeeze(rhoprime, NGCC_SIGN_CRHBYTES, &state);
+      shake256_squeeze(rhoprime, SHUTTLE_CRHBYTES, &state);
     }
 
     {
       polyveck a_gen;
-      polyveck A_gen_local[NGCC_SIGN_L];
+      polyveck A_gen_local[SHUTTLE_L];
       polyvec_matrix_expand(&a_gen, A_gen_local, rho);
       a_gen_hat_store = a_gen;
       polyveck_ntt(&a_gen_hat_store);
-      for(j = 0; j < NGCC_SIGN_L; ++j) {
+      for(j = 0; j < SHUTTLE_L; ++j) {
         A_gen_hat[j] = A_gen_local[j];
         polyveck_ntt(&A_gen_hat[j]);
       }
@@ -214,9 +214,9 @@ int main(void)
 
       sample_gauss_N_4x(y_buf0, y_buf1, y_buf2, y_buf3,
                          rhoprime, nonce, nonce+1, nonce+2, nonce+3,
-                         NGCC_SIGN_N, NGCC_SIGN_N, NGCC_SIGN_N, NGCC_SIGN_N);
+                         SHUTTLE_N, SHUTTLE_N, SHUTTLE_N, SHUTTLE_N);
       nonce += 4;
-      for(n = 0; n < NGCC_SIGN_N; ++n) {
+      for(n = 0; n < SHUTTLE_N; ++n) {
         y.vec[0].coeffs[n] = (int32_t)y_buf0[n];
         y.vec[1].coeffs[n] = (int32_t)y_buf1[n];
         y.vec[2].coeffs[n] = (int32_t)y_buf2[n];
@@ -224,9 +224,9 @@ int main(void)
       }
       sample_gauss_N_4x(y_buf0, y_buf1, y_buf2, y_buf3,
                          rhoprime, nonce, nonce+1, 0, 0,
-                         NGCC_SIGN_N, NGCC_SIGN_N, 0, 0);
+                         SHUTTLE_N, SHUTTLE_N, 0, 0);
       nonce += 2;
-      for(n = 0; n < NGCC_SIGN_N; ++n) {
+      for(n = 0; n < SHUTTLE_N; ++n) {
         y.vec[4].coeffs[n] = (int32_t)y_buf0[n];
         y.vec[5].coeffs[n] = (int32_t)y_buf1[n];
       }
@@ -252,12 +252,12 @@ int main(void)
       z = y;
       {
         keccak_state rng_state;
-        uint8_t irs_seed[NGCC_SIGN_SEEDBYTES + NGCC_SIGN_CRHBYTES +
-                          NGCC_SIGN_CTILDEBYTES];
-        memcpy(irs_seed, key, NGCC_SIGN_SEEDBYTES);
-        memcpy(irs_seed + NGCC_SIGN_SEEDBYTES, mu, NGCC_SIGN_CRHBYTES);
-        memcpy(irs_seed + NGCC_SIGN_SEEDBYTES + NGCC_SIGN_CRHBYTES,
-               seed_c, NGCC_SIGN_CTILDEBYTES);
+        uint8_t irs_seed[SHUTTLE_SEEDBYTES + SHUTTLE_CRHBYTES +
+                          SHUTTLE_CTILDEBYTES];
+        memcpy(irs_seed, key, SHUTTLE_SEEDBYTES);
+        memcpy(irs_seed + SHUTTLE_SEEDBYTES, mu, SHUTTLE_CRHBYTES);
+        memcpy(irs_seed + SHUTTLE_SEEDBYTES + SHUTTLE_CRHBYTES,
+               seed_c, SHUTTLE_CTILDEBYTES);
         shake256_init(&rng_state);
         shake256_absorb(&rng_state, irs_seed, sizeof(irs_seed));
         shake256_finalize(&rng_state);
@@ -278,15 +278,15 @@ int main(void)
       {
         polyvecl z1;
         unsigned int i;
-        for(i = 0; i < NGCC_SIGN_L; ++i)
+        for(i = 0; i < SHUTTLE_L; ++i)
           z1.vec[i] = z.vec[1 + i];
         norm_sq = polyvecl_sq_norm(&z1);
-        if(norm_sq >= (int64_t)NGCC_SIGN_BS_SQ)
+        if(norm_sq >= (int64_t)SHUTTLE_BS_SQ)
           continue;
       }
 
       pack_sig(sig, seed_c, irs_signs, &z);
-      siglen = NGCC_SIGN_BYTES;
+      siglen = SHUTTLE_BYTES;
 
       c6 = cpucycles();
       t_norm_pack[run] = c6 - c5;
@@ -378,8 +378,8 @@ int main(void)
   /* NTT */
   {
     poly a;
-    for(unsigned int i = 0; i < NGCC_SIGN_N; i++)
-      a.coeffs[i] = i % NGCC_SIGN_Q;
+    for(unsigned int i = 0; i < SHUTTLE_N; i++)
+      a.coeffs[i] = i % SHUTTLE_Q;
     for(unsigned int r = 0; r < OP_NRUNS; r++) {
       poly tmp = a;
       uint64_t s = CYC();
@@ -392,9 +392,9 @@ int main(void)
   /* Pointwise mul */
   {
     poly a, b, c;
-    for(unsigned int i = 0; i < NGCC_SIGN_N; i++) {
-      a.coeffs[i] = i % NGCC_SIGN_Q;
-      b.coeffs[i] = (i * 7) % NGCC_SIGN_Q;
+    for(unsigned int i = 0; i < SHUTTLE_N; i++) {
+      a.coeffs[i] = i % SHUTTLE_Q;
+      b.coeffs[i] = (i * 7) % SHUTTLE_Q;
     }
     for(unsigned int r = 0; r < OP_NRUNS; r++) {
       uint64_t s = CYC();
@@ -406,12 +406,12 @@ int main(void)
 
   /* sample_gauss_N (single, N=256) */
   {
-    int16_t buf[NGCC_SIGN_N];
-    uint8_t seed[NGCC_SIGN_SEEDBYTES];
-    randombytes(seed, NGCC_SIGN_SEEDBYTES);
+    int16_t buf[SHUTTLE_N];
+    uint8_t seed[SHUTTLE_SEEDBYTES];
+    randombytes(seed, SHUTTLE_SEEDBYTES);
     for(unsigned int r = 0; r < OP_NRUNS; r++) {
       uint64_t s = CYC();
-      sample_gauss_N(buf, seed, r, NGCC_SIGN_N);
+      sample_gauss_N(buf, seed, r, SHUTTLE_N);
       t_op[r] = CYC() - s;
     }
     print_results("sample_gauss_N (N=256):", t_op, OP_NRUNS);
@@ -419,16 +419,16 @@ int main(void)
 
   /* sample_gauss_N_4x (4 x N=256) */
   {
-    int16_t b0[NGCC_SIGN_N], b1[NGCC_SIGN_N];
-    int16_t b2[NGCC_SIGN_N], b3[NGCC_SIGN_N];
-    uint8_t seed[NGCC_SIGN_SEEDBYTES];
-    randombytes(seed, NGCC_SIGN_SEEDBYTES);
+    int16_t b0[SHUTTLE_N], b1[SHUTTLE_N];
+    int16_t b2[SHUTTLE_N], b3[SHUTTLE_N];
+    uint8_t seed[SHUTTLE_SEEDBYTES];
+    randombytes(seed, SHUTTLE_SEEDBYTES);
     for(unsigned int r = 0; r < OP_NRUNS; r++) {
       uint64_t s = CYC();
       sample_gauss_N_4x(b0, b1, b2, b3, seed,
                          4*r, 4*r+1, 4*r+2, 4*r+3,
-                         NGCC_SIGN_N, NGCC_SIGN_N,
-                         NGCC_SIGN_N, NGCC_SIGN_N);
+                         SHUTTLE_N, SHUTTLE_N,
+                         SHUTTLE_N, SHUTTLE_N);
       t_op[r] = CYC() - s;
     }
     print_results("sample_gauss_N_4x (4xN):", t_op, OP_NRUNS);
@@ -437,9 +437,9 @@ int main(void)
   /* ExpandA (matrix expansion) */
   {
     polyveck a_gen;
-    polyveck A_gen_local[NGCC_SIGN_L];
-    uint8_t rho_tmp[NGCC_SIGN_SEEDBYTES];
-    randombytes(rho_tmp, NGCC_SIGN_SEEDBYTES);
+    polyveck A_gen_local[SHUTTLE_L];
+    uint8_t rho_tmp[SHUTTLE_SEEDBYTES];
+    randombytes(rho_tmp, SHUTTLE_SEEDBYTES);
     for(unsigned int r = 0; r < OP_NRUNS; r++) {
       uint64_t s = CYC();
       polyvec_matrix_expand(&a_gen, A_gen_local, rho_tmp);
@@ -465,8 +465,8 @@ int main(void)
   /* poly_uniform (single poly from SHAKE128) */
   {
     poly a;
-    uint8_t seed[NGCC_SIGN_SEEDBYTES];
-    randombytes(seed, NGCC_SIGN_SEEDBYTES);
+    uint8_t seed[SHUTTLE_SEEDBYTES];
+    randombytes(seed, SHUTTLE_SEEDBYTES);
     for(unsigned int r = 0; r < OP_NRUNS; r++) {
       uint64_t s = CYC();
       poly_uniform(&a, seed, (uint16_t)r);

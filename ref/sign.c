@@ -1,7 +1,7 @@
 /*
- * sign.c - Key generation, signing, and verification for NGCC_SIGN.
+ * sign.c - Key generation, signing, and verification for SHUTTLE.
  *
- * NGCC_SIGN lattice-based signature scheme overview:
+ * SHUTTLE lattice-based signature scheme overview:
  *
  * Key structure:
  *   Secret key: sk = [1, s, e] (VECLEN=6 polynomials)
@@ -46,15 +46,15 @@ static void build_sk_full(polyvec *sk_full,
 {
   unsigned int i, j;
 
-  for(j = 0; j < NGCC_SIGN_N; ++j)
+  for(j = 0; j < SHUTTLE_N; ++j)
     sk_full->vec[0].coeffs[j] = 0;
   sk_full->vec[0].coeffs[0] = 1;
 
-  for(i = 0; i < NGCC_SIGN_L; ++i)
+  for(i = 0; i < SHUTTLE_L; ++i)
     sk_full->vec[1 + i] = s->vec[i];
 
-  for(i = 0; i < NGCC_SIGN_M; ++i)
-    sk_full->vec[1 + NGCC_SIGN_L + i] = e->vec[i];
+  for(i = 0; i < SHUTTLE_M; ++i)
+    sk_full->vec[1 + SHUTTLE_L + i] = e->vec[i];
 }
 
 /* ============================================================
@@ -62,7 +62,7 @@ static void build_sk_full(polyvec *sk_full,
  * ============================================================ */
 static void compute_commitment(polyveck *w,
                                const polyveck *a_gen_hat,
-                               const polyveck A_gen_hat[NGCC_SIGN_L],
+                               const polyveck A_gen_hat[SHUTTLE_L],
                                const polyvec *v)
 {
   polyvec v_hat;
@@ -78,37 +78,37 @@ static void compute_commitment(polyveck *w,
 /* ============================================================
  * Helper: Compute mu = SHAKE-256(tr || m, 64 bytes).
  * ============================================================ */
-static void compute_mu(uint8_t mu[NGCC_SIGN_CRHBYTES],
-                       const uint8_t tr[NGCC_SIGN_TRBYTES],
+static void compute_mu(uint8_t mu[SHUTTLE_CRHBYTES],
+                       const uint8_t tr[SHUTTLE_TRBYTES],
                        const uint8_t *m, size_t mlen)
 {
   keccak_state state;
 
   shake256_init(&state);
-  shake256_absorb(&state, tr, NGCC_SIGN_TRBYTES);
+  shake256_absorb(&state, tr, SHUTTLE_TRBYTES);
   shake256_absorb(&state, m, mlen);
   shake256_finalize(&state);
-  shake256_squeeze(mu, NGCC_SIGN_CRHBYTES, &state);
+  shake256_squeeze(mu, SHUTTLE_CRHBYTES, &state);
 }
 
 /* ============================================================
  * Helper: Compute seed_c = SHAKE-256(w1_packed || mu, CTILDEBYTES).
  * ============================================================ */
-static void compute_seed_c(uint8_t seed_c[NGCC_SIGN_CTILDEBYTES],
+static void compute_seed_c(uint8_t seed_c[SHUTTLE_CTILDEBYTES],
                            const polyveck *w1,
-                           const uint8_t mu[NGCC_SIGN_CRHBYTES])
+                           const uint8_t mu[SHUTTLE_CRHBYTES])
 {
   keccak_state state;
-  uint8_t w1_packed[NGCC_SIGN_M * NGCC_SIGN_POLYW1_PACKEDBYTES];
+  uint8_t w1_packed[SHUTTLE_M * SHUTTLE_POLYW1_PACKEDBYTES];
 
   polyveck_pack_w1(w1_packed, w1);
 
   shake256_init(&state);
   shake256_absorb(&state, w1_packed,
-                  NGCC_SIGN_M * NGCC_SIGN_POLYW1_PACKEDBYTES);
-  shake256_absorb(&state, mu, NGCC_SIGN_CRHBYTES);
+                  SHUTTLE_M * SHUTTLE_POLYW1_PACKEDBYTES);
+  shake256_absorb(&state, mu, SHUTTLE_CRHBYTES);
   shake256_finalize(&state);
-  shake256_squeeze(seed_c, NGCC_SIGN_CTILDEBYTES, &state);
+  shake256_squeeze(seed_c, SHUTTLE_CTILDEBYTES, &state);
 }
 
 /* ============================================================
@@ -124,8 +124,8 @@ static void compute_seed_c(uint8_t seed_c[NGCC_SIGN_CTILDEBYTES],
  * position of the j-th nonzero coefficient in c.
  * ============================================================ */
 static void build_c_eff(poly *c_eff,
-                        const uint8_t seed_c[NGCC_SIGN_CTILDEBYTES],
-                        const int8_t irs_signs[NGCC_SIGN_TAU])
+                        const uint8_t seed_c[SHUTTLE_CTILDEBYTES],
+                        const int8_t irs_signs[SHUTTLE_TAU])
 {
   poly c;
   unsigned int i, j;
@@ -134,12 +134,12 @@ static void build_c_eff(poly *c_eff,
   poly_challenge(&c, seed_c);
 
   /* Zero out c_eff */
-  for(i = 0; i < NGCC_SIGN_N; ++i)
+  for(i = 0; i < SHUTTLE_N; ++i)
     c_eff->coeffs[i] = 0;
 
   /* Walk through c, replacing each nonzero with the IRS sign */
   j = 0;
-  for(i = 0; i < NGCC_SIGN_N && j < NGCC_SIGN_TAU; ++i) {
+  for(i = 0; i < SHUTTLE_N && j < SHUTTLE_TAU; ++i) {
     if(c.coeffs[i] != 0) {
       c_eff->coeffs[i] = (int32_t)irs_signs[j];
       j++;
@@ -152,49 +152,49 @@ static void build_c_eff(poly *c_eff,
 **************************************************/
 int crypto_sign_keypair(uint8_t *pk, uint8_t *sk)
 {
-  uint8_t seedbuf[2 * NGCC_SIGN_SEEDBYTES + NGCC_SIGN_CRHBYTES];
-  uint8_t tr[NGCC_SIGN_TRBYTES];
+  uint8_t seedbuf[2 * SHUTTLE_SEEDBYTES + SHUTTLE_CRHBYTES];
+  uint8_t tr[SHUTTLE_TRBYTES];
   const uint8_t *rho, *rhoprime, *key;
   polyveck a_gen, b;
-  polyveck A_gen[NGCC_SIGN_L];
+  polyveck A_gen[SHUTTLE_L];
   polyvecl s;
   polyveck e;
   int64_t norm_sq;
 
   for(;;) {
-    randombytes(seedbuf, NGCC_SIGN_SEEDBYTES);
-    seedbuf[NGCC_SIGN_SEEDBYTES] = NGCC_SIGN_L;
-    seedbuf[NGCC_SIGN_SEEDBYTES + 1] = NGCC_SIGN_M;
+    randombytes(seedbuf, SHUTTLE_SEEDBYTES);
+    seedbuf[SHUTTLE_SEEDBYTES] = SHUTTLE_L;
+    seedbuf[SHUTTLE_SEEDBYTES + 1] = SHUTTLE_M;
     shake256(seedbuf,
-             2 * NGCC_SIGN_SEEDBYTES + NGCC_SIGN_CRHBYTES,
+             2 * SHUTTLE_SEEDBYTES + SHUTTLE_CRHBYTES,
              seedbuf,
-             NGCC_SIGN_SEEDBYTES + 2);
+             SHUTTLE_SEEDBYTES + 2);
     rho      = seedbuf;
-    rhoprime = rho + NGCC_SIGN_SEEDBYTES;
-    key      = rhoprime + NGCC_SIGN_CRHBYTES;
+    rhoprime = rho + SHUTTLE_SEEDBYTES;
+    key      = rhoprime + SHUTTLE_CRHBYTES;
 
     polyvec_matrix_expand(&a_gen, A_gen, rho);
     polyvecl_uniform_eta(&s, rhoprime, 0);
-    polyveck_uniform_eta(&e, rhoprime, NGCC_SIGN_L);
+    polyveck_uniform_eta(&e, rhoprime, SHUTTLE_L);
 
     norm_sq = 1;
     norm_sq += polyvecl_sq_norm(&s);
     norm_sq += polyveck_sq_norm(&e);
 
-    if(norm_sq < (int64_t)NGCC_SIGN_BK * NGCC_SIGN_BK
-       && norm_sq > (int64_t)NGCC_SIGN_BK_LOW * NGCC_SIGN_BK_LOW)
+    if(norm_sq < (int64_t)SHUTTLE_BK * SHUTTLE_BK
+       && norm_sq > (int64_t)SHUTTLE_BK_LOW * SHUTTLE_BK_LOW)
       break;
   }
 
   {
     polyveck a_gen_hat;
-    polyveck A_gen_hat[NGCC_SIGN_L];
+    polyveck A_gen_hat[SHUTTLE_L];
     polyvec sk_full;
     unsigned int j;
 
     a_gen_hat = a_gen;
     polyveck_ntt(&a_gen_hat);
-    for(j = 0; j < NGCC_SIGN_L; ++j) {
+    for(j = 0; j < SHUTTLE_L; ++j) {
       A_gen_hat[j] = A_gen[j];
       polyveck_ntt(&A_gen_hat[j]);
     }
@@ -204,7 +204,7 @@ int crypto_sign_keypair(uint8_t *pk, uint8_t *sk)
   }
 
   pack_pk(pk, rho, &b);
-  shake256(tr, NGCC_SIGN_TRBYTES, pk, NGCC_SIGN_PUBLICKEYBYTES);
+  shake256(tr, SHUTTLE_TRBYTES, pk, SHUTTLE_PUBLICKEYBYTES);
   pack_sk(sk, rho, tr, key, &s, &e);
 
   return 0;
@@ -217,27 +217,27 @@ int crypto_sign_signature(uint8_t *sig, size_t *siglen,
                           const uint8_t *m, size_t mlen,
                           const uint8_t *sk)
 {
-  uint8_t rho[NGCC_SIGN_SEEDBYTES];
-  uint8_t tr[NGCC_SIGN_TRBYTES];
-  uint8_t key[NGCC_SIGN_SEEDBYTES];
-  uint8_t mu[NGCC_SIGN_CRHBYTES];
-  uint8_t rhoprime[NGCC_SIGN_CRHBYTES];
-  uint8_t seed_c[NGCC_SIGN_CTILDEBYTES];
-  uint8_t rnd[NGCC_SIGN_RNDBYTES];
+  uint8_t rho[SHUTTLE_SEEDBYTES];
+  uint8_t tr[SHUTTLE_TRBYTES];
+  uint8_t key[SHUTTLE_SEEDBYTES];
+  uint8_t mu[SHUTTLE_CRHBYTES];
+  uint8_t rhoprime[SHUTTLE_CRHBYTES];
+  uint8_t seed_c[SHUTTLE_CTILDEBYTES];
+  uint8_t rnd[SHUTTLE_RNDBYTES];
   polyvecl s;
   polyveck e;
   polyveck a_gen_hat_store;
-  polyveck A_gen_hat[NGCC_SIGN_L];
+  polyveck A_gen_hat[SHUTTLE_L];
   polyvec sk_full, y, z;
   polyveck w, w1, w0;
   poly c_poly;
-  int8_t irs_signs[NGCC_SIGN_TAU];
+  int8_t irs_signs[SHUTTLE_TAU];
   int64_t gamma_q62, norm_sq;
   unsigned int i, j, n;
   unsigned int nonce = 0;
   int irs_ok;
-  int16_t y_buf0[NGCC_SIGN_N], y_buf1[NGCC_SIGN_N];
-  int16_t y_buf2[NGCC_SIGN_N], y_buf3[NGCC_SIGN_N];
+  int16_t y_buf0[SHUTTLE_N], y_buf1[SHUTTLE_N];
+  int16_t y_buf2[SHUTTLE_N], y_buf3[SHUTTLE_N];
 
   unpack_sk(rho, tr, key, &s, &e, sk);
   build_sk_full(&sk_full, &s, &e);
@@ -251,23 +251,23 @@ int crypto_sign_signature(uint8_t *sig, size_t *siglen,
   {
     keccak_state state;
 
-    randombytes(rnd, NGCC_SIGN_RNDBYTES);
+    randombytes(rnd, SHUTTLE_RNDBYTES);
     shake256_init(&state);
-    shake256_absorb(&state, key, NGCC_SIGN_SEEDBYTES);
-    shake256_absorb(&state, rnd, NGCC_SIGN_RNDBYTES);
-    shake256_absorb(&state, mu, NGCC_SIGN_CRHBYTES);
+    shake256_absorb(&state, key, SHUTTLE_SEEDBYTES);
+    shake256_absorb(&state, rnd, SHUTTLE_RNDBYTES);
+    shake256_absorb(&state, mu, SHUTTLE_CRHBYTES);
     shake256_finalize(&state);
-    shake256_squeeze(rhoprime, NGCC_SIGN_CRHBYTES, &state);
+    shake256_squeeze(rhoprime, SHUTTLE_CRHBYTES, &state);
   }
 
   {
     polyveck a_gen;
-    polyveck A_gen[NGCC_SIGN_L];
+    polyveck A_gen[SHUTTLE_L];
 
     polyvec_matrix_expand(&a_gen, A_gen, rho);
     a_gen_hat_store = a_gen;
     polyveck_ntt(&a_gen_hat_store);
-    for(j = 0; j < NGCC_SIGN_L; ++j) {
+    for(j = 0; j < SHUTTLE_L; ++j) {
       A_gen_hat[j] = A_gen[j];
       polyveck_ntt(&A_gen_hat[j]);
     }
@@ -277,10 +277,10 @@ int crypto_sign_signature(uint8_t *sig, size_t *siglen,
     /* Sample y */
     sample_gauss_N_4x(y_buf0, y_buf1, y_buf2, y_buf3,
                        rhoprime, nonce, nonce + 1, nonce + 2, nonce + 3,
-                       NGCC_SIGN_N, NGCC_SIGN_N, NGCC_SIGN_N, NGCC_SIGN_N);
+                       SHUTTLE_N, SHUTTLE_N, SHUTTLE_N, SHUTTLE_N);
     nonce += 4;
 
-    for(n = 0; n < NGCC_SIGN_N; ++n) {
+    for(n = 0; n < SHUTTLE_N; ++n) {
       y.vec[0].coeffs[n] = (int32_t)y_buf0[n];
       y.vec[1].coeffs[n] = (int32_t)y_buf1[n];
       y.vec[2].coeffs[n] = (int32_t)y_buf2[n];
@@ -289,10 +289,10 @@ int crypto_sign_signature(uint8_t *sig, size_t *siglen,
 
     sample_gauss_N_4x(y_buf0, y_buf1, y_buf2, y_buf3,
                        rhoprime, nonce, nonce + 1, 0, 0,
-                       NGCC_SIGN_N, NGCC_SIGN_N, 0, 0);
+                       SHUTTLE_N, SHUTTLE_N, 0, 0);
     nonce += 2;
 
-    for(n = 0; n < NGCC_SIGN_N; ++n) {
+    for(n = 0; n < SHUTTLE_N; ++n) {
       y.vec[4].coeffs[n] = (int32_t)y_buf0[n];
       y.vec[5].coeffs[n] = (int32_t)y_buf1[n];
     }
@@ -307,13 +307,13 @@ int crypto_sign_signature(uint8_t *sig, size_t *siglen,
     z = y;
     {
       keccak_state rng_state;
-      uint8_t irs_seed[NGCC_SIGN_SEEDBYTES + NGCC_SIGN_CRHBYTES +
-                        NGCC_SIGN_CTILDEBYTES];
+      uint8_t irs_seed[SHUTTLE_SEEDBYTES + SHUTTLE_CRHBYTES +
+                        SHUTTLE_CTILDEBYTES];
 
-      memcpy(irs_seed, key, NGCC_SIGN_SEEDBYTES);
-      memcpy(irs_seed + NGCC_SIGN_SEEDBYTES, mu, NGCC_SIGN_CRHBYTES);
-      memcpy(irs_seed + NGCC_SIGN_SEEDBYTES + NGCC_SIGN_CRHBYTES,
-             seed_c, NGCC_SIGN_CTILDEBYTES);
+      memcpy(irs_seed, key, SHUTTLE_SEEDBYTES);
+      memcpy(irs_seed + SHUTTLE_SEEDBYTES, mu, SHUTTLE_CRHBYTES);
+      memcpy(irs_seed + SHUTTLE_SEEDBYTES + SHUTTLE_CRHBYTES,
+             seed_c, SHUTTLE_CTILDEBYTES);
       shake256_init(&rng_state);
       shake256_absorb(&rng_state, irs_seed, sizeof(irs_seed));
       shake256_finalize(&rng_state);
@@ -328,16 +328,16 @@ int crypto_sign_signature(uint8_t *sig, size_t *siglen,
     /* Norm check on z1 */
     {
       polyvecl z1;
-      for(i = 0; i < NGCC_SIGN_L; ++i)
+      for(i = 0; i < SHUTTLE_L; ++i)
         z1.vec[i] = z.vec[1 + i];
       norm_sq = polyvecl_sq_norm(&z1);
-      if(norm_sq >= (int64_t)NGCC_SIGN_BS_SQ)
+      if(norm_sq >= (int64_t)SHUTTLE_BS_SQ)
         continue;
     }
 
     /* Pack signature */
     pack_sig(sig, seed_c, irs_signs, &z);
-    *siglen = NGCC_SIGN_BYTES;
+    *siglen = SHUTTLE_BYTES;
 
     return 0;
   }
@@ -350,21 +350,21 @@ int crypto_sign_verify(const uint8_t *sig, size_t siglen,
                        const uint8_t *m, size_t mlen,
                        const uint8_t *pk)
 {
-  uint8_t rho[NGCC_SIGN_SEEDBYTES];
-  uint8_t tr[NGCC_SIGN_TRBYTES];
-  uint8_t mu[NGCC_SIGN_CRHBYTES];
-  uint8_t seed_c[NGCC_SIGN_CTILDEBYTES];
-  uint8_t seed_c_prime[NGCC_SIGN_CTILDEBYTES];
-  int8_t irs_signs[NGCC_SIGN_TAU];
+  uint8_t rho[SHUTTLE_SEEDBYTES];
+  uint8_t tr[SHUTTLE_TRBYTES];
+  uint8_t mu[SHUTTLE_CRHBYTES];
+  uint8_t seed_c[SHUTTLE_CTILDEBYTES];
+  uint8_t seed_c_prime[SHUTTLE_CTILDEBYTES];
+  int8_t irs_signs[SHUTTLE_TAU];
   polyveck b;
   polyveck a_gen_hat;
-  polyveck A_gen_hat[NGCC_SIGN_L];
+  polyveck A_gen_hat[SHUTTLE_L];
   polyvec z;
   polyveck w, w1, w0;
   poly c_eff, c_eff_hat;
   unsigned int i, j;
 
-  if(siglen != NGCC_SIGN_BYTES)
+  if(siglen != SHUTTLE_BYTES)
     return -1;
 
   unpack_pk(rho, &b, pk);
@@ -375,25 +375,25 @@ int crypto_sign_verify(const uint8_t *sig, size_t siglen,
   /* Norm check on z1 */
   {
     polyvecl z1;
-    for(i = 0; i < NGCC_SIGN_L; ++i)
+    for(i = 0; i < SHUTTLE_L; ++i)
       z1.vec[i] = z.vec[1 + i];
-    if(polyvecl_sq_norm(&z1) > (int64_t)NGCC_SIGN_BV_SQ)
+    if(polyvecl_sq_norm(&z1) > (int64_t)SHUTTLE_BV_SQ)
       return -1;
   }
 
   /* mu */
-  shake256(tr, NGCC_SIGN_TRBYTES, pk, NGCC_SIGN_PUBLICKEYBYTES);
+  shake256(tr, SHUTTLE_TRBYTES, pk, SHUTTLE_PUBLICKEYBYTES);
   compute_mu(mu, tr, m, mlen);
 
   /* Expand matrix */
   {
     polyveck a_gen;
-    polyveck A_gen[NGCC_SIGN_L];
+    polyveck A_gen[SHUTTLE_L];
 
     polyvec_matrix_expand(&a_gen, A_gen, rho);
     a_gen_hat = a_gen;
     polyveck_ntt(&a_gen_hat);
-    for(j = 0; j < NGCC_SIGN_L; ++j) {
+    for(j = 0; j < SHUTTLE_L; ++j) {
       A_gen_hat[j] = A_gen[j];
       polyveck_ntt(&A_gen_hat[j]);
     }
@@ -427,7 +427,7 @@ int crypto_sign_verify(const uint8_t *sig, size_t siglen,
   polyveck_decompose(&w1, &w0, &w);
   compute_seed_c(seed_c_prime, &w1, mu);
 
-  for(i = 0; i < NGCC_SIGN_CTILDEBYTES; ++i) {
+  for(i = 0; i < SHUTTLE_CTILDEBYTES; ++i) {
     if(seed_c[i] != seed_c_prime[i])
       return -1;
   }
@@ -445,8 +445,8 @@ int crypto_sign(uint8_t *sm, size_t *smlen,
   size_t siglen;
   int ret;
 
-  memmove(sm + NGCC_SIGN_BYTES, m, mlen);
-  ret = crypto_sign_signature(sm, &siglen, sm + NGCC_SIGN_BYTES, mlen, sk);
+  memmove(sm + SHUTTLE_BYTES, m, mlen);
+  ret = crypto_sign_signature(sm, &siglen, sm + SHUTTLE_BYTES, mlen, sk);
   *smlen = siglen + mlen;
 
   return ret;
@@ -461,13 +461,13 @@ int crypto_sign_open(uint8_t *m, size_t *mlen,
 {
   int ret;
 
-  if(smlen < NGCC_SIGN_BYTES)
+  if(smlen < SHUTTLE_BYTES)
     return -1;
 
-  *mlen = smlen - NGCC_SIGN_BYTES;
+  *mlen = smlen - SHUTTLE_BYTES;
 
-  ret = crypto_sign_verify(sm, NGCC_SIGN_BYTES,
-                           sm + NGCC_SIGN_BYTES, *mlen,
+  ret = crypto_sign_verify(sm, SHUTTLE_BYTES,
+                           sm + SHUTTLE_BYTES, *mlen,
                            pk);
 
   if(ret) {
@@ -475,6 +475,6 @@ int crypto_sign_open(uint8_t *m, size_t *mlen,
     return -1;
   }
 
-  memmove(m, sm + NGCC_SIGN_BYTES, *mlen);
+  memmove(m, sm + SHUTTLE_BYTES, *mlen);
   return 0;
 }

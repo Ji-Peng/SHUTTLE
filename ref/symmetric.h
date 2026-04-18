@@ -1,12 +1,12 @@
 /*
- * symmetric.h - Symmetric primitives for NGCC_SIGN.
+ * symmetric.h - Symmetric primitives for SHUTTLE.
  *
  * Wraps Dilithium's FIPS 202 (SHAKE-256) as the stream cipher.
  * Uses keccak_state (stack-allocated, no heap) from Dilithium.
  */
 
-#ifndef NGCC_SIGN_SYMMETRIC_H
-#define NGCC_SIGN_SYMMETRIC_H
+#ifndef SHUTTLE_SYMMETRIC_H
+#define SHUTTLE_SYMMETRIC_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -21,14 +21,14 @@ typedef keccak_state stream256_state;
 /*
  * Initialize SHAKE-256 stream from seed (32 bytes) + nonce (8 bytes LE).
  */
-void ngcc_sign_shake256_stream_init(stream256_state *state,
-                                    const uint8_t seed[NGCC_SIGN_SEEDBYTES],
+void shuttle_shake256_stream_init(stream256_state *state,
+                                    const uint8_t seed[SHUTTLE_SEEDBYTES],
                                     uint64_t nonce);
 
 /* Convenience macros */
 #define stream256_init(STATE, SEED, NONCE) \
-    ngcc_sign_shake256_stream_init(STATE, SEED, NONCE)
+    shuttle_shake256_stream_init(STATE, SEED, NONCE)
 #define stream256_squeezeblocks(OUT, NBLOCKS, STATE) \
     shake256_squeezeblocks(OUT, NBLOCKS, STATE)
 
-#endif /* NGCC_SIGN_SYMMETRIC_H */
+#endif /* SHUTTLE_SYMMETRIC_H */

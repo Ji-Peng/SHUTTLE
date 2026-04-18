@@ -1,5 +1,5 @@
 /*
- * test_ntt.c - NTT correctness tests for NGCC_SIGN.
+ * test_ntt.c - NTT correctness tests for SHUTTLE.
  *
  * Tests:
  *  1) NTT -> INTT roundtrip
@@ -16,8 +16,8 @@
 #include "../poly.h"
 #include "../randombytes.h"
 
-#define N NGCC_SIGN_N
-#define Q NGCC_SIGN_Q
+#define N SHUTTLE_N
+#define Q SHUTTLE_Q
 
 /* Schoolbook polynomial multiplication mod x^n+1, mod q */
 static void poly_schoolbook(int32_t c[N], const int32_t a[N], const int32_t b[N]) {
@@ -58,7 +58,7 @@ static int test_ntt_roundtrip(void) {
     /* Reduce a[i] to [0, q) */
     int32_t got = freeze(a[i]);
     /* Expected: a_orig[i] * MONT mod q */
-    int32_t expect = (int32_t)(((int64_t)a_orig[i] * NGCC_SIGN_MONT % Q + Q) % Q);
+    int32_t expect = (int32_t)(((int64_t)a_orig[i] * SHUTTLE_MONT % Q + Q) % Q);
     if (got != expect) {
       printf("FAIL at index %d: got %d, expected %d (orig=%d)\n",
              i, got, expect, a_orig[i]);

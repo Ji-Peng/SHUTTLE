@@ -28,13 +28,13 @@ static int sample_gauss_sigma128(int16_t *r, const uint8_t *rand,
                                  int16_t x, const uint8_t *signs,
                                  size_t idx) {
     uint32_t y = rand[0] & 0x3FU;
-    int32_t candidate = (int32_t)x * NGCC_SIGN_GAUSS_K + (int32_t)y;
+    int32_t candidate = (int32_t)x * SHUTTLE_GAUSS_K + (int32_t)y;
 
     uint64_t rand_tail = load_le64(rand + 1);
     uint8_t sign_r0 = rand_tail & 1;
     uint64_t rand_rej_63 = rand_tail >> 1;
 
-    uint32_t t = y + (uint32_t)(2 * NGCC_SIGN_GAUSS_K) * (uint32_t)x;
+    uint32_t t = y + (uint32_t)(2 * SHUTTLE_GAUSS_K) * (uint32_t)x;
     uint64_t num = (uint64_t)y * (uint64_t)t;
     uint64_t exp_q60 = num << 45;
 
@@ -53,27 +53,27 @@ static int sample_gauss_sigma128(int16_t *r, const uint8_t *rand,
 
 void sample_gauss_N_4x(int16_t *r0, int16_t *r1,
                         int16_t *r2, int16_t *r3,
-                        const uint8_t seed[NGCC_SIGN_SEEDBYTES],
+                        const uint8_t seed[SHUTTLE_SEEDBYTES],
                         uint64_t nonce0, uint64_t nonce1,
                         uint64_t nonce2, uint64_t nonce3,
                         size_t len0, size_t len1,
                         size_t len2, size_t len3) {
     /* Prepare 4 input buffers: seed || nonce (LE 8 bytes) */
-    uint8_t inbuf[4][NGCC_SIGN_SEEDBYTES + 8];
+    uint8_t inbuf[4][SHUTTLE_SEEDBYTES + 8];
     uint64_t nonces[4] = {nonce0, nonce1, nonce2, nonce3};
     size_t len[4] = {len0, len1, len2, len3};
 
     for (int j = 0; j < 4; j++) {
-        memcpy(inbuf[j], seed, NGCC_SIGN_SEEDBYTES);
+        memcpy(inbuf[j], seed, SHUTTLE_SEEDBYTES);
         for (int i = 0; i < 8; i++)
-            inbuf[j][NGCC_SIGN_SEEDBYTES + i] = (uint8_t)(nonces[j] >> (8 * i));
+            inbuf[j][SHUTTLE_SEEDBYTES + i] = (uint8_t)(nonces[j] >> (8 * i));
     }
 
     /* 4-way SHAKE-256 absorb */
     keccakx4_state state4x;
     shake256x4_absorb_once(&state4x,
                            inbuf[0], inbuf[1], inbuf[2], inbuf[3],
-                           NGCC_SIGN_SEEDBYTES + 8);
+                           SHUTTLE_SEEDBYTES + 8);
 
     /* Per-lane buffers: large initial squeeze */
     static uint8_t buf[4][BUF_4X_SIZE];
@@ -84,7 +84,7 @@ void sample_gauss_N_4x(int16_t *r0, int16_t *r1,
     size_t pos[4], avail[4], coefcnt[4];
 
     /* Extract signs and initialize per-lane state */
-    uint8_t signs[4][NGCC_SIGN_N / 8];
+    uint8_t signs[4][SHUTTLE_N / 8];
     for (int j = 0; j < 4; j++) {
         size_t sb = len[j] / 8;
         if (len[j] > 0)

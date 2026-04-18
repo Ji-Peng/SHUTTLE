@@ -1,5 +1,5 @@
 /*
- * test_sign.c - Basic functional tests for the NGCC_SIGN signature scheme.
+ * test_sign.c - Basic functional tests for the SHUTTLE signature scheme.
  *
  * Tests:
  *   1. Key generation: generates a keypair, prints sizes
@@ -39,25 +39,25 @@ static void print_hex(const char *label, const uint8_t *data, size_t len)
 
 int main(void)
 {
-  uint8_t pk[NGCC_SIGN_PUBLICKEYBYTES];
-  uint8_t sk[NGCC_SIGN_SECRETKEYBYTES];
-  uint8_t sig[NGCC_SIGN_BYTES];
+  uint8_t pk[SHUTTLE_PUBLICKEYBYTES];
+  uint8_t sk[SHUTTLE_SECRETKEYBYTES];
+  uint8_t sig[SHUTTLE_BYTES];
   uint8_t msg[MLEN_MAX];
   size_t siglen, mlen;
   int ret;
   unsigned int i;
 
-  printf("=== NGCC_SIGN Functional Test ===\n\n");
+  printf("=== SHUTTLE Functional Test ===\n\n");
   printf("Parameters:\n");
   printf("  N = %d, Q = %d, L = %d, M = %d\n",
-         NGCC_SIGN_N, NGCC_SIGN_Q, NGCC_SIGN_L, NGCC_SIGN_M);
+         SHUTTLE_N, SHUTTLE_Q, SHUTTLE_L, SHUTTLE_M);
   printf("  ETA = %d, TAU = %d, SIGMA = %d\n",
-         NGCC_SIGN_ETA, NGCC_SIGN_TAU, NGCC_SIGN_SIGMA);
-  printf("  Public key size:  %d bytes\n", NGCC_SIGN_PUBLICKEYBYTES);
-  printf("  Secret key size:  %d bytes\n", NGCC_SIGN_SECRETKEYBYTES);
-  printf("  Signature size:   %d bytes\n", NGCC_SIGN_BYTES);
+         SHUTTLE_ETA, SHUTTLE_TAU, SHUTTLE_SIGMA);
+  printf("  Public key size:  %d bytes\n", SHUTTLE_PUBLICKEYBYTES);
+  printf("  Secret key size:  %d bytes\n", SHUTTLE_SECRETKEYBYTES);
+  printf("  Signature size:   %d bytes\n", SHUTTLE_BYTES);
   printf("  BS_SQ = %d, BV_SQ = %d\n\n",
-         NGCC_SIGN_BS_SQ, NGCC_SIGN_BV_SQ);
+         SHUTTLE_BS_SQ, SHUTTLE_BV_SQ);
 
   /* ---- Test 1: Key Generation ---- */
   printf("[Test 1] Key generation...\n");
@@ -66,14 +66,14 @@ int main(void)
     printf("  FAIL: keypair returned %d\n", ret);
     return 1;
   }
-  print_hex("  pk", pk, NGCC_SIGN_PUBLICKEYBYTES);
-  print_hex("  sk", sk, NGCC_SIGN_SECRETKEYBYTES);
+  print_hex("  pk", pk, SHUTTLE_PUBLICKEYBYTES);
+  print_hex("  sk", sk, SHUTTLE_SECRETKEYBYTES);
   printf("  PASS\n\n");
 
   /* ---- Test 2: Sign + Verify ---- */
   printf("[Test 2] Sign and verify a test message...\n");
   mlen = 33;
-  memcpy(msg, "NGCC_SIGN test message, round 0!", mlen);
+  memcpy(msg, "SHUTTLE test message, round 0!", mlen);
   msg[mlen - 1] = '\0';
 
   ret = crypto_sign_signature(sig, &siglen, msg, mlen, sk);
@@ -94,13 +94,13 @@ int main(void)
   /* ---- Test 3: Forgery Detection ---- */
   printf("[Test 3] Forgery detection (bit flip in signature)...\n");
   {
-    uint8_t sig_bad[NGCC_SIGN_BYTES];
-    memcpy(sig_bad, sig, NGCC_SIGN_BYTES);
+    uint8_t sig_bad[SHUTTLE_BYTES];
+    memcpy(sig_bad, sig, SHUTTLE_BYTES);
 
     /* Flip a bit in the z1 portion of the signature */
-    sig_bad[NGCC_SIGN_CTILDEBYTES + 10] ^= 0x01;
+    sig_bad[SHUTTLE_CTILDEBYTES + 10] ^= 0x01;
 
-    ret = crypto_sign_verify(sig_bad, NGCC_SIGN_BYTES, msg, mlen, pk);
+    ret = crypto_sign_verify(sig_bad, SHUTTLE_BYTES, msg, mlen, pk);
     if(ret == 0) {
       printf("  FAIL: forged signature accepted!\n");
       return 1;
@@ -124,13 +124,13 @@ int main(void)
 
   /* Flip a bit near the end of the z portion */
   {
-    uint8_t sig_bad[NGCC_SIGN_BYTES];
-    memcpy(sig_bad, sig, NGCC_SIGN_BYTES);
+    uint8_t sig_bad[SHUTTLE_BYTES];
+    memcpy(sig_bad, sig, SHUTTLE_BYTES);
 
     /* Flip a bit in the last polynomial of z (near end of signature) */
-    sig_bad[NGCC_SIGN_BYTES - 10] ^= 0x04;
+    sig_bad[SHUTTLE_BYTES - 10] ^= 0x04;
 
-    ret = crypto_sign_verify(sig_bad, NGCC_SIGN_BYTES, msg, mlen, pk);
+    ret = crypto_sign_verify(sig_bad, SHUTTLE_BYTES, msg, mlen, pk);
     if(ret == 0) {
       printf("  FAIL: tail-flipped signature accepted!\n");
       return 1;
@@ -171,7 +171,7 @@ int main(void)
   /* ---- Test 5: Combined sign/open API ---- */
   printf("[Test 5] Combined crypto_sign / crypto_sign_open...\n");
   {
-    uint8_t sm[NGCC_SIGN_BYTES + MLEN_MAX];
+    uint8_t sm[SHUTTLE_BYTES + MLEN_MAX];
     uint8_t m2[MLEN_MAX];
     size_t smlen, m2len;
 

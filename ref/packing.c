@@ -1,5 +1,5 @@
 /*
- * packing.c - Serialization of keys and signatures for NGCC_SIGN.
+ * packing.c - Serialization of keys and signatures for SHUTTLE.
  *
  * Public key format (928 bytes):
  *   rho (32B) || polypk_pack(b[0]) (448B) || polypk_pack(b[1]) (448B)
@@ -26,100 +26,100 @@
 /*************************************************
 * Name:        pack_pk
 **************************************************/
-void pack_pk(uint8_t pk[NGCC_SIGN_PUBLICKEYBYTES],
-             const uint8_t rho[NGCC_SIGN_SEEDBYTES],
+void pack_pk(uint8_t pk[SHUTTLE_PUBLICKEYBYTES],
+             const uint8_t rho[SHUTTLE_SEEDBYTES],
              const polyveck *b)
 {
   unsigned int i;
 
-  memcpy(pk, rho, NGCC_SIGN_SEEDBYTES);
-  pk += NGCC_SIGN_SEEDBYTES;
+  memcpy(pk, rho, SHUTTLE_SEEDBYTES);
+  pk += SHUTTLE_SEEDBYTES;
 
-  for(i = 0; i < NGCC_SIGN_M; ++i) {
+  for(i = 0; i < SHUTTLE_M; ++i) {
     polypk_pack(pk, &b->vec[i]);
-    pk += NGCC_SIGN_POLYPK_PACKEDBYTES;
+    pk += SHUTTLE_POLYPK_PACKEDBYTES;
   }
 }
 
 /*************************************************
 * Name:        unpack_pk
 **************************************************/
-void unpack_pk(uint8_t rho[NGCC_SIGN_SEEDBYTES],
+void unpack_pk(uint8_t rho[SHUTTLE_SEEDBYTES],
                polyveck *b,
-               const uint8_t pk[NGCC_SIGN_PUBLICKEYBYTES])
+               const uint8_t pk[SHUTTLE_PUBLICKEYBYTES])
 {
   unsigned int i;
 
-  memcpy(rho, pk, NGCC_SIGN_SEEDBYTES);
-  pk += NGCC_SIGN_SEEDBYTES;
+  memcpy(rho, pk, SHUTTLE_SEEDBYTES);
+  pk += SHUTTLE_SEEDBYTES;
 
-  for(i = 0; i < NGCC_SIGN_M; ++i) {
+  for(i = 0; i < SHUTTLE_M; ++i) {
     polypk_unpack(&b->vec[i], pk);
-    pk += NGCC_SIGN_POLYPK_PACKEDBYTES;
+    pk += SHUTTLE_POLYPK_PACKEDBYTES;
   }
 }
 
 /*************************************************
 * Name:        pack_sk
 **************************************************/
-void pack_sk(uint8_t sk[NGCC_SIGN_SECRETKEYBYTES],
-             const uint8_t rho[NGCC_SIGN_SEEDBYTES],
-             const uint8_t tr[NGCC_SIGN_TRBYTES],
-             const uint8_t key[NGCC_SIGN_SEEDBYTES],
+void pack_sk(uint8_t sk[SHUTTLE_SECRETKEYBYTES],
+             const uint8_t rho[SHUTTLE_SEEDBYTES],
+             const uint8_t tr[SHUTTLE_TRBYTES],
+             const uint8_t key[SHUTTLE_SEEDBYTES],
              const polyvecl *s,
              const polyveck *e)
 {
   unsigned int i;
 
-  memcpy(sk, rho, NGCC_SIGN_SEEDBYTES);
-  sk += NGCC_SIGN_SEEDBYTES;
+  memcpy(sk, rho, SHUTTLE_SEEDBYTES);
+  sk += SHUTTLE_SEEDBYTES;
 
-  memcpy(sk, tr, NGCC_SIGN_TRBYTES);
-  sk += NGCC_SIGN_TRBYTES;
+  memcpy(sk, tr, SHUTTLE_TRBYTES);
+  sk += SHUTTLE_TRBYTES;
 
-  memcpy(sk, key, NGCC_SIGN_SEEDBYTES);
-  sk += NGCC_SIGN_SEEDBYTES;
+  memcpy(sk, key, SHUTTLE_SEEDBYTES);
+  sk += SHUTTLE_SEEDBYTES;
 
-  for(i = 0; i < NGCC_SIGN_L; ++i) {
+  for(i = 0; i < SHUTTLE_L; ++i) {
     polyeta_pack(sk, &s->vec[i]);
-    sk += NGCC_SIGN_POLYETA_PACKEDBYTES;
+    sk += SHUTTLE_POLYETA_PACKEDBYTES;
   }
 
-  for(i = 0; i < NGCC_SIGN_M; ++i) {
+  for(i = 0; i < SHUTTLE_M; ++i) {
     polyeta_pack(sk, &e->vec[i]);
-    sk += NGCC_SIGN_POLYETA_PACKEDBYTES;
+    sk += SHUTTLE_POLYETA_PACKEDBYTES;
   }
 }
 
 /*************************************************
 * Name:        unpack_sk
 **************************************************/
-void unpack_sk(uint8_t rho[NGCC_SIGN_SEEDBYTES],
-               uint8_t tr[NGCC_SIGN_TRBYTES],
-               uint8_t key[NGCC_SIGN_SEEDBYTES],
+void unpack_sk(uint8_t rho[SHUTTLE_SEEDBYTES],
+               uint8_t tr[SHUTTLE_TRBYTES],
+               uint8_t key[SHUTTLE_SEEDBYTES],
                polyvecl *s,
                polyveck *e,
-               const uint8_t sk[NGCC_SIGN_SECRETKEYBYTES])
+               const uint8_t sk[SHUTTLE_SECRETKEYBYTES])
 {
   unsigned int i;
 
-  memcpy(rho, sk, NGCC_SIGN_SEEDBYTES);
-  sk += NGCC_SIGN_SEEDBYTES;
+  memcpy(rho, sk, SHUTTLE_SEEDBYTES);
+  sk += SHUTTLE_SEEDBYTES;
 
-  memcpy(tr, sk, NGCC_SIGN_TRBYTES);
-  sk += NGCC_SIGN_TRBYTES;
+  memcpy(tr, sk, SHUTTLE_TRBYTES);
+  sk += SHUTTLE_TRBYTES;
 
-  memcpy(key, sk, NGCC_SIGN_SEEDBYTES);
-  sk += NGCC_SIGN_SEEDBYTES;
+  memcpy(key, sk, SHUTTLE_SEEDBYTES);
+  sk += SHUTTLE_SEEDBYTES;
 
-  for(i = 0; i < NGCC_SIGN_L; ++i) {
+  for(i = 0; i < SHUTTLE_L; ++i) {
     polyeta_unpack(&s->vec[i], sk);
-    sk += NGCC_SIGN_POLYETA_PACKEDBYTES;
+    sk += SHUTTLE_POLYETA_PACKEDBYTES;
   }
 
-  for(i = 0; i < NGCC_SIGN_M; ++i) {
+  for(i = 0; i < SHUTTLE_M; ++i) {
     polyeta_unpack(&e->vec[i], sk);
-    sk += NGCC_SIGN_POLYETA_PACKEDBYTES;
+    sk += SHUTTLE_POLYETA_PACKEDBYTES;
   }
 }
 
@@ -137,27 +137,27 @@ void unpack_sk(uint8_t rho[NGCC_SIGN_SEEDBYTES],
 *              - const int8_t irs_signs[]: per-monomial sign choices from IRS
 *              - const polyvec *z: full response vector (VECLEN polys)
 **************************************************/
-void pack_sig(uint8_t sig[NGCC_SIGN_BYTES],
-              const uint8_t c_tilde[NGCC_SIGN_CTILDEBYTES],
-              const int8_t irs_signs[NGCC_SIGN_TAU],
+void pack_sig(uint8_t sig[SHUTTLE_BYTES],
+              const uint8_t c_tilde[SHUTTLE_CTILDEBYTES],
+              const int8_t irs_signs[SHUTTLE_TAU],
               const polyvec *z)
 {
   unsigned int i;
 
-  memcpy(sig, c_tilde, NGCC_SIGN_CTILDEBYTES);
-  sig += NGCC_SIGN_CTILDEBYTES;
+  memcpy(sig, c_tilde, SHUTTLE_CTILDEBYTES);
+  sig += SHUTTLE_CTILDEBYTES;
 
   /* Pack IRS sign bits: bit i is 1 if irs_signs[i] > 0, 0 if < 0 */
-  memset(sig, 0, NGCC_SIGN_IRS_SIGNBYTES);
-  for(i = 0; i < NGCC_SIGN_TAU; ++i) {
+  memset(sig, 0, SHUTTLE_IRS_SIGNBYTES);
+  for(i = 0; i < SHUTTLE_TAU; ++i) {
     if(irs_signs[i] > 0)
       sig[i / 8] |= (uint8_t)(1u << (i % 8));
   }
-  sig += NGCC_SIGN_IRS_SIGNBYTES;
+  sig += SHUTTLE_IRS_SIGNBYTES;
 
-  for(i = 0; i < NGCC_SIGN_VECLEN; ++i) {
+  for(i = 0; i < SHUTTLE_VECLEN; ++i) {
     polyz_pack(sig, &z->vec[i]);
-    sig += NGCC_SIGN_POLYZ_PACKEDBYTES;
+    sig += SHUTTLE_POLYZ_PACKEDBYTES;
   }
 }
 
@@ -173,28 +173,28 @@ void pack_sig(uint8_t sig[NGCC_SIGN_BYTES],
 *
 * Returns 0 on success.
 **************************************************/
-int unpack_sig(uint8_t c_tilde[NGCC_SIGN_CTILDEBYTES],
-               int8_t irs_signs[NGCC_SIGN_TAU],
+int unpack_sig(uint8_t c_tilde[SHUTTLE_CTILDEBYTES],
+               int8_t irs_signs[SHUTTLE_TAU],
                polyvec *z,
-               const uint8_t sig[NGCC_SIGN_BYTES])
+               const uint8_t sig[SHUTTLE_BYTES])
 {
   unsigned int i;
 
-  memcpy(c_tilde, sig, NGCC_SIGN_CTILDEBYTES);
-  sig += NGCC_SIGN_CTILDEBYTES;
+  memcpy(c_tilde, sig, SHUTTLE_CTILDEBYTES);
+  sig += SHUTTLE_CTILDEBYTES;
 
   /* Unpack IRS sign bits */
-  for(i = 0; i < NGCC_SIGN_TAU; ++i) {
+  for(i = 0; i < SHUTTLE_TAU; ++i) {
     if((sig[i / 8] >> (i % 8)) & 1)
       irs_signs[i] = 1;
     else
       irs_signs[i] = -1;
   }
-  sig += NGCC_SIGN_IRS_SIGNBYTES;
+  sig += SHUTTLE_IRS_SIGNBYTES;
 
-  for(i = 0; i < NGCC_SIGN_VECLEN; ++i) {
+  for(i = 0; i < SHUTTLE_VECLEN; ++i) {
     polyz_unpack(&z->vec[i], sig);
-    sig += NGCC_SIGN_POLYZ_PACKEDBYTES;
+    sig += SHUTTLE_POLYZ_PACKEDBYTES;
   }
 
   return 0;

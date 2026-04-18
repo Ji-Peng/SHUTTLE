@@ -1,5 +1,5 @@
 /*
- * sampler.c - Discrete Gaussian sampler for NGCC_SIGN (AVX2 version).
+ * sampler.c - Discrete Gaussian sampler for SHUTTLE (AVX2 version).
  *
  * sampler_sigma2: AVX2 8-wide CDT comparison (2 groups x 8 = 16 samples).
  * All other functions identical to ref. KAT-compatible: same random byte
@@ -127,13 +127,13 @@ static int sample_gauss_sigma128(int16_t *r, const uint8_t *rand,
                                  int16_t x, const uint8_t *signs,
                                  size_t idx) {
     uint32_t y = rand[0] & 0x3FU;
-    int32_t candidate = (int32_t)x * NGCC_SIGN_GAUSS_K + (int32_t)y;
+    int32_t candidate = (int32_t)x * SHUTTLE_GAUSS_K + (int32_t)y;
 
     uint64_t rand_tail = load_le64(rand + 1);
     uint8_t sign_r0 = rand_tail & 1;
     uint64_t rand_rej_63 = rand_tail >> 1;
 
-    uint32_t t = y + (uint32_t)(2 * NGCC_SIGN_GAUSS_K) * (uint32_t)x;
+    uint32_t t = y + (uint32_t)(2 * SHUTTLE_GAUSS_K) * (uint32_t)x;
     uint64_t num = (uint64_t)y * (uint64_t)t;
     uint64_t exp_q60 = num << 45;
 
@@ -154,7 +154,7 @@ static int sample_gauss_sigma128(int16_t *r, const uint8_t *rand,
  * sample_gauss_N (identical to ref)
  * ============================================================ */
 void sample_gauss_N(int16_t *r,
-                    const uint8_t seed[NGCC_SIGN_SEEDBYTES],
+                    const uint8_t seed[SHUTTLE_SEEDBYTES],
                     uint64_t nonce, size_t len) {
     uint8_t buf[GAUSS_BUF_SIZE];
     stream256_state state;
@@ -166,7 +166,7 @@ void sample_gauss_N(int16_t *r,
                           / STREAM256_BLOCKBYTES;
     stream256_squeezeblocks(buf, init_nblocks, &state);
 
-    uint8_t signs[NGCC_SIGN_N / 8];
+    uint8_t signs[SHUTTLE_N / 8];
     memcpy(signs, buf, sign_bytes);
     size_t pos = sign_bytes;
     size_t avail = init_nblocks * STREAM256_BLOCKBYTES - sign_bytes;

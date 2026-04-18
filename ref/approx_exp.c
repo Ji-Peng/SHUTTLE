@@ -1,5 +1,5 @@
 /*
- * approx_exp.c - ApproxExp V2 implementation for NGCC_SIGN.
+ * approx_exp.c - ApproxExp V2 implementation for SHUTTLE.
  *
  * V2 variant: [0, ln2/2) sub-interval, degree 9, 2-entry table.
  * 9 mulh64 (Horner) + 1 mulh64 (combine) + 2 ct_lookup entries.

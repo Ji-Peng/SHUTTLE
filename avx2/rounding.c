@@ -3,7 +3,7 @@
 #include "rounding.h"
 
 /*
- * Decomposition for NGCC_SIGN with alpha_h = 128, so 2*alpha_h = 256 = 2^8.
+ * Decomposition for SHUTTLE with alpha_h = 128, so 2*alpha_h = 256 = 2^8.
  *
  * For a standard representative a in [0, Q-1]:
  *   a1 = floor((a + 128) / 256) = (a + 128) >> 8
@@ -33,17 +33,17 @@ int32_t decompose(int32_t *a0, int32_t a) {
   int32_t a1;
 
   /* a1 = (a + alpha_h) / (2*alpha_h) = (a + 128) >> 8 */
-  a1 = (a + NGCC_SIGN_ALPHA_H) >> 8;
+  a1 = (a + SHUTTLE_ALPHA_H) >> 8;
 
   /* Handle wrap-around: Q = 15361, (Q-1)/256 = 60.
    * When a1 reaches 60, the high bits would exceed
    * the valid range, so wrap to 0. */
   a1 ^= ((59 - a1) >> 31) & a1;  /* if a1 == 60, set a1 = 0 */
 
-  *a0 = a - a1 * 2 * NGCC_SIGN_ALPHA_H;
+  *a0 = a - a1 * 2 * SHUTTLE_ALPHA_H;
   /* When a1 was set to 0 but a >= 60*256 = 15360,
    * we need a0 = a - Q to get negative remainder */
-  *a0 -= (((NGCC_SIGN_Q - 1) / 2 - *a0) >> 31) & NGCC_SIGN_Q;
+  *a0 -= (((SHUTTLE_Q - 1) / 2 - *a0) >> 31) & SHUTTLE_Q;
 
   return a1;
 }
@@ -61,9 +61,9 @@ int32_t decompose(int32_t *a0, int32_t a) {
 * Returns 1 if overflow.
 **************************************************/
 unsigned int make_hint(int32_t z2, int32_t comY) {
-  if(z2 > (int32_t)NGCC_SIGN_ALPHA_H
-     || z2 < -(int32_t)NGCC_SIGN_ALPHA_H
-     || (z2 == -(int32_t)NGCC_SIGN_ALPHA_H && comY != 0))
+  if(z2 > (int32_t)SHUTTLE_ALPHA_H
+     || z2 < -(int32_t)SHUTTLE_ALPHA_H
+     || (z2 == -(int32_t)SHUTTLE_ALPHA_H && comY != 0))
     return 1;
 
   return 0;

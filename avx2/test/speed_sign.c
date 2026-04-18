@@ -1,5 +1,5 @@
 /*
- * speed_sign.c - Performance benchmarks for NGCC_SIGN (AVX2).
+ * speed_sign.c - Performance benchmarks for SHUTTLE (AVX2).
  *
  * Benchmarks:
  *   1) crypto_sign_keypair
@@ -20,9 +20,9 @@
 #define MLEN   59
 
 int main(void) {
-    uint8_t pk[NGCC_SIGN_PUBLICKEYBYTES];
-    uint8_t sk[NGCC_SIGN_SECRETKEYBYTES];
-    uint8_t sig[NGCC_SIGN_BYTES];
+    uint8_t pk[SHUTTLE_PUBLICKEYBYTES];
+    uint8_t sk[SHUTTLE_SECRETKEYBYTES];
+    uint8_t sig[SHUTTLE_BYTES];
     uint8_t msg[MLEN];
     size_t siglen;
     uint64_t t[NTESTS];
@@ -30,13 +30,13 @@ int main(void) {
 
     randombytes(msg, MLEN);
 
-    printf("=== NGCC_SIGN Benchmarks - AVX2 ===\n");
+    printf("=== SHUTTLE Benchmarks - AVX2 ===\n");
     printf("Parameters: N=%d, Q=%d, L=%d, M=%d, SIGMA=%d, TAU=%d\n",
-           NGCC_SIGN_N, NGCC_SIGN_Q, NGCC_SIGN_L, NGCC_SIGN_M,
-           NGCC_SIGN_SIGMA, NGCC_SIGN_TAU);
+           SHUTTLE_N, SHUTTLE_Q, SHUTTLE_L, SHUTTLE_M,
+           SHUTTLE_SIGMA, SHUTTLE_TAU);
     printf("PK=%d bytes, SK=%d bytes, SIG=%d bytes\n\n",
-           NGCC_SIGN_PUBLICKEYBYTES, NGCC_SIGN_SECRETKEYBYTES,
-           NGCC_SIGN_BYTES);
+           SHUTTLE_PUBLICKEYBYTES, SHUTTLE_SECRETKEYBYTES,
+           SHUTTLE_BYTES);
 
     /* ---- 1. KeyGen ---- */
     for (i = 0; i < NTESTS; i++) {

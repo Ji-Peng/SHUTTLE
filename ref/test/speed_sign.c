@@ -12,18 +12,18 @@
 static uint64_t t[NTESTS];
 
 int main(void) {
-  uint8_t pk[NGCC_SIGN_PUBLICKEYBYTES];
-  uint8_t sk[NGCC_SIGN_SECRETKEYBYTES];
-  uint8_t sig[NGCC_SIGN_BYTES];
+  uint8_t pk[SHUTTLE_PUBLICKEYBYTES];
+  uint8_t sk[SHUTTLE_SECRETKEYBYTES];
+  uint8_t sig[SHUTTLE_BYTES];
   size_t siglen;
   uint8_t msg[32] = {0};
 
-  printf("=== NGCC_SIGN Benchmarks - Ref ===\n");
+  printf("=== SHUTTLE Benchmarks - Ref ===\n");
   printf("Parameters: N=%d, Q=%d, L=%d, M=%d, SIGMA=%d, TAU=%d\n",
-         NGCC_SIGN_N, NGCC_SIGN_Q, NGCC_SIGN_L, NGCC_SIGN_M,
-         NGCC_SIGN_SIGMA, NGCC_SIGN_TAU);
+         SHUTTLE_N, SHUTTLE_Q, SHUTTLE_L, SHUTTLE_M,
+         SHUTTLE_SIGMA, SHUTTLE_TAU);
   printf("PK=%d bytes, SK=%d bytes, SIG=%d bytes\n\n",
-         NGCC_SIGN_PUBLICKEYBYTES, NGCC_SIGN_SECRETKEYBYTES, NGCC_SIGN_BYTES);
+         SHUTTLE_PUBLICKEYBYTES, SHUTTLE_SECRETKEYBYTES, SHUTTLE_BYTES);
 
   /* KeyGen */
   for (int i = 0; i < NTESTS; i++) {
