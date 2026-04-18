@@ -1,7 +1,11 @@
 CC = gcc
 AS = gcc
+# Discrete Gaussian sampler mode (SHUTTLE_SIGMA ∈ {128, 101, 149}).
+# Default 101 = SHUTTLE-128 parameter set. Override: `make SHUTTLE_SIGMA=149`.
+SHUTTLE_SIGMA ?= 101
 CFLAGS = -Wall -Wextra -Wpedantic -Wmissing-prototypes -O3 -std=c99 \
-         -mavx2 -mbmi2 -mpopcnt -march=native -mtune=native
+         -mavx2 -mbmi2 -mpopcnt -march=native -mtune=native \
+         -DSHUTTLE_SIGMA=$(SHUTTLE_SIGMA)
 LDFLAGS =
 LDLIBS = -lm
 

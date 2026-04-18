@@ -11,8 +11,8 @@
  * V2 variant: [0, ln2/2) interval, degree 9, 2-entry table.
  * Precision: ~55.9 bits.
  *
- * Input range: x in [0, N_SHIFT * ln2) = [0, 6.238).
- * Sufficient for sigma=128 sampler: max exponent ~5.535.
+ * Input range: x in [0, N_SHIFT * ln2) = [0, ~7.62).
+ * Sufficient for all SHUTTLE sampler modes (max ~6.914 at sigma=101).
  */
 
 #ifndef SHUTTLE_APPROX_EXP_H
@@ -56,9 +56,20 @@ static inline int64_t smulh64(int64_t a, int64_t b) {
 /*
  * N_SHIFT: the integer offset for the exp(+) transformation.
  * exp(-x) = exp(N_SHIFT*ln2 - x) * 2^{-N_SHIFT}
- * Supports x in [0, N_SHIFT * ln2) = [0, 6.238).
+ * Supports x in [0, N_SHIFT * ln2) = [0, ~7.62).
+ *
+ * Sized for the largest worst-case rejection exponent across all three
+ * SHUTTLE modes:
+ *   sigma=128: max 63*(63+128*22)/32768 ~ 5.535   (fits in N=9)
+ *   sigma=149: max 63*(63+128*26)/44402 ~ 4.812   (fits in N=9)
+ *   sigma=101: max 63*(63+128*17)/20402 ~ 6.914   (needs N>=10; we pick 11)
+ *
+ * Bumping N from 9 to 11 is mathematically invariant for any previously
+ * supported input: nh = floor((N*ln2 - x)/ln2) shifts by exactly +2 when N
+ * increases by +2, so shift = N - nh is unchanged and so is the returned
+ * value. Existing KATs are therefore preserved.
  */
-#define APPROX_EXP_N_SHIFT 9
+#define APPROX_EXP_N_SHIFT 11
 
 /*
  * Compute exp(-x) in Q63 fixed-point (V2: degree 9, table 2).

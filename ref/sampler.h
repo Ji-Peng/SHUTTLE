@@ -1,23 +1,40 @@
 /*
  * sampler.h - Discrete Gaussian sampler for SHUTTLE.
  *
- * Algorithm (BLISS-style convolution):
- *   sigma = 128 = 2^7, decomposed as sigma = k * sigma_2 where k = 2^6, sigma_2 = 2.
- *   1) CDT-sample x ~ D_{sigma_2} using 93-bit RCDT table (22 entries)
- *   2) Sample y uniformly from {0, ..., 2^6 - 1}
- *   3) Candidate r = x * 2^6 + y
- *   4) Accept with probability exp(-y(y + 2*k*x) / (2*sigma^2))
- *   5) Assign random sign
+ * Algorithm (BLISS-style convolution), parameterized by SHUTTLE_SIGMA:
+ *   sigma = small_sigma * k, with k = 64 (SHUTTLE_K_BITS = 6).
+ *   1) CDT-sample x ~ D_{small_sigma} using 93-bit RCDT (RCDT_ENTRIES limbs,
+ *      3x31-bit each). RCDT_ENTRIES and the table values depend on
+ *      SHUTTLE_SIGMA (see params.h):
+ *        sigma=128 -> 22 entries, small_sigma = 2.0000
+ *        sigma=101 -> 17 entries, small_sigma = 1.5781   (SHUTTLE-128)
+ *        sigma=149 -> 26 entries, small_sigma = 2.3281   (SHUTTLE-256)
+ *   2) Sample y uniformly from {0, ..., 2^SHUTTLE_Y_BITS - 1}.
+ *      y is generated in batch via sampler_y: 16 six-bit values from
+ *      exactly Y_RAND_BYTES = 12 stream bytes (= 16*6/8), zero waste.
+ *   3) Candidate r = (x << SHUTTLE_K_BITS) | y.
+ *   4) Accept with probability exp(-y*(y + 2*k*x) / (2*sigma^2)).
+ *   5) Assign random sign.
  *
- * Output: signed int16_t (max |r| = 11*128 = 1408, fits in int16_t).
+ * Output: signed int16_t (max |r| = 11*sigma; fits in int16_t for all modes).
  *
  * Unified buffer design:
- *   One SHAKE-256 stream per sample_gauss_N call produces ALL randomness
- *   (signs, CDT, y, rejection). Processing in mini-batches of GAUSS_BATCH
- *   attempts for low memory footprint. This ensures KAT compatibility between
- *   ref and AVX2 implementations.
+ *   One SHAKE-256 stream per sample_gauss_N call produces ALL randomness.
+ *   Byte order per stream:
+ *       signs (len/8 bytes, one-off)
+ *    then repeating mini-batches of:
+ *       CDT randomness      = SIGMA2_RAND_BYTES (= 192)
+ *       y  randomness       = Y_RAND_BYTES      (= 12)
+ *       per-attempt tails   = GAUSS_BATCH * GAUSS_RAND_BYTES (= 16 * 8 = 128)
+ *   Total per mini-batch    = MINIBATCH_RAND_BYTES (= 332)
  *
- * Renyi divergence from ideal: 1 + 2^{-93.85}
+ *   This schedule is identical between ref and AVX2, so both implementations
+ *   are KAT-compatible bit-for-bit.
+ *
+ * Renyi divergence from ideal (1025-th order):
+ *   sigma=128 : 1 + 2^{-93.85}
+ *   sigma=101 : 1 + 2^{-93.40}
+ *   sigma=149 : 1 + 2^{-93.75}
  */
 
 #ifndef SHUTTLE_SAMPLER_H
@@ -28,10 +45,7 @@
 #include "symmetric.h"
 #include "params.h"
 
-/* ============================================================
- * RCDT table parameters
- * ============================================================ */
-#define RCDT_ENTRIES 22
+/* RCDT_ENTRIES is defined in params.h (mode-dependent). */
 
 /* ============================================================
  * Mini-batch size (number of attempts per batch).
@@ -46,12 +60,18 @@
  *   BATCH=16: 2 groups x 96 bytes = 192 bytes. */
 #define SIGMA2_RAND_BYTES   (GAUSS_BATCH * 12)
 
-/* Per-attempt random bytes (excluding CDT):
- *   1 byte for y (6 bits) + 8 bytes for sign_r0+rejection = 9 bytes. */
-#define GAUSS_RAND_BYTES    9
+/* y random bytes per mini-batch: 16 six-bit fields packed into 96 bits = 12
+ * bytes, consumed by sampler_y. No wasted bits (vs. the previous 1 byte per y
+ * which discarded the top 2 bits). */
+#define Y_RAND_BYTES        ((GAUSS_BATCH * SHUTTLE_Y_BITS + 7) / 8)
 
-/* Total random bytes per mini-batch: CDT + attempts. */
-#define MINIBATCH_RAND_BYTES (SIGMA2_RAND_BYTES + GAUSS_BATCH * GAUSS_RAND_BYTES)
+/* Per-attempt random bytes AFTER y is pulled out:
+ *   8 bytes carrying 1 sign-for-zero bit + 63 rejection bits. */
+#define GAUSS_RAND_BYTES    8
+
+/* Total random bytes per mini-batch: CDT + y + attempt tails. */
+#define MINIBATCH_RAND_BYTES \
+    (SIGMA2_RAND_BYTES + Y_RAND_BYTES + GAUSS_BATCH * GAUSS_RAND_BYTES)
 
 /* SHAKE-256 blocks per refill (enough for one mini-batch). */
 #define SQUEEZE_NBLOCKS \
@@ -88,10 +108,14 @@ static inline uint32_t ct_lt_u32(uint32_t a, uint32_t b) {
 }
 
 /* ============================================================
- * Batched CDT sampler: sampler_sigma2 (pure function)
+ * Batched small-sigma CDT sampler: sampler_sigma2 (pure function).
+ *
+ * Despite the historical name, the CDT targets the mode-specific
+ * small_sigma = sigma / k (not literally sigma_2 = 2). The table and
+ * bound RCDT_ENTRIES are selected by SHUTTLE_SIGMA in params.h.
  *
  * Input:  rand - SIGMA2_RAND_BYTES random bytes in AVX2-friendly layout.
- * Output: z_out - GAUSS_BATCH int16_t values in [0, 22].
+ * Output: z_out - GAUSS_BATCH int16_t values in [0, RCDT_ENTRIES].
  *         Internal computation in 32-bit for precision.
  * Returns: GAUSS_BATCH (always).
  * ============================================================ */

@@ -12,31 +12,60 @@
 
 /*
  * Buffer per lane: enough for ~308 attempts (256 accepted at ~83%).
- * sign_bytes(32) + 308 * (192/16 + 9) = 32 + 308*21 = 6500 bytes
- * ceil(6500/136) = 48 blocks. Use 56 blocks = 7616 bytes for margin.
- *
- * Note: SHUTTLE has smaller per-attempt bytes (9 vs 20) than SM_Sign,
- * so we need fewer blocks.
+ * Per-mini-batch bytes (16 attempts): SIGMA2_RAND_BYTES + Y_RAND_BYTES +
+ *   16 * GAUSS_RAND_BYTES = 192 + 12 + 128 = 332  (~20.75 bytes / attempt)
+ * sign_bytes(32) + ceil(308/16) * 332 = 32 + 20 * 332 = 6672 bytes.
+ * ceil(6672 / 136) = 50 blocks. Use 56 blocks = 7616 bytes for margin.
  */
 #define INIT_4X_NBLOCKS 56
 #define BUF_4X_SIZE     ((INIT_4X_NBLOCKS + SQUEEZE_NBLOCKS) * STREAM256_BLOCKBYTES + 32)
 
 /* ============================================================
- * Single Gaussian attempt (same as sampler.c)
+ * Batched uniform y sampler (same as sampler.c; duplicated static to
+ * match existing per-file pattern and keep linkage minimal).
+ * See sampler.c for the AVX2 analysis comment on why this is scalar.
  * ============================================================ */
-static int sample_gauss_sigma128(int16_t *r, const uint8_t *rand,
-                                 int16_t x, const uint8_t *signs,
-                                 size_t idx) {
-    uint32_t y = rand[0] & 0x3FU;
-    int32_t candidate = (int32_t)x * SHUTTLE_GAUSS_K + (int32_t)y;
+static void sampler_y(uint8_t y_out[GAUSS_BATCH], const uint8_t *rand) {
+    const uint32_t y_mask = (1U << SHUTTLE_Y_BITS) - 1U;
+    uint64_t lo = load_le64(rand);
+    uint32_t hi = load_le32(rand + 8);
 
-    uint64_t rand_tail = load_le64(rand + 1);
-    uint8_t sign_r0 = rand_tail & 1;
-    uint64_t rand_rej_63 = rand_tail >> 1;
+    for (int i = 0; i < 10; i++)
+        y_out[i] = (uint8_t)((lo >> (SHUTTLE_Y_BITS * i)) & y_mask);
 
-    uint32_t t = y + (uint32_t)(2 * SHUTTLE_GAUSS_K) * (uint32_t)x;
+    y_out[10] = (uint8_t)(((lo >> 60) | ((uint64_t)hi << 4)) & y_mask);
+
+    for (int i = 11; i < 16; i++) {
+        unsigned shift = (unsigned)(SHUTTLE_Y_BITS * i - 64);
+        y_out[i] = (uint8_t)((hi >> shift) & y_mask);
+    }
+}
+
+/* ============================================================
+ * Single Gaussian attempt (same math as sampler.c).
+ * See sampler.c (ref or avx2) for the full error analysis of the
+ * non-shift rejection path.
+ * ============================================================ */
+static int sample_gauss_attempt(int16_t *r,
+                                uint32_t x,
+                                uint32_t y,
+                                const uint8_t *rej_rand,
+                                const uint8_t *signs,
+                                size_t idx) {
+    int32_t candidate = ((int32_t)x << SHUTTLE_K_BITS) | (int32_t)y;
+
+    uint64_t rand_tail    = load_le64(rej_rand);
+    uint8_t  sign_r0      = (uint8_t)(rand_tail & 1U);
+    uint64_t rand_rej_63  = rand_tail >> 1;
+
+    uint32_t t   = (uint32_t)y + ((uint32_t)x << SHUTTLE_TWO_K_BITS);
     uint64_t num = (uint64_t)y * (uint64_t)t;
+
+#if SHUTTLE_SIGMA == 128
     uint64_t exp_q60 = num << 45;
+#else
+    uint64_t exp_q60 = mulh64((uint64_t)num << 44, SHUTTLE_INV_2SIGMA2_Q64) << 16;
+#endif
 
     uint64_t exp_val_q63 = approx_exp(exp_q60);
     int accepted = (rand_rej_63 < exp_val_q63) ? 1 : 0;
@@ -127,15 +156,24 @@ void sample_gauss_N_4x(int16_t *r0, int16_t *r1,
             if (avail[j] < (size_t)MINIBATCH_RAND_BYTES) continue;
 
             int16_t z[GAUSS_BATCH];
+            uint8_t y[GAUSS_BATCH];
+
             sampler_sigma2(z, buf[j] + pos[j]);
-            pos[j] += SIGMA2_RAND_BYTES;
+            pos[j]   += SIGMA2_RAND_BYTES;
             avail[j] -= SIGMA2_RAND_BYTES;
 
+            sampler_y(y, buf[j] + pos[j]);
+            pos[j]   += Y_RAND_BYTES;
+            avail[j] -= Y_RAND_BYTES;
+
             for (int k = 0; k < GAUSS_BATCH && coefcnt[j] < len[j]; k++) {
-                int accepted = sample_gauss_sigma128(
-                    &r[j][coefcnt[j]], buf[j] + pos[j], z[k],
+                int accepted = sample_gauss_attempt(
+                    &r[j][coefcnt[j]],
+                    (uint32_t)z[k],
+                    (uint32_t)y[k],
+                    buf[j] + pos[j],
                     signs[j], coefcnt[j]);
-                pos[j] += GAUSS_RAND_BYTES;
+                pos[j]   += GAUSS_RAND_BYTES;
                 avail[j] -= GAUSS_RAND_BYTES;
 
                 if (accepted) {
