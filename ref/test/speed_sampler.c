@@ -83,19 +83,15 @@ int main(void) {
         }
         print_results("stream256_squeezeblocks (16 blocks = 2176 bytes):", t, NTESTS);
 
-        /* Compute and print per-byte cost */
-        /* Sort t[] and compute median manually since print_results already consumed it */
-        uint64_t overhead = cpucycles_overhead();
-        uint64_t sum = 0;
+        /* Compute and print per-byte cost using median cycles/sample */
+        uint64_t med;
         stream256_init(&state, seed, 0);
         for (int i = 0; i < NTESTS; i++) {
-            uint64_t t0 = cpucycles();
+            t[i] = cpucycles();
             stream256_squeezeblocks(stream_buf, STREAM_NBLOCKS, &state);
-            uint64_t t1 = cpucycles();
-            uint64_t diff = t1 - t0 - overhead;
-            sum += diff;
         }
-        double avg_per_byte = (double)sum / ((double)NTESTS * STREAM_BYTES);
+        med = cycles_median(t, NTESTS);
+        double avg_per_byte = (double)med / (double)STREAM_BYTES;
         printf("stream256 avg per-byte: %.2f cycles/byte (%d bytes/squeeze)\n\n",
                avg_per_byte, STREAM_BYTES);
         #undef STREAM_NBLOCKS
