@@ -1,30 +1,36 @@
 /*
  * packing_v3.h - NGCC-Signature Alg 2 compressed signature format, v3.
  *
- * v3 extends v2 by additionally entropy-coding the HighBits of z[1..L]
- * via the Phase 6c z1 rANS table. For each z_1[i] (i in 1..L) we:
- *   1. Split z_1[i] into (hi[i], lo[i]) using polyz1_split (round-half-up).
- *   2. Bit-pack lo[i] at ALPHA_H_BITS bits/coef (fixed width, uniform).
- *   3. Feed all L*N hi values through shuttle_rans_encode_z1 into a single
- *      reserved block, prefixed by a 2-byte little-endian length.
+ * v3 entropy-codes THREE distributions with rANS:
+ *   1. Z_0 = CompressY(z^(0)) as a single Gaussian-like distribution.
+ *      Replaces the Phase 6c-era 11-bit fixed polyz0_pack; see
+ *      `shuttle_rans_encode_z0`.
+ *   2. HighBits(z^{(1..L)}) via shuttle_rans_encode_z1; the matching
+ *      LowBits part is bit-packed uniformly at ALPHA_H_BITS bits/coef
+ *      (polyz1_lo_pack).
+ *   3. Hint h via shuttle_rans_encode (hint table).
  *
- * Byte layout (mode-128 example, target SHUTTLE_BYTES_V3 = 1560 B):
- *   [  0 ..  32)   seedC (c_tilde)
- *   [ 32 ..  36)   irs_signs bitmap (ceil(TAU/8))
- *   [ 36 .. 388)   polyz0_pack(Z_0)                  (352 B)
- *   [388 ..1060)   L * polyz1_lo_pack(lo[i])         (3 * 224 = 672 B)
- *   [1060..1062)   uint16 LE: actual z1 rANS length
- *   [1062..1302)   z1 rANS high stream + zero pad    (240 B reserved)
- *   [1302..1304)   uint16 LE: actual hint rANS length
- *   [1304..1560)   hint rANS + zero pad              (256 B reserved)
+ * Byte layout (mode-128, SHUTTLE_BYTES_V3 = 1450 B):
+ *   [  0 ..  32)          seedC (c_tilde)
+ *   [ 32 ..  36)          irs_signs bitmap (ceil(TAU/8))
+ *   [ 36 ..  38)          uint16 LE: Z_0 rANS length
+ *   [ 38 .. 278)          Z_0 rANS stream + zero pad          (240 B reserved)
+ *   [278 .. 950)          L * polyz1_lo_pack(lo[i])           (3 * 224 = 672 B)
+ *   [950 .. 952)          uint16 LE: z1 rANS length
+ *   [952 ..1192)          z1 rANS high stream + zero pad      (240 B reserved)
+ *   [1192..1194)          uint16 LE: hint rANS length
+ *   [1194..1450)          hint rANS + zero pad                (256 B reserved)
  *
- * SHUTTLE_BYTES_V3 = CTILDEBYTES + IRS_SIGNBYTES + POLYZ0_PACKEDBYTES
+ * SHUTTLE_BYTES_V3 = CTILDEBYTES + IRS_SIGNBYTES
+ *                  + Z0_RANS_BLOCK_BYTES
  *                  + L * POLYZ1_LO_PACKEDBYTES
- *                  + Z1_RANS_BLOCK_BYTES + HINT_BLOCK_BYTES.
+ *                  + Z1_RANS_BLOCK_BYTES
+ *                  + HINT_BLOCK_BYTES.
  *
  * Signer-side reject conditions (caller must restart IRS):
- *   - Any HighBits value of z_1[1..L] falls outside the z1 rANS vocabulary.
- *   - The encoded z1 rANS or hint rANS stream exceeds its reservation.
+ *   - Any Z_0 coefficient falls outside the z0 rANS vocabulary.
+ *   - Any HighBits value of z^{(1..L)} falls outside the z1 vocabulary.
+ *   - Any rANS-encoded stream exceeds its reservation.
  *
  * Verifier-side rejects:
  *   - Length field exceeds reservation.
@@ -44,7 +50,7 @@
 /* Total v3 signature size. */
 #define SHUTTLE_BYTES_V3  ( SHUTTLE_CTILDEBYTES \
                           + SHUTTLE_IRS_SIGNBYTES \
-                          + SHUTTLE_POLYZ0_PACKEDBYTES \
+                          + SHUTTLE_Z0_RANS_BLOCK_BYTES \
                           + SHUTTLE_L * SHUTTLE_POLYZ1_LO_PACKEDBYTES \
                           + SHUTTLE_Z1_RANS_BLOCK_BYTES \
                           + SHUTTLE_HINT_BLOCK_BYTES )

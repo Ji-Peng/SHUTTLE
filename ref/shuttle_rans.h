@@ -85,4 +85,22 @@ int shuttle_rans_encode_z1(uint8_t *out, size_t *out_len, size_t max_bytes,
 int shuttle_rans_decode_z1(int32_t *syms, size_t n,
                            const uint8_t *in, size_t in_len);
 
+/*************************************************
+* Name:        shuttle_rans_encode_z0 / shuttle_rans_decode_z0
+*
+* Description: rANS encode/decode using the Z_0 = CompressY(z^(0))
+*              frequency table (Phase 6d). Z_0 has effective width
+*              sigma/alpha_1 (about 12.6 / 9.3 for mode-128 / 256), so
+*              each coefficient entropy codes at ~5.7 / 5.3 bits versus
+*              the 11-bit fixed polyz0_pack. Symbols outside the trained
+*              vocabulary trigger a signing-round rejection.
+**************************************************/
+#define shuttle_rans_encode_z0 SHUTTLE_NAMESPACE(shuttle_rans_encode_z0)
+int shuttle_rans_encode_z0(uint8_t *out, size_t *out_len, size_t max_bytes,
+                           const int32_t *syms, size_t n);
+
+#define shuttle_rans_decode_z0 SHUTTLE_NAMESPACE(shuttle_rans_decode_z0)
+int shuttle_rans_decode_z0(int32_t *syms, size_t n,
+                           const uint8_t *in, size_t in_len);
+
 #endif /* SHUTTLE_RANS_H */

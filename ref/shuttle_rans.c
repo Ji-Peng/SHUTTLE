@@ -43,6 +43,13 @@
 #  define SRANS_Z1_SYM_MAX      SHUTTLE128_RANS_Z1_SYM_MAX
 #  define srans_z1_syms         shuttle128_rans_z1_syms
 #  define srans_z1_freqs        shuttle128_rans_z1_freqs
+
+#  define SRANS_Z0_PROB_BITS    SHUTTLE128_RANS_Z0_PROB_BITS
+#  define SRANS_Z0_NUM_SYMS     SHUTTLE128_RANS_Z0_NUM_SYMS
+#  define SRANS_Z0_SYM_MIN      SHUTTLE128_RANS_Z0_SYM_MIN
+#  define SRANS_Z0_SYM_MAX      SHUTTLE128_RANS_Z0_SYM_MAX
+#  define srans_z0_syms         shuttle128_rans_z0_syms
+#  define srans_z0_freqs        shuttle128_rans_z0_freqs
 #elif SHUTTLE_MODE == 256
 #  define SRANS_HINT_PROB_BITS  SHUTTLE256_RANS_PROB_BITS
 #  define SRANS_HINT_NUM_SYMS   SHUTTLE256_RANS_NUM_SYMS
@@ -57,14 +64,22 @@
 #  define SRANS_Z1_SYM_MAX      SHUTTLE256_RANS_Z1_SYM_MAX
 #  define srans_z1_syms         shuttle256_rans_z1_syms
 #  define srans_z1_freqs        shuttle256_rans_z1_freqs
+
+#  define SRANS_Z0_PROB_BITS    SHUTTLE256_RANS_Z0_PROB_BITS
+#  define SRANS_Z0_NUM_SYMS     SHUTTLE256_RANS_Z0_NUM_SYMS
+#  define SRANS_Z0_SYM_MIN      SHUTTLE256_RANS_Z0_SYM_MIN
+#  define SRANS_Z0_SYM_MAX      SHUTTLE256_RANS_Z0_SYM_MAX
+#  define srans_z0_syms         shuttle256_rans_z0_syms
+#  define srans_z0_freqs        shuttle256_rans_z0_freqs
 #else
 #  error "Unsupported SHUTTLE_MODE for rANS tables"
 #endif
 
-/* Both tables use the same prob_bits = 12 by construction. We still keep
- * per-table macros so a future asymmetric layout works without edits. */
+/* All tables use prob_bits = 12 by construction; per-table macros kept so
+ * a future asymmetric layout works without edits. */
 #define SRANS_HINT_PROB_TOTAL   (1u << SRANS_HINT_PROB_BITS)
 #define SRANS_Z1_PROB_TOTAL     (1u << SRANS_Z1_PROB_BITS)
+#define SRANS_Z0_PROB_TOTAL     (1u << SRANS_Z0_PROB_BITS)
 
 /* ============================================================
  * Per-table context + lazy init.
@@ -113,6 +128,22 @@ static rans_ctx_t g_ctx_z1 = {
     .prob_bits  = SRANS_Z1_PROB_BITS,
     .initialized = 0,
     .prob_total = SRANS_Z1_PROB_TOTAL,
+};
+
+/* z0-table derived storage. */
+static uint16_t g_z0_cdf[SRANS_Z0_NUM_SYMS + 1];
+static uint16_t g_z0_sym_lookup[SRANS_Z0_PROB_TOTAL];
+static rans_ctx_t g_ctx_z0 = {
+    .syms       = srans_z0_syms,
+    .freqs      = srans_z0_freqs,
+    .cdf        = g_z0_cdf,
+    .sym_lookup = g_z0_sym_lookup,
+    .sym_min    = SRANS_Z0_SYM_MIN,
+    .sym_max    = SRANS_Z0_SYM_MAX,
+    .num_syms   = SRANS_Z0_NUM_SYMS,
+    .prob_bits  = SRANS_Z0_PROB_BITS,
+    .initialized = 0,
+    .prob_total = SRANS_Z0_PROB_TOTAL,
 };
 
 static void rans_ctx_init(rans_ctx_t *ctx) {
@@ -270,4 +301,16 @@ int shuttle_rans_decode_z1(int32_t *syms, size_t n,
                            const uint8_t *in, size_t in_len)
 {
     return decode_core(&g_ctx_z1, syms, n, in, in_len);
+}
+
+int shuttle_rans_encode_z0(uint8_t *out, size_t *out_len, size_t max_bytes,
+                           const int32_t *syms, size_t n)
+{
+    return encode_core(&g_ctx_z0, out, out_len, max_bytes, syms, n);
+}
+
+int shuttle_rans_decode_z0(int32_t *syms, size_t n,
+                           const uint8_t *in, size_t in_len)
+{
+    return decode_core(&g_ctx_z0, syms, n, in, in_len);
 }

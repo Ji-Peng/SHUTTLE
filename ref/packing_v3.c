@@ -1,7 +1,9 @@
 /*
- * packing_v3.c - Phase 6c compressed signature packing.
+ * packing_v3.c - Phase 6d compressed signature packing.
  *
  * See packing_v3.h for layout, reserved-size budgets, and error semantics.
+ * Phase 6d: replaced the 11-bit fixed polyz0_pack with a rANS encoding
+ *           using the Z_0 frequency table (shuttle_rans_encode_z0).
  */
 
 #include <string.h>
@@ -16,13 +18,13 @@
  * ============================================================ */
 #define OFF_C_TILDE     0
 #define OFF_IRS_SIGNS   (OFF_C_TILDE + SHUTTLE_CTILDEBYTES)
-#define OFF_Z0          (OFF_IRS_SIGNS + SHUTTLE_IRS_SIGNBYTES)
-#define OFF_Z1_LO       (OFF_Z0 + SHUTTLE_POLYZ0_PACKEDBYTES)
+#define OFF_Z0_LEN      (OFF_IRS_SIGNS + SHUTTLE_IRS_SIGNBYTES)
+#define OFF_Z0_DATA     (OFF_Z0_LEN + 2)
+#define OFF_Z1_LO       (OFF_Z0_DATA + SHUTTLE_Z0_RANS_RESERVED_BYTES)
 #define OFF_Z1_HI_LEN   (OFF_Z1_LO + SHUTTLE_L * SHUTTLE_POLYZ1_LO_PACKEDBYTES)
 #define OFF_Z1_HI_DATA  (OFF_Z1_HI_LEN + 2)
 #define OFF_HINT_LEN    (OFF_Z1_HI_DATA + SHUTTLE_Z1_RANS_RESERVED_BYTES)
 #define OFF_HINT_DATA   (OFF_HINT_LEN + 2)
-/* End offset = OFF_HINT_DATA + HINT_RESERVED_BYTES = SHUTTLE_BYTES_V3. */
 
 /* ============================================================
  * pack_sig_v3
@@ -46,8 +48,23 @@ int pack_sig_v3(uint8_t sig[SHUTTLE_BYTES_V3],
       sig[OFF_IRS_SIGNS + (i >> 3)] |= (uint8_t)(1u << (i & 7));
   }
 
-  /* 3. Z_0 at 11 bits/coef via polyz0_pack. */
-  polyz0_pack(&sig[OFF_Z0], &z_1[0]);
+  /* 3. Z_0: rANS-encode the first slot into the Z_0 reservation. */
+  int32_t z0_flat[SHUTTLE_N];
+  for(i = 0; i < SHUTTLE_N; ++i)
+    z0_flat[i] = z_1[0].coeffs[i];
+
+  size_t z0_rans_len = 0;
+  rc = shuttle_rans_encode_z0(&sig[OFF_Z0_DATA], &z0_rans_len,
+                              SHUTTLE_Z0_RANS_RESERVED_BYTES,
+                              z0_flat, SHUTTLE_N);
+  if(rc != 0)
+    return rc;  /* -1 OOV, -2 overflow; caller rejects the signing round. */
+
+  sig[OFF_Z0_LEN + 0] = (uint8_t)(z0_rans_len & 0xFF);
+  sig[OFF_Z0_LEN + 1] = (uint8_t)((z0_rans_len >> 8) & 0xFF);
+  if(z0_rans_len < SHUTTLE_Z0_RANS_RESERVED_BYTES)
+    memset(&sig[OFF_Z0_DATA + z0_rans_len], 0,
+           SHUTTLE_Z0_RANS_RESERVED_BYTES - z0_rans_len);
 
   /* 4. z_1[1..L]: split each poly, write lo parts, accumulate hi parts. */
   int32_t z1_hi_flat[SHUTTLE_L * SHUTTLE_N];
@@ -64,7 +81,7 @@ int pack_sig_v3(uint8_t sig[SHUTTLE_BYTES_V3],
                               SHUTTLE_Z1_RANS_RESERVED_BYTES,
                               z1_hi_flat, SHUTTLE_L * SHUTTLE_N);
   if(rc != 0)
-    return rc;  /* -1 OOV, -2 overflow; caller rejects the signing round. */
+    return rc;
 
   sig[OFF_Z1_HI_LEN + 0] = (uint8_t)(z1_rans_len & 0xFF);
   sig[OFF_Z1_HI_LEN + 1] = (uint8_t)((z1_rans_len >> 8) & 0xFF);
@@ -72,7 +89,7 @@ int pack_sig_v3(uint8_t sig[SHUTTLE_BYTES_V3],
     memset(&sig[OFF_Z1_HI_DATA + z1_rans_len], 0,
            SHUTTLE_Z1_RANS_RESERVED_BYTES - z1_rans_len);
 
-  /* 6. rANS-encode hint h into the hint reservation (unchanged from v2). */
+  /* 6. rANS-encode hint h into the hint reservation. */
   int32_t h_flat[SHUTTLE_M * SHUTTLE_N];
   for(i = 0; i < SHUTTLE_M; ++i)
     for(j = 0; j < SHUTTLE_N; ++j)
@@ -117,8 +134,19 @@ int unpack_sig_v3(uint8_t c_tilde[SHUTTLE_CTILDEBYTES],
       irs_signs[i] = (int8_t)-1;
   }
 
-  /* 3. Z_0 */
-  polyz0_unpack(&z_1[0], &sig[OFF_Z0]);
+  /* 3. Z_0 rANS decode. */
+  size_t z0_rans_len = (size_t)sig[OFF_Z0_LEN + 0]
+                     | ((size_t)sig[OFF_Z0_LEN + 1] << 8);
+  if(z0_rans_len == 0 || z0_rans_len > SHUTTLE_Z0_RANS_RESERVED_BYTES)
+    return -1;
+
+  int32_t z0_flat[SHUTTLE_N];
+  rc = shuttle_rans_decode_z0(z0_flat, SHUTTLE_N,
+                              &sig[OFF_Z0_DATA], z0_rans_len);
+  if(rc != 0)
+    return rc;
+  for(i = 0; i < SHUTTLE_N; ++i)
+    z_1[0].coeffs[i] = z0_flat[i];
 
   /* 4. z1 rANS high stream. */
   size_t z1_rans_len = (size_t)sig[OFF_Z1_HI_LEN + 0]

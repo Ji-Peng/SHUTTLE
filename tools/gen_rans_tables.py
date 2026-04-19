@@ -52,14 +52,24 @@ def load_histogram(path: str) -> Tuple[int, str, Dict[int, int]]:
 KIND_META = {
     "hint_h":  ("HINT", "hint", "hint h"),
     "z1_high": ("Z1",   "z1",   "z[1..L] HighBits"),
+    "z0":      ("Z0",   "z0",   "Z_0 = CompressY(z^(0))"),
 }
 
 
 def symmetrize(h: Dict[int, int]) -> Dict[int, int]:
-    """Average h(v) and h(-v) to enforce a zero-mean symmetric distribution."""
+    """Build a zero-mean symmetric, contiguous-vocabulary distribution.
+
+    Procedure:
+      1. Average h[v] and h[-v] (ties on rare tail symbols default to 1).
+      2. Ensure every integer in [-max_abs, max_abs] appears, filling gaps
+         with count 1. This keeps the symbol list contiguous so the C
+         encoder/decoder's `sym - sym_min` indexing stays valid, and avoids
+         false OOV rejections on values that happen to be unseen in the
+         training window but land inside the observed range.
+    """
     out = {}
     seen = set()
-    for v, c in h.items():
+    for v in h:
         if v in seen:
             continue
         c_pos = h.get(v, 0)
@@ -68,12 +78,17 @@ def symmetrize(h: Dict[int, int]) -> Dict[int, int]:
         if v == 0:
             out[0] = h.get(0, 0)
         else:
-            if avg > 0:
-                out[v] = avg
-                out[-v] = avg
+            if c_pos > 0 or c_neg > 0:
+                out[v] = max(1, avg)
+                out[-v] = max(1, avg)
         seen.add(v)
         seen.add(-v)
-    # Rebalance: total may have lost 1-2 from integer division.
+
+    if not out:
+        return out
+    max_abs = max(abs(v) for v in out)
+    for v in range(-max_abs, max_abs + 1):
+        out.setdefault(v, 1)
     return out
 
 

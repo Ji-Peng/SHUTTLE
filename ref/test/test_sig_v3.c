@@ -38,6 +38,8 @@
 #  define z1_freqs        shuttle128_rans_z1_freqs
 #  define Z1_PROB_BITS    SHUTTLE128_RANS_Z1_PROB_BITS
 #  define Z1_SYM_MAX_ABS  SHUTTLE128_RANS_Z1_SYM_MAX
+#  define Z0_SYM_MIN      SHUTTLE128_RANS_Z0_SYM_MIN
+#  define Z0_SYM_MAX      SHUTTLE128_RANS_Z0_SYM_MAX
 #else
 #  define HINT_NUM_SYMS   SHUTTLE256_RANS_NUM_SYMS
 #  define hint_syms       shuttle256_rans_syms
@@ -48,6 +50,8 @@
 #  define z1_freqs        shuttle256_rans_z1_freqs
 #  define Z1_PROB_BITS    SHUTTLE256_RANS_Z1_PROB_BITS
 #  define Z1_SYM_MAX_ABS  SHUTTLE256_RANS_Z1_SYM_MAX
+#  define Z0_SYM_MIN      SHUTTLE256_RANS_Z0_SYM_MIN
+#  define Z0_SYM_MAX      SHUTTLE256_RANS_Z0_SYM_MAX
 #endif
 
 #define HINT_PROB_TOTAL   (1u << HINT_PROB_BITS)
@@ -78,9 +82,18 @@ static int32_t sample_z1_hi(void) {
  *   z[i] = hi * alpha_h + lo,  hi ~ z1 table,  lo ~ uniform [-alpha_h/2, alpha_h/2).
  * This guarantees pack_sig_v3 never hits OOV or overflow. */
 static void fill_z1(poly *z_1) {
-  /* Z_0 coefficients: fit polyz0_pack (11 bits signed). */
-  for (unsigned j = 0; j < SHUTTLE_N; ++j)
-    z_1[0].coeffs[j] = (rand() % 341) - 170;
+  /* Z_0 coefficients: draw from the z0 rANS vocabulary range. A narrow
+   * triangular-ish distribution keeps us safely inside the trained symbol
+   * set (|Z_0| <= ~12 covers >99% of the actual signer output). */
+  int32_t z0_range = Z0_SYM_MAX;   /* symmetric */
+  for (unsigned j = 0; j < SHUTTLE_N; ++j) {
+    int32_t v = 0;
+    for (int k = 0; k < 3; ++k)
+      v += (rand() % (z0_range / 2 + 1)) - (z0_range / 4);
+    if (v > Z0_SYM_MAX) v = Z0_SYM_MAX;
+    if (v < Z0_SYM_MIN) v = Z0_SYM_MIN;
+    z_1[0].coeffs[j] = v;
+  }
 
   for (unsigned i = 1; i <= SHUTTLE_L; ++i)
     for (unsigned j = 0; j < SHUTTLE_N; ++j) {
@@ -139,6 +152,7 @@ static int test_minimal(void) {
 static int test_random_rounds(void) {
   printf("Test 2: 10 random rounds\n");
 
+  size_t min_z0_len = (size_t)-1, max_z0_len = 0, sum_z0_len = 0;
   size_t min_z1_len = (size_t)-1, max_z1_len = 0, sum_z1_len = 0;
   size_t min_h_len  = (size_t)-1, max_h_len  = 0, sum_h_len  = 0;
 
@@ -181,14 +195,18 @@ static int test_random_rounds(void) {
         if (h.vec[i].coeffs[j] != h_rec.vec[i].coeffs[j])
           FAIL("round %u: h[%u][%u]", round, i, j);
 
-    /* Peek at z1 rANS + hint rANS length prefixes. */
-    size_t off_z1_len = SHUTTLE_CTILDEBYTES + SHUTTLE_IRS_SIGNBYTES
-                      + SHUTTLE_POLYZ0_PACKEDBYTES
+    /* Peek at Z_0 + z1 + hint rANS length prefixes. */
+    size_t off_z0_len = SHUTTLE_CTILDEBYTES + SHUTTLE_IRS_SIGNBYTES;
+    size_t z0_len = (size_t)sig[off_z0_len] | ((size_t)sig[off_z0_len + 1] << 8);
+    size_t off_z1_len = off_z0_len + 2 + SHUTTLE_Z0_RANS_RESERVED_BYTES
                       + SHUTTLE_L * SHUTTLE_POLYZ1_LO_PACKEDBYTES;
     size_t z1_len = (size_t)sig[off_z1_len] | ((size_t)sig[off_z1_len + 1] << 8);
     size_t off_h_len  = off_z1_len + 2 + SHUTTLE_Z1_RANS_RESERVED_BYTES;
     size_t h_len  = (size_t)sig[off_h_len]  | ((size_t)sig[off_h_len  + 1] << 8);
 
+    if (z0_len < min_z0_len) min_z0_len = z0_len;
+    if (z0_len > max_z0_len) max_z0_len = z0_len;
+    sum_z0_len += z0_len;
     if (z1_len < min_z1_len) min_z1_len = z1_len;
     if (z1_len > max_z1_len) max_z1_len = z1_len;
     sum_z1_len += z1_len;
@@ -197,6 +215,9 @@ static int test_random_rounds(void) {
     sum_h_len  += h_len;
   }
 
+  printf("    Z_0 rANS len: min=%zu max=%zu avg=%zu (reserved %d)\n",
+         min_z0_len, max_z0_len, sum_z0_len / 10,
+         SHUTTLE_Z0_RANS_RESERVED_BYTES);
   printf("    z1 rANS len: min=%zu max=%zu avg=%zu (reserved %d)\n",
          min_z1_len, max_z1_len, sum_z1_len / 10,
          SHUTTLE_Z1_RANS_RESERVED_BYTES);
@@ -236,8 +257,9 @@ int main(void) {
   srand(0xC0DECAFE ^ SHUTTLE_MODE);
 
   printf("=== test_sig_v3 (MODE=%d, SHUTTLE_BYTES_V3=%d,\n"
-         "                 Z1_RANS_RESERVED=%d, HINT_RESERVED=%d) ===\n",
+         "                 Z0_RANS_RESERVED=%d, Z1_RANS_RESERVED=%d, HINT_RESERVED=%d) ===\n",
          SHUTTLE_MODE, SHUTTLE_BYTES_V3,
+         SHUTTLE_Z0_RANS_RESERVED_BYTES,
          SHUTTLE_Z1_RANS_RESERVED_BYTES, SHUTTLE_HINT_RESERVED_BYTES);
 
   ret |= test_minimal();
