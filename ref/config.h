@@ -1,20 +1,51 @@
 #ifndef SHUTTLE_CONFIG_H
 #define SHUTTLE_CONFIG_H
 
-#define SHUTTLE_NAMESPACE(s) shuttle_ref_##s
-
 /* ============================================================
- * Discrete Gaussian sampler mode selector.
+ * SHUTTLE parameter-set selector.
  *
  * Valid values:
- *   101 - SHUTTLE-128 parameter set (default)
- *   149 - SHUTTLE-256 parameter set
- *   128 - legacy / reference variant (sigma = 2^7, kept for regression)
+ *   128 - SHUTTLE-128 (n=256, sigma=101)
+ *   256 - SHUTTLE-256 (n=512, sigma=149)
+ *   512 - SHUTTLE-512 (parameters TBD; currently #error in params.h)
  *
- * Override at build time with: -DSHUTTLE_SIGMA=128|101|149
+ * Override at build time with: -DSHUTTLE_MODE=128|256|512
+ * ============================================================ */
+#ifndef SHUTTLE_MODE
+#define SHUTTLE_MODE 128
+#endif
+
+#if SHUTTLE_MODE == 128
+#  define CRYPTO_ALGNAME       "SHUTTLE-128"
+#  define SHUTTLE_NAMESPACETOP shuttle128_ref
+#  define SHUTTLE_NAMESPACE(s) shuttle128_ref_##s
+#elif SHUTTLE_MODE == 256
+#  define CRYPTO_ALGNAME       "SHUTTLE-256"
+#  define SHUTTLE_NAMESPACETOP shuttle256_ref
+#  define SHUTTLE_NAMESPACE(s) shuttle256_ref_##s
+#elif SHUTTLE_MODE == 512
+#  define CRYPTO_ALGNAME       "SHUTTLE-512"
+#  define SHUTTLE_NAMESPACETOP shuttle512_ref
+#  define SHUTTLE_NAMESPACE(s) shuttle512_ref_##s
+#else
+#  error "Unsupported SHUTTLE_MODE (expected 128, 256, or 512)"
+#endif
+
+/* ============================================================
+ * Discrete Gaussian sampler standard deviation.
+ *
+ * SHUTTLE_SIGMA is normally derived from SHUTTLE_MODE. It can still be
+ * overridden on the command line (e.g. -DSHUTTLE_SIGMA=128) to exercise
+ * the legacy sigma=128 RCDT table kept in sampler.c for regression/audit.
  * ============================================================ */
 #ifndef SHUTTLE_SIGMA
-#define SHUTTLE_SIGMA 101
+#  if SHUTTLE_MODE == 128
+#    define SHUTTLE_SIGMA 101
+#  elif SHUTTLE_MODE == 256
+#    define SHUTTLE_SIGMA 149
+#  elif SHUTTLE_MODE == 512
+#    error "SHUTTLE-512 sigma not yet specified (see NGCC-Signature Table 2)"
+#  endif
 #endif
 
 #endif

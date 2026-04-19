@@ -38,7 +38,17 @@
 #include "reduce.h"
 
 /* ============================================================
- * Helper: Build the full secret key vector [1, s, e].
+ * Helper: Build the full secret key vector [alpha_1, s, e].
+ *
+ * The constant slot holds alpha_1 (the "StretchS" operation from
+ * NGCC-Signature). The scaling is absorbed symmetrically by signer and
+ * verifier: b = B * [alpha_1, s, e] at keygen, and the IRS update
+ * z[0] = y[0] + c_eff * alpha_1 matches the B*z - c_eff*b algebra used
+ * at verify time. polyz_pack's bound was widened to SHUTTLE_Z_BOUND to
+ * accommodate the expanded |z[0]| range.
+ *
+ * Lossy CompressY / decomposed polyz0 packing + MakeHint/UseHint come
+ * in a follow-up phase (hint + rANS) to actually shrink the signature.
  * ============================================================ */
 static void build_sk_full(polyvec *sk_full,
                           const polyvecl *s,
@@ -48,7 +58,7 @@ static void build_sk_full(polyvec *sk_full,
 
   for(j = 0; j < SHUTTLE_N; ++j)
     sk_full->vec[0].coeffs[j] = 0;
-  sk_full->vec[0].coeffs[0] = 1;
+  sk_full->vec[0].coeffs[0] = SHUTTLE_ALPHA_1;
 
   for(i = 0; i < SHUTTLE_L; ++i)
     sk_full->vec[1 + i] = s->vec[i];
@@ -152,7 +162,15 @@ static void build_c_eff(poly *c_eff,
 **************************************************/
 int crypto_sign_keypair(uint8_t *pk, uint8_t *sk)
 {
-  uint8_t seedbuf[2 * SHUTTLE_SEEDBYTES + SHUTTLE_CRHBYTES];
+  /* ExpandSeeds per NGCC-Signature Alg KeyGen, lines 115-116:
+   *   input  = xi || I2B(lenE, 1)         // seedBytes + 1 bytes
+   *   output = 4 * seedBytes total, split as:
+   *            seedA      : seedBytes
+   *            seedsk     : 2 * seedBytes
+   *            masterSeed : seedBytes
+   */
+  uint8_t inbuf[SHUTTLE_SEEDBYTES + 1];
+  uint8_t outbuf[4 * SHUTTLE_SEEDBYTES];
   uint8_t tr[SHUTTLE_TRBYTES];
   const uint8_t *rho, *rhoprime, *key;
   polyveck a_gen, b;
@@ -162,16 +180,15 @@ int crypto_sign_keypair(uint8_t *pk, uint8_t *sk)
   int64_t norm_sq;
 
   for(;;) {
-    randombytes(seedbuf, SHUTTLE_SEEDBYTES);
-    seedbuf[SHUTTLE_SEEDBYTES] = SHUTTLE_L;
-    seedbuf[SHUTTLE_SEEDBYTES + 1] = SHUTTLE_M;
-    shake256(seedbuf,
-             2 * SHUTTLE_SEEDBYTES + SHUTTLE_CRHBYTES,
-             seedbuf,
-             SHUTTLE_SEEDBYTES + 2);
-    rho      = seedbuf;
-    rhoprime = rho + SHUTTLE_SEEDBYTES;
-    key      = rhoprime + SHUTTLE_CRHBYTES;
+    randombytes(inbuf, SHUTTLE_SEEDBYTES);
+    inbuf[SHUTTLE_SEEDBYTES] = (uint8_t)SHUTTLE_M;      /* I2B(lenE, 1) */
+
+    shake256(outbuf, 4 * SHUTTLE_SEEDBYTES,
+             inbuf, SHUTTLE_SEEDBYTES + 1);
+
+    rho      = outbuf;                                  /* seedA      : seedBytes */
+    rhoprime = rho + SHUTTLE_SEEDBYTES;                 /* seedsk     : 2*seedBytes */
+    key      = rhoprime + SHUTTLE_SKSEEDBYTES;          /* masterSeed : seedBytes */
 
     polyvec_matrix_expand(&a_gen, A_gen, rho);
     polyvecl_uniform_eta(&s, rhoprime, 0);
@@ -325,15 +342,14 @@ int crypto_sign_signature(uint8_t *sig, size_t *siglen,
     if(!irs_ok)
       continue;
 
-    /* Norm check on z1 */
-    {
-      polyvecl z1;
-      for(i = 0; i < SHUTTLE_L; ++i)
-        z1.vec[i] = z.vec[1 + i];
-      norm_sq = polyvecl_sq_norm(&z1);
-      if(norm_sq >= (int64_t)SHUTTLE_BS_SQ)
-        continue;
-    }
+    /* Norm check: full ||z||_2 < B_s per NGCC-Signature Alg Sign, line 187.
+     *
+     * z is split as (z_1, z_2) per Sign line 191, where z_1 is the first
+     * (L+1) polynomials and z_2 is the subsequent M polynomials. Both
+     * halves participate in the rejection bound. */
+    norm_sq = polyvec_sq_norm(&z);
+    if(norm_sq >= (int64_t)SHUTTLE_BS_SQ)
+      continue;
 
     /* Pack signature */
     pack_sig(sig, seed_c, irs_signs, &z);
@@ -372,14 +388,12 @@ int crypto_sign_verify(const uint8_t *sig, size_t siglen,
   if(unpack_sig(seed_c, irs_signs, &z, sig))
     return -1;
 
-  /* Norm check on z1 */
-  {
-    polyvecl z1;
-    for(i = 0; i < SHUTTLE_L; ++i)
-      z1.vec[i] = z.vec[1 + i];
-    if(polyvecl_sq_norm(&z1) > (int64_t)SHUTTLE_BV_SQ)
-      return -1;
-  }
+  /* Verify-side norm check: full ||(z_1, z_2)||_2 <= B_v per NGCC-Signature
+   * Alg Verify, line 246. With the current (uncompressed) signature format
+   * the entire z vector is published so polyvec_sq_norm gives ||(z_1, z_2)||^2
+   * directly. */
+  if(polyvec_sq_norm(&z) > (int64_t)SHUTTLE_BV_SQ)
+    return -2;
 
   /* mu */
   shake256(tr, SHUTTLE_TRBYTES, pk, SHUTTLE_PUBLICKEYBYTES);
@@ -429,7 +443,7 @@ int crypto_sign_verify(const uint8_t *sig, size_t siglen,
 
   for(i = 0; i < SHUTTLE_CTILDEBYTES; ++i) {
     if(seed_c[i] != seed_c_prime[i])
-      return -1;
+      return -3;
   }
 
   return 0;

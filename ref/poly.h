@@ -66,6 +66,11 @@ void polyz_pack(uint8_t *r, const poly *a);
 #define polyz_unpack SHUTTLE_NAMESPACE(polyz_unpack)
 void polyz_unpack(poly *r, const uint8_t *a);
 
+#define polyz0_pack SHUTTLE_NAMESPACE(polyz0_pack)
+void polyz0_pack(uint8_t *r, const poly *a);
+#define polyz0_unpack SHUTTLE_NAMESPACE(polyz0_unpack)
+void polyz0_unpack(poly *r, const uint8_t *a);
+
 #define polyw1_pack SHUTTLE_NAMESPACE(polyw1_pack)
 void polyw1_pack(uint8_t *r, const poly *a);
 

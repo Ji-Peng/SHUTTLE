@@ -15,14 +15,15 @@
  *
  * All operations are constant-time to prevent side-channel leakage.
  *
- * Key parameters:
- *   - sigma = SHUTTLE_SIGMA = 128, so sigma^2 = 16384
- *   - N = SHUTTLE_N = 256 (polynomial ring degree)
- *   - VECLEN = 6 (full secret key vector length)
- *   - tau = SHUTTLE_TAU = 30 (challenge Hamming weight)
+ * Key parameters (all driven by params.h via SHUTTLE_MODE):
+ *   - sigma  = SHUTTLE_SIGMA  (101 for SHUTTLE-128, 149 for SHUTTLE-256)
+ *   - N      = SHUTTLE_N      (256 for SHUTTLE-128, 512 for SHUTTLE-256)
+ *   - VECLEN = SHUTTLE_VECLEN (= 1 + L + M)
+ *   - tau    = SHUTTLE_TAU    (30 for SHUTTLE-128, 58 for SHUTTLE-256)
  */
 
 #include <string.h>
+#include "params.h"
 #include "rejsample.h"
 #include "approx_log.h"
 #include "approx_exp.h"  /* for wide_int128, wide_uint128 */
@@ -34,8 +35,8 @@
 /* Number of IntervalParity iterations. Must be exactly 100 for security. */
 #define IRS_PARITY_STEPS  100
 
-/* sigma^2 = 128^2 = 16384 = 2^14 */
-#define SIGMA_SQ          16384
+/* sigma^2, derived from the mode. */
+#define SIGMA_SQ          ((uint32_t)SHUTTLE_SIGMA * (uint32_t)SHUTTLE_SIGMA)
 
 /* ============================================================
  * Constant-time helpers
@@ -208,18 +209,19 @@ static int irs_step(polyvec *z,
     /*
      * Step 1: Compute u = <z, v> / sigma^2 in Q62.
      *
-     * u_real = inner / sigma^2, where sigma^2 = 2^14 = 16384.
-     * u_q62 = u_real * 2^62 = inner * 2^62 / 2^14 = inner * 2^48.
+     * u_real = inner / sigma^2.
+     * u_q62 = u_real * 2^62 ~= inner * floor(2^62 / sigma^2)
+     *                        = inner * SHUTTLE_INV_SIGMA2_Q62.
      *
-    * For SHUTTLE parameters, |inner| can reach ~2e8 (Cauchy-Schwarz bound),
-     * so inner * 2^48 can reach ~5.6e22, which overflows int64 (max ~9.2e18).
-     * We compute in __int128 and clamp: when |u| is very large, the step
+     * For SHUTTLE parameters, |inner| can reach ~2e8 (Cauchy-Schwarz bound)
+     * and SHUTTLE_INV_SIGMA2_Q62 is ~4e14 for sigma=101 (~2e14 for sigma=149),
+     * so the product can reach ~8e22. That overflows int64 (max ~9.2e18) but
+     * we compute in __int128 and clamp: when |u| is very large the step
      * always rejects (signing restarts), so clamping is safe.
      */
     int64_t inner = polyvec_inner_product(z, v);
 
-    /* u_q62 = inner * 2^48 via __int128, then clamp to int64 */
-    wide_int128 u_wide = (wide_int128)inner << 48;
+    wide_int128 u_wide = (wide_int128)inner * (wide_int128)SHUTTLE_INV_SIGMA2_Q62;
     int64_t u_q62;
     if (u_wide > (wide_int128)INT64_MAX)
         u_q62 = INT64_MAX;

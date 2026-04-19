@@ -4,8 +4,16 @@
 #include <stdint.h>
 #include "params.h"
 
-#define SHUTTLE_MONT  974          /* 2^32 mod q */
-#define SHUTTLE_QINV  1309656065   /* q^(-1) mod 2^32 */
+/* Montgomery constants for q = 13313, base R = 2^32.
+ *   MONT  = 2^32 mod q
+ *   QINV  = q^{-1} mod 2^32  (used as uint32_t to ensure exact arithmetic)
+ */
+#define SHUTTLE_MONT  7114U
+#define SHUTTLE_QINV  3398421505U
+
+/* Barrett precomputation: V = round(2^32 / q) = 322585 (for q = 13313).
+ * Used by reduce32 to compute a quotient estimate good to +/- 1. */
+#define SHUTTLE_BARRETT_V  322585
 
 #define montgomery_reduce SHUTTLE_NAMESPACE(montgomery_reduce)
 int32_t montgomery_reduce(int64_t a);

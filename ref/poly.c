@@ -303,9 +303,17 @@ void poly_uniform_eta(poly *a,
 /*************************************************
 * Name:        poly_challenge
 *
-* Description: Implementation of H. Samples polynomial with TAU nonzero
-*              coefficients in {-1,1} using the output stream of
-*              SHAKE256(seed). Uses Fisher-Yates shuffle.
+* Description: Implementation of SampleC (NGCC-Signature Alg, sign line 181).
+*              Samples polynomial with exactly TAU coefficients set to +1
+*              and the remaining (N - TAU) coefficients set to 0, using the
+*              SHAKE-256 output stream of seed as pseudorandom choice for
+*              the Fisher-Yates shuffle.
+*
+*              Unlike Dilithium's challenge which places tau nonzeros drawn
+*              from {-1, +1}, SHUTTLE restricts the challenge to {0, +1}.
+*              Sign randomization is handled separately by the IRS routine
+*              through per-monomial sign bits (irs_signs), not by the
+*              challenge polynomial itself.
 *
 * Arguments:   - poly *c: pointer to output polynomial
 *              - const uint8_t seed[]: byte array containing seed of length
@@ -313,7 +321,6 @@ void poly_uniform_eta(poly *a,
 **************************************************/
 void poly_challenge(poly *c, const uint8_t seed[SHUTTLE_CTILDEBYTES]) {
   unsigned int i, b, pos;
-  uint64_t signs;
   uint8_t buf[SHAKE256_RATE];
   keccak_state state;
 
@@ -322,14 +329,12 @@ void poly_challenge(poly *c, const uint8_t seed[SHUTTLE_CTILDEBYTES]) {
   shake256_finalize(&state);
   shake256_squeezeblocks(buf, 1, &state);
 
-  signs = 0;
-  for(i = 0; i < 8; ++i)
-    signs |= (uint64_t)buf[i] << 8 * i;
-  pos = 8;
+  pos = 0;
 
   for(i = 0; i < SHUTTLE_N; ++i)
     c->coeffs[i] = 0;
 
+  /* Fisher-Yates: place TAU ones at fresh random positions in [0, N). */
   for(i = SHUTTLE_N - SHUTTLE_TAU; i < SHUTTLE_N; ++i) {
     do {
       if(pos >= SHAKE256_RATE) {
@@ -341,8 +346,7 @@ void poly_challenge(poly *c, const uint8_t seed[SHUTTLE_CTILDEBYTES]) {
     } while(b > i);
 
     c->coeffs[i] = c->coeffs[b];
-    c->coeffs[b] = 1 - 2 * (signs & 1);
-    signs >>= 1;
+    c->coeffs[b] = 1;
   }
 }
 
@@ -515,9 +519,10 @@ void polypk_unpack(poly *r, const uint8_t *a) {
 * Name:        polyz_pack
 *
 * Description: Bit-pack polynomial with signed coefficients.
-*              For q=15361, signature coefficients are bounded and fit in
-*              14 bits when stored as unsigned values in [0, 2*BOUND].
-*              We store c + SHUTTLE_BOUND as a 14-bit unsigned value.
+*              After the alpha_1 stretch, z-slot coefficients live in
+*              [-Z_BOUND, Z_BOUND] where Z_BOUND = 11*sigma + alpha_1*tau.
+*              Both modes satisfy 2*Z_BOUND < 2^14 so the 14-bit offset-
+*              binary encoding (t = Z_BOUND - coeff) still fits.
 *              7 bytes per 4 coefficients.
 *
 * Arguments:   - uint8_t *r: pointer to output byte array with at least
@@ -529,11 +534,11 @@ void polyz_pack(uint8_t *r, const poly *a) {
   uint32_t t[4];
 
   for(i = 0; i < SHUTTLE_N / 4; ++i) {
-    /* Map from [-BOUND, BOUND] to [0, 2*BOUND] */
-    t[0] = (uint32_t)(SHUTTLE_BOUND - a->coeffs[4 * i + 0]);
-    t[1] = (uint32_t)(SHUTTLE_BOUND - a->coeffs[4 * i + 1]);
-    t[2] = (uint32_t)(SHUTTLE_BOUND - a->coeffs[4 * i + 2]);
-    t[3] = (uint32_t)(SHUTTLE_BOUND - a->coeffs[4 * i + 3]);
+    /* Map from [-Z_BOUND, Z_BOUND] to [0, 2*Z_BOUND] */
+    t[0] = (uint32_t)(SHUTTLE_Z_BOUND - a->coeffs[4 * i + 0]);
+    t[1] = (uint32_t)(SHUTTLE_Z_BOUND - a->coeffs[4 * i + 1]);
+    t[2] = (uint32_t)(SHUTTLE_Z_BOUND - a->coeffs[4 * i + 2]);
+    t[3] = (uint32_t)(SHUTTLE_Z_BOUND - a->coeffs[4 * i + 3]);
 
     r[7 * i + 0] = (uint8_t)(t[0]);
     r[7 * i + 1] = (uint8_t)(t[0] >> 8) | (uint8_t)(t[1] << 6);
@@ -571,20 +576,23 @@ void polyz_unpack(poly *r, const uint8_t *a) {
     t3 = (((uint32_t)a[7 * i + 5] >> 2)
         | ((uint32_t)a[7 * i + 6] << 6)) & 0x3FFF;
 
-    /* Map back from [0, 2*BOUND] to [-BOUND, BOUND] */
-    r->coeffs[4 * i + 0] = SHUTTLE_BOUND - (int32_t)t0;
-    r->coeffs[4 * i + 1] = SHUTTLE_BOUND - (int32_t)t1;
-    r->coeffs[4 * i + 2] = SHUTTLE_BOUND - (int32_t)t2;
-    r->coeffs[4 * i + 3] = SHUTTLE_BOUND - (int32_t)t3;
+    /* Map back from [0, 2*Z_BOUND] to [-Z_BOUND, Z_BOUND] */
+    r->coeffs[4 * i + 0] = SHUTTLE_Z_BOUND - (int32_t)t0;
+    r->coeffs[4 * i + 1] = SHUTTLE_Z_BOUND - (int32_t)t1;
+    r->coeffs[4 * i + 2] = SHUTTLE_Z_BOUND - (int32_t)t2;
+    r->coeffs[4 * i + 3] = SHUTTLE_Z_BOUND - (int32_t)t3;
   }
 }
 
 /*************************************************
 * Name:        polyw1_pack
 *
-* Description: Bit-pack polynomial w1 with 6-bit coefficients (high bits
-*              from decomposition, values in [0,59]).
-*              3 bytes per 4 coefficients (6 * 4 = 24 bits = 3 bytes).
+* Description: Bit-pack polynomial w1 with W1_BITS-bit coefficients.
+*              Values are in [0, W1_MAX]; W1_BITS = 6 for SHUTTLE-128
+*              (values fit in [0,52]) and W1_BITS = 5 for SHUTTLE-256
+*              (values fit in [0,26]).
+*              6-bit encoding: 3 bytes per 4 coefficients.
+*              5-bit encoding: 5 bytes per 8 coefficients.
 *
 * Arguments:   - uint8_t *r: pointer to output byte array with at least
 *                            SHUTTLE_POLYW1_PACKEDBYTES bytes
@@ -593,6 +601,7 @@ void polyz_unpack(poly *r, const uint8_t *a) {
 void polyw1_pack(uint8_t *r, const poly *a) {
   unsigned int i;
 
+#if SHUTTLE_W1_BITS == 6
   for(i = 0; i < SHUTTLE_N / 4; ++i) {
     r[3 * i + 0] = (uint8_t)(a->coeffs[4 * i + 0])
                  | (uint8_t)(a->coeffs[4 * i + 1] << 6);
@@ -600,5 +609,102 @@ void polyw1_pack(uint8_t *r, const poly *a) {
                  | (uint8_t)(a->coeffs[4 * i + 2] << 4);
     r[3 * i + 2] = (uint8_t)(a->coeffs[4 * i + 2] >> 4)
                  | (uint8_t)(a->coeffs[4 * i + 3] << 2);
+  }
+#elif SHUTTLE_W1_BITS == 5
+  for(i = 0; i < SHUTTLE_N / 8; ++i) {
+    const int32_t *c = &a->coeffs[8 * i];
+    r[5 * i + 0] = (uint8_t)(c[0])
+                 | (uint8_t)(c[1] << 5);
+    r[5 * i + 1] = (uint8_t)(c[1] >> 3)
+                 | (uint8_t)(c[2] << 2)
+                 | (uint8_t)(c[3] << 7);
+    r[5 * i + 2] = (uint8_t)(c[3] >> 1)
+                 | (uint8_t)(c[4] << 4);
+    r[5 * i + 3] = (uint8_t)(c[4] >> 4)
+                 | (uint8_t)(c[5] << 1)
+                 | (uint8_t)(c[6] << 6);
+    r[5 * i + 4] = (uint8_t)(c[6] >> 2)
+                 | (uint8_t)(c[7] << 3);
+  }
+#else
+#  error "Unsupported SHUTTLE_W1_BITS (expected 5 or 6)"
+#endif
+}
+
+/*************************************************
+* Name:        polyz0_pack
+*
+* Description: Bit-pack the first response slot z[0] (compressed by alpha_1).
+*              Coefficients live in a signed range whose absolute value fits
+*              in SHUTTLE_Z0_BITS-1 bits; we encode them with SHUTTLE_Z0_BITS
+*              (= 11 here) signed bits via offset binary (t = 2^{Z0_BITS-1} - c).
+*              11 bits/coeff packs as 11 bytes per 8 coefficients.
+*
+* Arguments:   - uint8_t *r: pointer to output byte array with at least
+*                            SHUTTLE_POLYZ0_PACKEDBYTES bytes
+*              - const poly *a: pointer to input polynomial
+**************************************************/
+void polyz0_pack(uint8_t *r, const poly *a) {
+  unsigned int i;
+  uint32_t t[8];
+  const int32_t center = 1 << (SHUTTLE_Z0_BITS - 1);
+
+  for(i = 0; i < SHUTTLE_N / 8; ++i) {
+    unsigned int j;
+    for(j = 0; j < 8; ++j)
+      t[j] = (uint32_t)(center - a->coeffs[8 * i + j]);
+
+    /* 11 bits/coeff, 88 bits / 8 bytes per 8 coefficients -> 11 bytes */
+    r[11 * i +  0] = (uint8_t)(t[0]);
+    r[11 * i +  1] = (uint8_t)(t[0] >> 8) | (uint8_t)(t[1] << 3);
+    r[11 * i +  2] = (uint8_t)(t[1] >> 5) | (uint8_t)(t[2] << 6);
+    r[11 * i +  3] = (uint8_t)(t[2] >> 2);
+    r[11 * i +  4] = (uint8_t)(t[2] >> 10) | (uint8_t)(t[3] << 1);
+    r[11 * i +  5] = (uint8_t)(t[3] >> 7) | (uint8_t)(t[4] << 4);
+    r[11 * i +  6] = (uint8_t)(t[4] >> 4) | (uint8_t)(t[5] << 7);
+    r[11 * i +  7] = (uint8_t)(t[5] >> 1);
+    r[11 * i +  8] = (uint8_t)(t[5] >> 9) | (uint8_t)(t[6] << 2);
+    r[11 * i +  9] = (uint8_t)(t[6] >> 6) | (uint8_t)(t[7] << 5);
+    r[11 * i + 10] = (uint8_t)(t[7] >> 3);
+  }
+}
+
+/*************************************************
+* Name:        polyz0_unpack
+*
+* Description: Inverse of polyz0_pack.
+*
+* Arguments:   - poly *r: pointer to output polynomial
+*              - const uint8_t *a: byte array with bit-packed polynomial
+**************************************************/
+void polyz0_unpack(poly *r, const uint8_t *a) {
+  unsigned int i;
+  const int32_t center = 1 << (SHUTTLE_Z0_BITS - 1);
+  const uint32_t mask = ((uint32_t)1 << SHUTTLE_Z0_BITS) - 1;
+
+  for(i = 0; i < SHUTTLE_N / 8; ++i) {
+    uint32_t t[8];
+
+    t[0] = ((uint32_t)a[11 * i + 0]
+          | ((uint32_t)a[11 * i + 1] << 8)) & mask;
+    t[1] = (((uint32_t)a[11 * i + 1] >> 3)
+          | ((uint32_t)a[11 * i + 2] << 5)) & mask;
+    t[2] = (((uint32_t)a[11 * i + 2] >> 6)
+          | ((uint32_t)a[11 * i + 3] << 2)
+          | ((uint32_t)a[11 * i + 4] << 10)) & mask;
+    t[3] = (((uint32_t)a[11 * i + 4] >> 1)
+          | ((uint32_t)a[11 * i + 5] << 7)) & mask;
+    t[4] = (((uint32_t)a[11 * i + 5] >> 4)
+          | ((uint32_t)a[11 * i + 6] << 4)) & mask;
+    t[5] = (((uint32_t)a[11 * i + 6] >> 7)
+          | ((uint32_t)a[11 * i + 7] << 1)
+          | ((uint32_t)a[11 * i + 8] << 9)) & mask;
+    t[6] = (((uint32_t)a[11 * i + 8] >> 2)
+          | ((uint32_t)a[11 * i + 9] << 6)) & mask;
+    t[7] = (((uint32_t)a[11 * i + 9] >> 5)
+          | ((uint32_t)a[11 * i + 10] << 3)) & mask;
+
+    for(unsigned int j = 0; j < 8; ++j)
+      r->coeffs[8 * i + j] = center - (int32_t)t[j];
   }
 }
