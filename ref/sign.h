@@ -1,7 +1,16 @@
 /*
- * sign.h - Signature API for SHUTTLE.
+ * sign.h - NGCC-Signature Alg 2 signature scheme.
  *
- * Provides key generation, signing, and verification.
+ * Public entry points follow the NIST / SUPERCOP convention and are
+ * namespaced per SHUTTLE_MODE via SHUTTLE_NAMESPACE (see config.h).
+ *
+ * The on-wire signature layout is the compressed form with full rANS
+ * entropy coding (Z_0, HighBits(z[1..L]), hint h). See packing.h.
+ *
+ * Sizes:
+ *   SHUTTLE_PUBLICKEYBYTES
+ *   SHUTTLE_SECRETKEYBYTES
+ *   SHUTTLE_BYTES
  */
 
 #ifndef SHUTTLE_SIGN_H
@@ -9,9 +18,11 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "params.h"
 
-#define crypto_sign_keypair SHUTTLE_NAMESPACE(keypair)
+#include "params.h"
+#include "packing.h"
+
+#define crypto_sign_keypair   SHUTTLE_NAMESPACE(keypair)
 int crypto_sign_keypair(uint8_t *pk, uint8_t *sk);
 
 #define crypto_sign_signature SHUTTLE_NAMESPACE(signature)
@@ -19,17 +30,17 @@ int crypto_sign_signature(uint8_t *sig, size_t *siglen,
                           const uint8_t *m, size_t mlen,
                           const uint8_t *sk);
 
-#define crypto_sign_verify SHUTTLE_NAMESPACE(verify)
+#define crypto_sign_verify    SHUTTLE_NAMESPACE(verify)
 int crypto_sign_verify(const uint8_t *sig, size_t siglen,
                        const uint8_t *m, size_t mlen,
                        const uint8_t *pk);
 
-#define crypto_sign SHUTTLE_NAMESPACE(sign)
+#define crypto_sign           SHUTTLE_NAMESPACE(sign)
 int crypto_sign(uint8_t *sm, size_t *smlen,
                 const uint8_t *m, size_t mlen,
                 const uint8_t *sk);
 
-#define crypto_sign_open SHUTTLE_NAMESPACE(open)
+#define crypto_sign_open      SHUTTLE_NAMESPACE(open)
 int crypto_sign_open(uint8_t *m, size_t *mlen,
                      const uint8_t *sm, size_t smlen,
                      const uint8_t *pk);

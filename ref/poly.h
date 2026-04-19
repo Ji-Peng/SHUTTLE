@@ -108,9 +108,8 @@ void polyz1_combine(poly *a, const int32_t *hi, const int32_t *lo);
  * unpacker inverts it as  lo = (packed >= alpha_h/2) ? packed - alpha_h : packed.
  *
  * Buffer size: SHUTTLE_POLYZ1_LO_PACKEDBYTES = N * ALPHA_H_BITS / 8.
+ * (Macro lives in params.h so that SHUTTLE_BYTES can reference it.)
  */
-#define SHUTTLE_POLYZ1_LO_PACKEDBYTES (SHUTTLE_N * SHUTTLE_ALPHA_H_BITS / 8)
-
 #define polyz1_lo_pack SHUTTLE_NAMESPACE(polyz1_lo_pack)
 void polyz1_lo_pack(uint8_t *r, const int32_t *lo);
 

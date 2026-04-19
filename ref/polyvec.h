@@ -213,8 +213,8 @@ void polyveck_lsb_from_bitmap(polyveck *out,
  *   e          : polyveck (coefficient form, CBD-sampled secret).
  * Output:
  *   b          : polyveck in [0, q). */
-#define compute_b_v2 SHUTTLE_NAMESPACE(compute_b_v2)
-void compute_b_v2(polyveck *b,
+#define compute_b SHUTTLE_NAMESPACE(compute_b)
+void compute_b(polyveck *b,
                   const polyveck *a_gen,
                   const polyveck A_gen_hat[SHUTTLE_L],
                   const polyvecl *s,

@@ -690,13 +690,13 @@ void polyveck_hint_unpack_basic(polyveck *h,
 }
 
 /*************************************************
-* Name:        compute_b_v2
+* Name:        compute_b
 *
 * Description: Clean keygen b = a_gen + A_gen*s + e (mod q). Identity-block
 *              addition is done in the coefficient domain to avoid the
 *              mixed-Montgomery scaling of Phase 6a's compute_commitment.
 **************************************************/
-void compute_b_v2(polyveck *b,
+void compute_b(polyveck *b,
                   const polyveck *a_gen,
                   const polyveck A_gen_hat[SHUTTLE_L],
                   const polyvecl *s,

@@ -172,7 +172,7 @@
 #define SHUTTLE_IRS_SIGNBYTES         ((SHUTTLE_TAU + 7) / 8)
 
 /* ============================================================
- * rANS reservation budgets (shared by packing_v2 and packing_v3).
+ * rANS reservation budgets (consumed by packing.c).
  *
  * Phase 6b-4 / 6c-1 empirical measurement:
  *   mode-128: hint rANS ~177 B typical, tail <= 210 B.
@@ -198,6 +198,10 @@
 #define SHUTTLE_Z1_RANS_BLOCK_BYTES (2 + SHUTTLE_Z1_RANS_RESERVED_BYTES)
 #define SHUTTLE_Z0_RANS_BLOCK_BYTES (2 + SHUTTLE_Z0_RANS_RESERVED_BYTES)
 
+/* Packed size of the LowBits part of z[1..L] (see poly.h::polyz1_lo_pack).
+ * Kept in params.h so SHUTTLE_BYTES can reference it without dragging poly.h. */
+#define SHUTTLE_POLYZ1_LO_PACKEDBYTES (SHUTTLE_N * SHUTTLE_ALPHA_H_BITS / 8)
+
 /* Public / secret key sizes */
 #define SHUTTLE_PUBLICKEYBYTES  (SHUTTLE_SEEDBYTES \
                                    + SHUTTLE_M * SHUTTLE_POLYPK_PACKEDBYTES)
@@ -208,26 +212,23 @@
                                    + SHUTTLE_L * SHUTTLE_POLYETA_PACKEDBYTES \
                                    + SHUTTLE_M * SHUTTLE_POLYETA_PACKEDBYTES)
 
-/* Signature layout.
+/* Signature layout (NGCC-Signature Alg 2 compressed form with full
+ * rANS entropy coding; see packing.h for the byte-slot diagram):
  *
- * CURRENT (uncompressed, what packing.c writes today):
- *   c_tilde (32B)
- *   irs_signs (ceil(TAU/8) B)
- *   polyz_pack(z[0..VECLEN-1])               -- VECLEN polys, 14 bits/coeff
+ *   seedC (32 B) || irs_signs (ceil(TAU/8)) B
+ *   || uint16 z0_rans_len || rANS(Z_0) + pad
+ *   || L * polyz1_lo_pack(lo(z[1..L]))
+ *   || uint16 z1_rans_len || rANS(hi(z[1..L])) + pad
+ *   || uint16 hint_rans_len || rANS(h) + pad
  *
- * TARGET (compressed per NGCC-Signature Table 2, to be implemented in phase 6):
- *   c_tilde (32B)
- *   irs_signs (ceil(TAU/8) B)
- *   polyz0_pack(z[0])                        -- 11 bits/coeff, N coeffs
- *   polyz_pack(z[1..L])                      -- L polys, 14 bits/coeff
- *   polyvech_pack(h)                         -- hint over the M "z2" polys
- *   -> SHUTTLE-128: 1560 B, SHUTTLE-256: 2311 B (spec targets)
- *
- * SHUTTLE_BYTES currently reflects the uncompressed layout. Phase 6 will
- * switch both pack_sig and SHUTTLE_BYTES to the compressed form atomically. */
-#define SHUTTLE_BYTES  (SHUTTLE_CTILDEBYTES \
-                          + SHUTTLE_IRS_SIGNBYTES \
-                          + SHUTTLE_VECLEN * SHUTTLE_POLYZ_PACKEDBYTES)
+ * mode-128: 1450 B, mode-256: 2772 B. See docs/NGCC_Sign/SHUTTLE_draft.md
+ * section "byte layout" for the full derivation. */
+#define SHUTTLE_BYTES  ( SHUTTLE_CTILDEBYTES \
+                       + SHUTTLE_IRS_SIGNBYTES \
+                       + SHUTTLE_Z0_RANS_BLOCK_BYTES \
+                       + SHUTTLE_L * SHUTTLE_POLYZ1_LO_PACKEDBYTES \
+                       + SHUTTLE_Z1_RANS_BLOCK_BYTES \
+                       + SHUTTLE_HINT_BLOCK_BYTES )
 
 /* ============================================================
  * Gaussian sampler parameters (driven by SHUTTLE_SIGMA, set in config.h)

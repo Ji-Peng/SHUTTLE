@@ -12,7 +12,7 @@ SAMPLER_SOURCES = fips202.c symmetric-shake.c approx_exp.c \
 SIGN_SOURCES    = fips202.c symmetric-shake.c approx_exp.c approx_log.c \
                   sampler.c sampler_4x.c rejsample.c \
                   reduce.c ntt.c poly.c polyvec.c rounding.c \
-                  packing.c sign.c randombytes.c
+                  shuttle_rans.c packing.c sign.c randombytes.c
 
 NTT_SOURCES     = fips202.c randombytes.c reduce.c ntt.c poly.c rounding.c
 
@@ -22,19 +22,7 @@ RANS_SOURCES    = shuttle_rans.c
 
 POLY_Z1_SOURCES = fips202.c randombytes.c reduce.c ntt.c poly.c rounding.c shuttle_rans.c
 
-SIG_V2_SOURCES  = fips202.c randombytes.c reduce.c ntt.c poly.c polyvec.c rounding.c shuttle_rans.c packing_v2.c
-
-SIG_V3_SOURCES  = fips202.c randombytes.c reduce.c ntt.c poly.c polyvec.c rounding.c shuttle_rans.c packing_v3.c
-
-SIGN_V2_SOURCES = fips202.c symmetric-shake.c approx_exp.c approx_log.c \
-                  sampler.c sampler_4x.c rejsample.c \
-                  reduce.c ntt.c poly.c polyvec.c rounding.c \
-                  packing.c packing_v2.c shuttle_rans.c sign_v2.c randombytes.c
-
-SIGN_V3_SOURCES = fips202.c symmetric-shake.c approx_exp.c approx_log.c \
-                  sampler.c sampler_4x.c rejsample.c \
-                  reduce.c ntt.c poly.c polyvec.c rounding.c \
-                  packing.c packing_v3.c shuttle_rans.c sign_v3.c randombytes.c
+SIG_SOURCES     = fips202.c randombytes.c reduce.c ntt.c poly.c polyvec.c rounding.c shuttle_rans.c packing.c
 
 TEST_COMMON     = test/cpucycles.c test/speed_print.c
 
@@ -62,8 +50,8 @@ CFLAGS_MODE = -DSHUTTLE_MODE=$(1)
 # Phony targets
 # ============================================================
 .PHONY: all clean check \
-        test-sampler test-ntt test-sign \
-        speed-sign profile-sign \
+        test-sampler test-ntt test-mod2q test-rans test-poly-z1 \
+        test-sig test-sign \
         libs
 
 # ============================================================
@@ -75,21 +63,14 @@ TEST_NTT_BINS      = $(foreach m,$(MODES),$(OUTDIR)/test_ntt$(m))
 TEST_MOD2Q_BINS    = $(foreach m,$(MODES),$(OUTDIR)/test_mod2q$(m))
 TEST_RANS_BINS     = $(foreach m,$(MODES),$(OUTDIR)/test_rans$(m))
 TEST_POLY_Z1_BINS  = $(foreach m,$(MODES),$(OUTDIR)/test_poly_z1$(m))
-TEST_SIG_V2_BINS   = $(foreach m,$(MODES),$(OUTDIR)/test_sig_v2$(m))
-TEST_SIG_V3_BINS   = $(foreach m,$(MODES),$(OUTDIR)/test_sig_v3$(m))
-TEST_SIGN_V2_BINS  = $(foreach m,$(MODES),$(OUTDIR)/test_sign_v2$(m))
-TEST_SIGN_V3_BINS  = $(foreach m,$(MODES),$(OUTDIR)/test_sign_v3$(m))
+TEST_SIG_BINS      = $(foreach m,$(MODES),$(OUTDIR)/test_sig$(m))
 TEST_SIGN_BINS     = $(foreach m,$(MODES),$(OUTDIR)/test_sign$(m))
-SPEED_SIGN_BINS    = $(foreach m,$(MODES),$(OUTDIR)/speed_sign$(m))
-PROFILE_SIGN_BINS  = $(foreach m,$(MODES),$(OUTDIR)/profile_sign$(m))
 LIB_BINS           = $(foreach m,$(MODES),$(OUTDIR)/libshuttle$(m)_ref.so)
 
 all: $(TEST_SAMPLER_BINS) $(SPEED_SAMPLER_BINS) \
      $(TEST_NTT_BINS) $(TEST_MOD2Q_BINS) $(TEST_RANS_BINS) \
      $(TEST_POLY_Z1_BINS) \
-     $(TEST_SIG_V2_BINS) $(TEST_SIG_V3_BINS) \
-     $(TEST_SIGN_V2_BINS) $(TEST_SIGN_V3_BINS) $(TEST_SIGN_BINS) \
-     $(SPEED_SIGN_BINS) $(PROFILE_SIGN_BINS) \
+     $(TEST_SIG_BINS) $(TEST_SIGN_BINS) \
      $(LIB_BINS)
 
 libs: $(LIB_BINS)
@@ -99,13 +80,8 @@ test-ntt:     $(TEST_NTT_BINS)
 test-mod2q:   $(TEST_MOD2Q_BINS)
 test-rans:    $(TEST_RANS_BINS)
 test-poly-z1: $(TEST_POLY_Z1_BINS)
-test-sig-v2:  $(TEST_SIG_V2_BINS)
-test-sig-v3:  $(TEST_SIG_V3_BINS)
-test-sign-v2: $(TEST_SIGN_V2_BINS)
-test-sign-v3: $(TEST_SIGN_V3_BINS)
+test-sig:     $(TEST_SIG_BINS)
 test-sign:    $(TEST_SIGN_BINS)
-speed-sign:   $(SPEED_SIGN_BINS)
-profile-sign: $(PROFILE_SIGN_BINS)
 
 $(OUTDIR):
 	mkdir -p $(OUTDIR)
@@ -139,33 +115,13 @@ $(OUTDIR)/test_poly_z1$(1): test/test_poly_z1.c $(POLY_Z1_SOURCES) | $(OUTDIR)
 	$$(CC) $(CFLAGS_BASE) $(call CFLAGS_MODE,$(1)) $(LDFLAGS) \
 	    -o $$@ test/test_poly_z1.c $(POLY_Z1_SOURCES) $(LDLIBS)
 
-$(OUTDIR)/test_sig_v2$(1): test/test_sig_v2.c $(SIG_V2_SOURCES) | $(OUTDIR)
+$(OUTDIR)/test_sig$(1): test/test_sig.c $(SIG_SOURCES) | $(OUTDIR)
 	$$(CC) $(CFLAGS_BASE) $(call CFLAGS_MODE,$(1)) $(LDFLAGS) \
-	    -o $$@ test/test_sig_v2.c $(SIG_V2_SOURCES) $(LDLIBS)
-
-$(OUTDIR)/test_sig_v3$(1): test/test_sig_v3.c $(SIG_V3_SOURCES) | $(OUTDIR)
-	$$(CC) $(CFLAGS_BASE) $(call CFLAGS_MODE,$(1)) $(LDFLAGS) \
-	    -o $$@ test/test_sig_v3.c $(SIG_V3_SOURCES) $(LDLIBS)
-
-$(OUTDIR)/test_sign_v2$(1): test/test_sign_v2.c $(SIGN_V2_SOURCES) | $(OUTDIR)
-	$$(CC) $(CFLAGS_BASE) $(call CFLAGS_MODE,$(1)) $(LDFLAGS) \
-	    -o $$@ test/test_sign_v2.c $(SIGN_V2_SOURCES) $(LDLIBS)
-
-$(OUTDIR)/test_sign_v3$(1): test/test_sign_v3.c $(SIGN_V3_SOURCES) | $(OUTDIR)
-	$$(CC) $(CFLAGS_BASE) $(call CFLAGS_MODE,$(1)) $(LDFLAGS) \
-	    -o $$@ test/test_sign_v3.c $(SIGN_V3_SOURCES) $(LDLIBS)
+	    -o $$@ test/test_sig.c $(SIG_SOURCES) $(LDLIBS)
 
 $(OUTDIR)/test_sign$(1): test/test_sign.c $(SIGN_SOURCES) | $(OUTDIR)
 	$$(CC) $(CFLAGS_BASE) $(call CFLAGS_MODE,$(1)) $(LDFLAGS) \
 	    -o $$@ test/test_sign.c $(SIGN_SOURCES) $(LDLIBS)
-
-$(OUTDIR)/speed_sign$(1): test/speed_sign.c $(TEST_COMMON) $(SIGN_SOURCES) | $(OUTDIR)
-	$$(CC) $(CFLAGS_BASE) $(call CFLAGS_MODE,$(1)) $(LDFLAGS) \
-	    -o $$@ test/speed_sign.c $(TEST_COMMON) $(SIGN_SOURCES) $(LDLIBS)
-
-$(OUTDIR)/profile_sign$(1): test/profile_sign.c $(TEST_COMMON) $(SIGN_SOURCES) | $(OUTDIR)
-	$$(CC) $(CFLAGS_BASE) $(call CFLAGS_MODE,$(1)) $(LDFLAGS) \
-	    -o $$@ test/profile_sign.c $(TEST_COMMON) $(SIGN_SOURCES) $(LDLIBS)
 
 $(OUTDIR)/libshuttle$(1)_ref.so: $(SIGN_SOURCES) | $(OUTDIR)
 	$$(CC) $(CFLAGS_BASE) $(call CFLAGS_MODE,$(1)) -shared \
@@ -179,8 +135,7 @@ $(foreach m,$(MODES),$(eval $(call MODE_template,$(m))))
 # ============================================================
 check: $(TEST_SAMPLER_BINS) $(TEST_NTT_BINS) $(TEST_MOD2Q_BINS) \
        $(TEST_RANS_BINS) $(TEST_POLY_Z1_BINS) \
-       $(TEST_SIG_V2_BINS) $(TEST_SIG_V3_BINS) \
-       $(TEST_SIGN_V2_BINS) $(TEST_SIGN_V3_BINS) $(TEST_SIGN_BINS)
+       $(TEST_SIG_BINS) $(TEST_SIGN_BINS)
 	@set -e ; \
 	for m in $(MODES) ; do \
 	  echo "=== MODE=$$m: test_sampler ===" ; \
@@ -193,16 +148,10 @@ check: $(TEST_SAMPLER_BINS) $(TEST_NTT_BINS) $(TEST_MOD2Q_BINS) \
 	  $(OUTDIR)/test_rans$$m | tail -n 6 ; \
 	  echo "=== MODE=$$m: test_poly_z1 ===" ; \
 	  $(OUTDIR)/test_poly_z1$$m | tail -n 10 ; \
-	  echo "=== MODE=$$m: test_sig_v2 ===" ; \
-	  $(OUTDIR)/test_sig_v2$$m | tail -n 6 ; \
-	  echo "=== MODE=$$m: test_sig_v3 ===" ; \
-	  $(OUTDIR)/test_sig_v3$$m | tail -n 10 ; \
-	  echo "=== MODE=$$m: test_sign_v2 ===" ; \
-	  $(OUTDIR)/test_sign_v2$$m | tail -n 10 ; \
-	  echo "=== MODE=$$m: test_sign_v3 ===" ; \
-	  $(OUTDIR)/test_sign_v3$$m | tail -n 10 ; \
+	  echo "=== MODE=$$m: test_sig ===" ; \
+	  $(OUTDIR)/test_sig$$m | tail -n 10 ; \
 	  echo "=== MODE=$$m: test_sign ===" ; \
-	  $(OUTDIR)/test_sign$$m | tail -n 10 ; \
+	  $(OUTDIR)/test_sign$$m | tail -n 12 ; \
 	done
 	@echo "=== All mode check runs completed ==="
 

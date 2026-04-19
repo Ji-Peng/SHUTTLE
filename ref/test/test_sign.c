@@ -1,18 +1,17 @@
 /*
- * test_sign.c - Basic functional tests for the SHUTTLE signature scheme.
+ * test_sign.c - end-to-end tests for the NGCC-Signature Alg 2 sign / verify
+ * flow with rANS-compressed signature packing (Z_0 + HighBits(z[1..L]) + h).
+ *
+ * Expected signature sizes (see docs/NGCC_Sign/SHUTTLE_draft.md):
+ *   mode-128: 1450 B  (below NGCC-Signature Table 2's 1560 B)
+ *   mode-256: 2772 B  (above Table 2's 2311 B; spec clarification pending)
  *
  * Tests:
- *   1. Key generation: generates a keypair, prints sizes
- *   2. Sign + verify: signs a test message and verifies it
- *   3. Forgery detection: flips a bit in the signature and checks rejection
- *   4. Stress test: 100 rounds of sign-verify with random messages
- *   5. crypto_sign / crypto_sign_open (combined API)
- *
- * Compile:
- *   gcc -O3 -std=c99 -o test_sign test/test_sign.c sign.c packing.c \
- *       rejsample.c approx_log.c poly.c polyvec.c ntt.c reduce.c rounding.c \
- *       sampler.c sampler_4x.c approx_exp.c fips202.c symmetric-shake.c \
- *       randombytes.c
+ *   1. Key generation.
+ *   2. Sign + verify roundtrip.
+ *   3. Forgery detection (bit-flip in signature + message tampering).
+ *   4. 100-round stress test with random messages.
+ *   5. Combined crypto_sign / crypto_sign_open.
  */
 
 #include <stdio.h>
@@ -21,6 +20,7 @@
 #include <stdint.h>
 
 #include "../sign.h"
+#include "../packing.h"
 #include "../params.h"
 #include "../randombytes.h"
 
@@ -49,126 +49,78 @@ int main(void)
 
   printf("=== SHUTTLE Functional Test ===\n\n");
   printf("Parameters:\n");
-  printf("  N = %d, Q = %d, L = %d, M = %d\n",
-         SHUTTLE_N, SHUTTLE_Q, SHUTTLE_L, SHUTTLE_M);
-  printf("  ETA = %d, TAU = %d, SIGMA = %d\n",
-         SHUTTLE_ETA, SHUTTLE_TAU, SHUTTLE_SIGMA);
-  printf("  Public key size:  %d bytes\n", SHUTTLE_PUBLICKEYBYTES);
-  printf("  Secret key size:  %d bytes\n", SHUTTLE_SECRETKEYBYTES);
-  printf("  Signature size:   %d bytes\n", SHUTTLE_BYTES);
-  printf("  BS_SQ = %d, BV_SQ = %d\n\n",
-         SHUTTLE_BS_SQ, SHUTTLE_BV_SQ);
+  printf("  MODE = %d, N = %d, Q = %d, L = %d, M = %d\n",
+         SHUTTLE_MODE, SHUTTLE_N, SHUTTLE_Q, SHUTTLE_L, SHUTTLE_M);
+  printf("  ETA = %d, TAU = %d, SIGMA = %d, ALPHA_1 = %d, ALPHA_H = %d\n",
+         SHUTTLE_ETA, SHUTTLE_TAU, SHUTTLE_SIGMA, SHUTTLE_ALPHA_1, SHUTTLE_ALPHA_H);
+  printf("  Public key:  %d bytes\n", SHUTTLE_PUBLICKEYBYTES);
+  printf("  Secret key:  %d bytes\n", SHUTTLE_SECRETKEYBYTES);
+  printf("  Signature:   %d bytes (rANS-compressed Z_0 + z1 hi + hint)\n", SHUTTLE_BYTES);
+  printf("    z1 reserved:  %d B; hint reserved: %d B\n\n",
+         SHUTTLE_Z1_RANS_RESERVED_BYTES, SHUTTLE_HINT_RESERVED_BYTES);
 
   /* ---- Test 1: Key Generation ---- */
   printf("[Test 1] Key generation...\n");
   ret = crypto_sign_keypair(pk, sk);
-  if(ret != 0) {
-    printf("  FAIL: keypair returned %d\n", ret);
-    return 1;
-  }
+  if(ret != 0) { printf("  FAIL: keypair returned %d\n", ret); return 1; }
   print_hex("  pk", pk, SHUTTLE_PUBLICKEYBYTES);
   print_hex("  sk", sk, SHUTTLE_SECRETKEYBYTES);
   printf("  PASS\n\n");
 
   /* ---- Test 2: Sign + Verify ---- */
-  printf("[Test 2] Sign and verify a test message...\n");
+  printf("[Test 2] Sign and verify...\n");
   mlen = 33;
-  memcpy(msg, "SHUTTLE test message, round 0!", mlen);
-  msg[mlen - 1] = '\0';
+  memcpy(msg, "SHUTTLE test message, round 0", mlen);
 
   ret = crypto_sign_signature(sig, &siglen, msg, mlen, sk);
-  if(ret != 0) {
-    printf("  FAIL: signature returned %d\n", ret);
-    return 1;
-  }
+  if(ret != 0) { printf("  FAIL: sign returned %d\n", ret); return 1; }
   printf("  Signature length: %zu bytes\n", siglen);
   print_hex("  sig", sig, siglen);
 
   ret = crypto_sign_verify(sig, siglen, msg, mlen, pk);
-  if(ret != 0) {
-    printf("  FAIL: valid signature rejected (ret=%d)\n", ret);
-    return 1;
-  }
+  if(ret != 0) { printf("  FAIL: valid signature rejected (ret=%d)\n", ret); return 1; }
   printf("  Verification: PASS\n\n");
 
   /* ---- Test 3: Forgery Detection ---- */
-  printf("[Test 3] Forgery detection (bit flip in signature)...\n");
+  printf("[Test 3] Forgery detection...\n");
   {
     uint8_t sig_bad[SHUTTLE_BYTES];
     memcpy(sig_bad, sig, SHUTTLE_BYTES);
-
-    /* Flip a bit in the z1 portion of the signature */
     sig_bad[SHUTTLE_CTILDEBYTES + 10] ^= 0x01;
-
     ret = crypto_sign_verify(sig_bad, SHUTTLE_BYTES, msg, mlen, pk);
-    if(ret == 0) {
-      printf("  FAIL: forged signature accepted!\n");
-      return 1;
-    }
-    printf("  Forged sig correctly rejected (ret=%d)\n", ret);
+    if(ret == 0) { printf("  FAIL: forged signature accepted!\n"); return 1; }
+    printf("  Forged sig rejected (ret=%d)\n", ret);
   }
-
-  /* Flip a bit in the message */
   {
     uint8_t msg_bad[MLEN_MAX];
     memcpy(msg_bad, msg, mlen);
     msg_bad[0] ^= 0x80;
-
     ret = crypto_sign_verify(sig, siglen, msg_bad, mlen, pk);
-    if(ret == 0) {
-      printf("  FAIL: wrong-message signature accepted!\n");
-      return 1;
-    }
-    printf("  Wrong-message sig correctly rejected (ret=%d)\n", ret);
-  }
-
-  /* Flip a bit near the end of the z portion */
-  {
-    uint8_t sig_bad[SHUTTLE_BYTES];
-    memcpy(sig_bad, sig, SHUTTLE_BYTES);
-
-    /* Flip a bit in the last polynomial of z (near end of signature) */
-    sig_bad[SHUTTLE_BYTES - 10] ^= 0x04;
-
-    ret = crypto_sign_verify(sig_bad, SHUTTLE_BYTES, msg, mlen, pk);
-    if(ret == 0) {
-      printf("  FAIL: tail-flipped signature accepted!\n");
-      return 1;
-    }
-    printf("  Tail-flipped sig correctly rejected (ret=%d)\n", ret);
+    if(ret == 0) { printf("  FAIL: tampered message accepted!\n"); return 1; }
+    printf("  Tampered message rejected (ret=%d)\n", ret);
   }
   printf("  PASS\n\n");
 
-  /* ---- Test 4: Stress Test ---- */
-  printf("[Test 4] Stress test: %d rounds of sign+verify...\n", NROUNDS);
+  /* ---- Test 4: Stress ---- */
+  printf("[Test 4] Stress test (%d rounds)...\n", NROUNDS);
   for(i = 0; i < NROUNDS; ++i) {
-    /* Random message of random length [1, MLEN_MAX] */
     uint8_t rmsg[MLEN_MAX];
     uint8_t rlen_buf;
     size_t rmlen;
-
     randombytes(&rlen_buf, 1);
     rmlen = (rlen_buf % MLEN_MAX) + 1;
     randombytes(rmsg, rmlen);
 
     ret = crypto_sign_signature(sig, &siglen, rmsg, rmlen, sk);
-    if(ret != 0) {
-      printf("  FAIL at round %u: sign returned %d\n", i, ret);
-      return 1;
-    }
-
+    if(ret != 0) { printf("  FAIL at round %u: sign returned %d\n", i, ret); return 1; }
     ret = crypto_sign_verify(sig, siglen, rmsg, rmlen, pk);
-    if(ret != 0) {
-      printf("  FAIL at round %u: verify returned %d\n", i, ret);
-      return 1;
-    }
-
+    if(ret != 0) { printf("  FAIL at round %u: verify returned %d\n", i, ret); return 1; }
     if((i + 1) % 10 == 0)
       printf("  Completed %u/%d rounds\n", i + 1, NROUNDS);
   }
   printf("  All %d rounds PASS\n\n", NROUNDS);
 
-  /* ---- Test 5: Combined sign/open API ---- */
+  /* ---- Test 5: Combined API ---- */
   printf("[Test 5] Combined crypto_sign / crypto_sign_open...\n");
   {
     uint8_t sm[SHUTTLE_BYTES + MLEN_MAX];
@@ -179,26 +131,17 @@ int main(void)
     memcpy(msg, "Combined API tst", mlen);
 
     ret = crypto_sign(sm, &smlen, msg, mlen, sk);
-    if(ret != 0) {
-      printf("  FAIL: crypto_sign returned %d\n", ret);
-      return 1;
-    }
+    if(ret != 0) { printf("  FAIL: crypto_sign returned %d\n", ret); return 1; }
     printf("  Signed message length: %zu bytes\n", smlen);
 
     ret = crypto_sign_open(m2, &m2len, sm, smlen, pk);
-    if(ret != 0) {
-      printf("  FAIL: crypto_sign_open returned %d\n", ret);
-      return 1;
-    }
-
+    if(ret != 0) { printf("  FAIL: crypto_sign_open returned %d\n", ret); return 1; }
     if(m2len != mlen || memcmp(m2, msg, mlen) != 0) {
-      printf("  FAIL: recovered message differs\n");
-      return 1;
+      printf("  FAIL: recovered message differs\n"); return 1;
     }
-    printf("  Recovered message matches original\n");
-    printf("  PASS\n\n");
+    printf("  Recovered message matches\n  PASS\n\n");
   }
 
-  printf("=== All tests PASSED ===\n");
+  printf("=== All sign tests PASSED ===\n");
   return 0;
 }

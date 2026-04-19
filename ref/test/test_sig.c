@@ -1,5 +1,5 @@
 /*
- * test_sig_v3.c - round-trip tests for pack_sig_v3 / unpack_sig_v3 (Phase 6c-3).
+ * test_sig.c - round-trip tests for pack_sig / unpack_sig (Phase 6c-3).
  *
  * Constructs synthetic inputs matching the post-CompressY / post-MakeHint
  * ranges and validates byte-for-byte round-trip. The z[1..L] coefficients
@@ -22,7 +22,7 @@
 #include "../params.h"
 #include "../poly.h"
 #include "../polyvec.h"
-#include "../packing_v3.h"
+#include "../packing.h"
 #include "../rans_tables.h"
 
 #define PASS(msg) do { printf("  [PASS] " msg "\n"); } while (0)
@@ -80,7 +80,7 @@ static int32_t sample_z1_hi(void) {
 
 /* Fill z_1[1..L] matching the actual z1 distribution used by the signer:
  *   z[i] = hi * alpha_h + lo,  hi ~ z1 table,  lo ~ uniform [-alpha_h/2, alpha_h/2).
- * This guarantees pack_sig_v3 never hits OOV or overflow. */
+ * This guarantees pack_sig never hits OOV or overflow. */
 static void fill_z1(poly *z_1) {
   /* Z_0 coefficients: draw from the z0 rANS vocabulary range. A narrow
    * triangular-ish distribution keeps us safely inside the trained symbol
@@ -107,7 +107,7 @@ static void fill_z1(poly *z_1) {
 static int test_minimal(void) {
   printf("Test 1: minimal hand-crafted round-trip\n");
 
-  uint8_t sig[SHUTTLE_BYTES_V3];
+  uint8_t sig[SHUTTLE_BYTES];
   uint8_t c_tilde[SHUTTLE_CTILDEBYTES];
   int8_t  irs[SHUTTLE_TAU];
   poly    z_1[1 + SHUTTLE_L];
@@ -118,14 +118,14 @@ static int test_minimal(void) {
   for (unsigned i = 0; i < 1 + SHUTTLE_L; ++i) memset(&z_1[i], 0, sizeof(poly));
   memset(&h, 0, sizeof h);
 
-  int rc = pack_sig_v3(sig, c_tilde, irs, z_1, &h);
-  if (rc != 0) FAIL("pack_sig_v3 rc=%d", rc);
+  int rc = pack_sig(sig, c_tilde, irs, z_1, &h);
+  if (rc != 0) FAIL("pack_sig rc=%d", rc);
 
   uint8_t c_rec[SHUTTLE_CTILDEBYTES];
   int8_t  irs_rec[SHUTTLE_TAU];
   poly    z_rec[1 + SHUTTLE_L];
-  rc = unpack_sig_v3(c_rec, irs_rec, z_rec, &h_rec, sig);
-  if (rc != 0) FAIL("unpack_sig_v3 rc=%d", rc);
+  rc = unpack_sig(c_rec, irs_rec, z_rec, &h_rec, sig);
+  if (rc != 0) FAIL("unpack_sig rc=%d", rc);
 
   if (memcmp(c_tilde, c_rec, SHUTTLE_CTILDEBYTES) != 0)
     FAIL("c_tilde mismatch%s", "");
@@ -143,7 +143,7 @@ static int test_minimal(void) {
         FAIL("h[%u][%u]: %d vs %d",
              i, j, h.vec[i].coeffs[j], h_rec.vec[i].coeffs[j]);
 
-  printf("    SHUTTLE_BYTES_V3 = %d\n", SHUTTLE_BYTES_V3);
+  printf("    SHUTTLE_BYTES = %d\n", SHUTTLE_BYTES);
   PASS("minimal round-trip");
   return 0;
 }
@@ -157,7 +157,7 @@ static int test_random_rounds(void) {
   size_t min_h_len  = (size_t)-1, max_h_len  = 0, sum_h_len  = 0;
 
   for (unsigned round = 0; round < 10; ++round) {
-    uint8_t sig[SHUTTLE_BYTES_V3];
+    uint8_t sig[SHUTTLE_BYTES];
     uint8_t c_tilde[SHUTTLE_CTILDEBYTES];
     int8_t  irs[SHUTTLE_TAU];
     poly    z_1[1 + SHUTTLE_L];
@@ -172,13 +172,13 @@ static int test_random_rounds(void) {
       for (unsigned j = 0; j < SHUTTLE_N; ++j)
         h.vec[i].coeffs[j] = sample_hint_sym();
 
-    int rc = pack_sig_v3(sig, c_tilde, irs, z_1, &h);
+    int rc = pack_sig(sig, c_tilde, irs, z_1, &h);
     if (rc != 0) FAIL("round %u: pack rc=%d", round, rc);
 
     uint8_t c_rec[SHUTTLE_CTILDEBYTES];
     int8_t  irs_rec[SHUTTLE_TAU];
     poly    z_rec[1 + SHUTTLE_L];
-    rc = unpack_sig_v3(c_rec, irs_rec, z_rec, &h_rec, sig);
+    rc = unpack_sig(c_rec, irs_rec, z_rec, &h_rec, sig);
     if (rc != 0) FAIL("round %u: unpack rc=%d", round, rc);
 
     if (memcmp(c_tilde, c_rec, SHUTTLE_CTILDEBYTES) != 0) FAIL("round %u: c_tilde", round);
@@ -231,9 +231,9 @@ static int test_random_rounds(void) {
 
 /* ------------------------------------------------------------ */
 static int test_oov_z1(void) {
-  printf("Test 3: pack_sig_v3 rejects out-of-vocabulary z1 HighBit\n");
+  printf("Test 3: pack_sig rejects out-of-vocabulary z1 HighBit\n");
 
-  uint8_t sig[SHUTTLE_BYTES_V3];
+  uint8_t sig[SHUTTLE_BYTES];
   uint8_t c_tilde[SHUTTLE_CTILDEBYTES] = {0};
   int8_t  irs[SHUTTLE_TAU];
   for (unsigned i = 0; i < SHUTTLE_TAU; ++i) irs[i] = 1;
@@ -244,9 +244,9 @@ static int test_oov_z1(void) {
   /* Force a HighBit well outside the z1 vocabulary. */
   z_1[1].coeffs[0] = (int32_t)(Z1_SYM_MAX_ABS + 10) * SHUTTLE_ALPHA_H;
 
-  int rc = pack_sig_v3(sig, c_tilde, irs, z_1, &h);
+  int rc = pack_sig(sig, c_tilde, irs, z_1, &h);
   if (rc == 0) FAIL("expected pack to fail, got rc=0%s", "");
-  printf("    pack_sig_v3 returned rc=%d as expected\n", rc);
+  printf("    pack_sig returned rc=%d as expected\n", rc);
   PASS("OOV z1 rejection");
   return 0;
 }
@@ -256,9 +256,9 @@ int main(void) {
   int ret = 0;
   srand(0xC0DECAFE ^ SHUTTLE_MODE);
 
-  printf("=== test_sig_v3 (MODE=%d, SHUTTLE_BYTES_V3=%d,\n"
+  printf("=== test_sig (MODE=%d, SHUTTLE_BYTES=%d,\n"
          "                 Z0_RANS_RESERVED=%d, Z1_RANS_RESERVED=%d, HINT_RESERVED=%d) ===\n",
-         SHUTTLE_MODE, SHUTTLE_BYTES_V3,
+         SHUTTLE_MODE, SHUTTLE_BYTES,
          SHUTTLE_Z0_RANS_RESERVED_BYTES,
          SHUTTLE_Z1_RANS_RESERVED_BYTES, SHUTTLE_HINT_RESERVED_BYTES);
 
@@ -266,7 +266,7 @@ int main(void) {
   ret |= test_random_rounds();
   ret |= test_oov_z1();
 
-  if (ret == 0) printf("\n=== All sig_v3 tests PASSED ===\n");
-  else          printf("\n=== Some sig_v3 tests FAILED ===\n");
+  if (ret == 0) printf("\n=== All sig tests PASSED ===\n");
+  else          printf("\n=== Some sig tests FAILED ===\n");
   return ret;
 }
