@@ -119,6 +119,144 @@ void polyveck_use_hint(polyveck *w, const polyveck *v, const polyveck *h);
 void polyveck_pack_w1(uint8_t r[SHUTTLE_M * SHUTTLE_POLYW1_PACKEDBYTES],
                       const polyveck *w1);
 
+/* ============================================================
+ * mod 2q polyveck helpers (Phase 6b-1). See docs/NGCC_Sign/SHUTTLE_draft.md
+ * sections 6 and 13.
+ * ============================================================ */
+
+#define polyveck_highbits_mod_2q SHUTTLE_NAMESPACE(polyveck_highbits_mod_2q)
+void polyveck_highbits_mod_2q(polyveck *out, const polyveck *w);
+
+/* Extract LSB of each of M*N coefficients. Output layout: M * (N/8) bytes.
+ * Bitmap for row i starts at offset i * N/8. */
+#define polyveck_lsb_extract SHUTTLE_NAMESPACE(polyveck_lsb_extract)
+void polyveck_lsb_extract(uint8_t bitmap[SHUTTLE_M * SHUTTLE_N / 8],
+                          const polyveck *w);
+
+/* Lift: out <- 2 * u_mod_q + q * (Y0 & 1) * j  (mod 2q).
+ * u_mod_q is a polyveck; Y0 is a single polynomial whose LSB is broadcast
+ * to all M rows (since q*j*Y0 contributes identically to each row). */
+#define polyveck_lift_to_2q SHUTTLE_NAMESPACE(polyveck_lift_to_2q)
+void polyveck_lift_to_2q(polyveck *out,
+                         const polyveck *u_mod_q,
+                         const poly *Y0);
+
+/* In-place w <- (w - 2*z2) mod 2q, component-wise. */
+#define polyveck_sub_2z2_mod2q SHUTTLE_NAMESPACE(polyveck_sub_2z2_mod2q)
+void polyveck_sub_2z2_mod2q(polyveck *w, const polyveck *z2);
+
+/* Compute the full mod 2q commitment:
+ *   comY = hat_A * v (mod 2q)
+ *         where hat_A = [2(a_gen - b) + q*j | 2*A_gen | 2*I_M].
+ *
+ * Implemented via the existing mod q NTT + lift trick:
+ *   1. Compute U_mod_q = (a_gen - b)*v[0] + A_gen*v[1..L] + v[L+1..L+M]
+ *      by standard NTT-domain multiplication, INTT, reduce, caddq.
+ *   2. comY = 2 * U_mod_q + q * (v[0] & 1) * j  (mod 2q), per coefficient.
+ *
+ * Arguments:
+ *   comY       : output polyveck, coefficients in [0, 2q).
+ *   a_gen_hat  : NTT form of a_gen (polyveck).
+ *   A_gen_hat  : NTT forms of A_gen columns (polyveck[L]).
+ *   b_hat      : NTT form of public-key vector b (polyveck).
+ *   v          : input polyvec (VECLEN) in coefficient form. v->vec[0] is Y_0
+ *                (already CompressY'd), v->vec[1..L+M] are the remaining
+ *                input slots. Caller retains ownership; function NTTs a
+ *                private copy. */
+#define compute_commitment_mod2q SHUTTLE_NAMESPACE(compute_commitment_mod2q)
+void compute_commitment_mod2q(polyveck *comY,
+                              const polyveck *a_gen_hat,
+                              const polyveck A_gen_hat[SHUTTLE_L],
+                              const polyveck *b_hat,
+                              const polyvec *v);
+
+/* ============================================================
+ * Polyveck-level MakeHint / UseHint + basic hint packing (Phase 6b-3).
+ * ============================================================ */
+
+#define polyveck_make_hint_mod2q SHUTTLE_NAMESPACE(polyveck_make_hint_mod2q)
+void polyveck_make_hint_mod2q(polyveck *h,
+                              const polyveck *w,
+                              const polyveck *z2);
+
+#define polyveck_use_hint_wh_mod2q SHUTTLE_NAMESPACE(polyveck_use_hint_wh_mod2q)
+void polyveck_use_hint_wh_mod2q(polyveck *w_h,
+                                const polyveck *tilde_w,
+                                const polyveck *h);
+
+#define polyveck_recover_z2_mod2q SHUTTLE_NAMESPACE(polyveck_recover_z2_mod2q)
+void polyveck_recover_z2_mod2q(polyveck *z2_out,
+                               const polyveck *w_h,
+                               const polyveck *w_0,
+                               const polyveck *tilde_w);
+
+/* LSB-polyveck helper: take a packed bitmap (M * N/8 bytes) and expand it
+ * back into a polyveck where each coefficient is 0 or 1. Inverse of
+ * polyveck_lsb_extract. Used at verify time to turn the LSB bitmap
+ * comY_0 back into a polyveck for recover_z2. */
+#define polyveck_lsb_from_bitmap SHUTTLE_NAMESPACE(polyveck_lsb_from_bitmap)
+void polyveck_lsb_from_bitmap(polyveck *out,
+                              const uint8_t bitmap[SHUTTLE_M * SHUTTLE_N / 8]);
+
+/* ============================================================
+ * Phase 6b-5c helpers: keygen b and verify-side tilde_w under Alg 2.
+ * ============================================================ */
+
+/* Compute b = a_gen + A_gen*s + e (mod q), with the identity-block
+ * addition performed in the coefficient domain to avoid the mixed-
+ * Montgomery scaling that Phase 6a's compute_commitment has.
+ *
+ * Inputs:
+ *   a_gen      : polyveck (coefficient form).
+ *   A_gen_hat  : polyveck[L] in NTT form.
+ *   s          : polyvecl (coefficient form, CBD-sampled secret).
+ *   e          : polyveck (coefficient form, CBD-sampled secret).
+ * Output:
+ *   b          : polyveck in [0, q). */
+#define compute_b_v2 SHUTTLE_NAMESPACE(compute_b_v2)
+void compute_b_v2(polyveck *b,
+                  const polyveck *a_gen,
+                  const polyveck A_gen_hat[SHUTTLE_L],
+                  const polyvecl *s,
+                  const polyveck *e);
+
+/* Compute verifier's tilde_w = hat_A_1 * z_1 - q*c*j (mod 2q), where
+ *   hat_A_1 = [2(a_gen - b) + q*j | 2 * A_gen_hat]
+ *   z_1     = (Z_0, z[1..L])
+ *
+ * Algebraically:
+ *   tilde_w = 2 * U_ver + q * (Z_0 - c) * j     (mod 2q)
+ * with U_ver = (a_gen - b) * Z_0 + A_gen * z[1..L]  (mod q).
+ *
+ * Inputs (all in NTT form except z_1 which is coefficient form):
+ *   a_gen_hat, b_hat : polyveck.
+ *   A_gen_hat        : polyveck[L].
+ *   z_1              : array of 1 + L polys (Z_0 in z_1[0], rest in z_1[1..L]).
+ *   c_poly           : challenge polynomial (coefficient form).
+ *
+ * Output:
+ *   tilde_w          : polyveck in [0, 2q). */
+#define compute_tilde_w_mod2q SHUTTLE_NAMESPACE(compute_tilde_w_mod2q)
+void compute_tilde_w_mod2q(polyveck *tilde_w,
+                           const polyveck *a_gen_hat,
+                           const polyveck A_gen_hat[SHUTTLE_L],
+                           const polyveck *b_hat,
+                           const poly *z_1,   /* length 1 + L */
+                           const poly *c_poly);
+
+/* Basic (non-rANS) hint encoding: one signed int8 per coefficient.
+ * Size = M * N bytes. Safe for current modes where |h|_inf << 128.
+ * Phase 6b-5 will replace this with rANS compression. */
+#define SHUTTLE_HINT_PACKEDBYTES_BASIC (SHUTTLE_M * SHUTTLE_N)
+
+#define polyveck_hint_pack_basic SHUTTLE_NAMESPACE(polyveck_hint_pack_basic)
+void polyveck_hint_pack_basic(uint8_t out[SHUTTLE_HINT_PACKEDBYTES_BASIC],
+                              const polyveck *h);
+
+#define polyveck_hint_unpack_basic SHUTTLE_NAMESPACE(polyveck_hint_unpack_basic)
+void polyveck_hint_unpack_basic(polyveck *h,
+                                const uint8_t in[SHUTTLE_HINT_PACKEDBYTES_BASIC]);
+
 /**************************************************************/
 /*** polyvec operations (full length VECLEN = 6)            ***/
 /**************************************************************/

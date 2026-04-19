@@ -27,4 +27,17 @@ int32_t caddq(int32_t a);
 #define freeze SHUTTLE_NAMESPACE(freeze)
 int32_t freeze(int32_t a);
 
+/* ============================================================
+ * mod 2q helpers (Phase 6b)
+ * ============================================================ */
+
+/* caddq2: conditional add 2q. If a is negative, returns a + 2q; else a. */
+#define caddq2 SHUTTLE_NAMESPACE(caddq2)
+int32_t caddq2(int32_t a);
+
+/* reduce_mod_2q: return a (mod 2q) as canonical element of [0, 2q).
+ * Input: any int32_t. Output: [0, 2q). Constant-time. */
+#define reduce_mod_2q SHUTTLE_NAMESPACE(reduce_mod_2q)
+int32_t reduce_mod_2q(int32_t a);
+
 #endif

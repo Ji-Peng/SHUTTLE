@@ -97,6 +97,49 @@
 #define SHUTTLE_W1_MAX     ((SHUTTLE_Q - 1) / (2 * SHUTTLE_ALPHA_H))
 
 /* ============================================================
+ * mod 2q infrastructure (Phase 6b)
+ * ------------------------------------------------------------
+ * For the NGCC-Signature compressed-signature form (Alg 2), the commitment
+ * lives in Z_{2q} instead of Z_q. The constants below drive the mod 2q
+ * helpers in reduce.c / rounding.c / polyvec.c.
+ *
+ *   DQ                = 2 * q.
+ *   HALF_ALPHA_H      = alpha_h / 2, used for round-half-up HighBits.
+ *   ALPHA_H_BITS      = log2(alpha_h) — alpha_h is a power of two in
+ *                       every mode (128 = 2^7, 256 = 2^8).
+ *   HINT_MOD          = 2 * (q - 1), the modulus used by MakeHint/UseHint
+ *                       for the hint-difference as per spec Alg 9 / 10.
+ *   HINT_MAX          = 2 * (q - 1) / alpha_h, the HighBits-index upper
+ *                       exclusive bound. Valid indices live in [0, HINT_MAX).
+ *                       Indices reaching HINT_MAX wrap to 0 (edge-case).
+ *
+ * For q = 13313:  mode-128 -> HINT_MAX = 208; mode-256 -> HINT_MAX = 104.
+ * ============================================================ */
+#define SHUTTLE_DQ          (2 * SHUTTLE_Q)
+#define SHUTTLE_HALF_ALPHA_H (SHUTTLE_ALPHA_H / 2)
+#define SHUTTLE_HINT_MOD    (2 * (SHUTTLE_Q - 1))
+#define SHUTTLE_HINT_MAX    (SHUTTLE_HINT_MOD / SHUTTLE_ALPHA_H)
+
+#if SHUTTLE_ALPHA_H == 128
+#  define SHUTTLE_ALPHA_H_BITS 7
+#elif SHUTTLE_ALPHA_H == 256
+#  define SHUTTLE_ALPHA_H_BITS 8
+#else
+#  error "Unsupported SHUTTLE_ALPHA_H (expected 128 or 256)"
+#endif
+
+/* log2(alpha_1). alpha_1 is also a power of two across modes:
+ *   mode-128 -> alpha_1 = 8  = 2^3
+ *   mode-256 -> alpha_1 = 16 = 2^4 */
+#if SHUTTLE_ALPHA_1 == 8
+#  define SHUTTLE_ALPHA_1_BITS 3
+#elif SHUTTLE_ALPHA_1 == 16
+#  define SHUTTLE_ALPHA_1_BITS 4
+#else
+#  error "Unsupported SHUTTLE_ALPHA_1 (expected 8 or 16)"
+#endif
+
+/* ============================================================
  * Derived packing sizes (all in bytes)
  * ============================================================ */
 /* eta=1: coefficients in {-1,0,1}, encode as 2 bits/coeff */
@@ -127,6 +170,30 @@
 
 /* IRS sign bits: ceil(TAU/8) */
 #define SHUTTLE_IRS_SIGNBYTES         ((SHUTTLE_TAU + 7) / 8)
+
+/* ============================================================
+ * rANS reservation budgets (shared by packing_v2 and packing_v3).
+ *
+ * Phase 6b-4 / 6c-1 empirical measurement:
+ *   mode-128: hint rANS ~177 B typical, tail <= 210 B.
+ *             z1   rANS ~174 B typical, tail <= 210 B.
+ *   mode-256: hint rANS ~300 B typical, tail <= 340 B.
+ *             z1   rANS ~275 B typical, tail <= 330 B.
+ *
+ * Reserved sizes carry a safety margin so signer-side reject probability
+ * stays negligible (< 2^-40 target). Each block also has a 2-byte LE
+ * length prefix for the actual rANS stream length.
+ * ============================================================ */
+#if SHUTTLE_MODE == 128
+#  define SHUTTLE_HINT_RESERVED_BYTES    256
+#  define SHUTTLE_Z1_RANS_RESERVED_BYTES 240
+#elif SHUTTLE_MODE == 256
+#  define SHUTTLE_HINT_RESERVED_BYTES    400
+#  define SHUTTLE_Z1_RANS_RESERVED_BYTES 360
+#endif
+
+#define SHUTTLE_HINT_BLOCK_BYTES    (2 + SHUTTLE_HINT_RESERVED_BYTES)
+#define SHUTTLE_Z1_RANS_BLOCK_BYTES (2 + SHUTTLE_Z1_RANS_RESERVED_BYTES)
 
 /* Public / secret key sizes */
 #define SHUTTLE_PUBLICKEYBYTES  (SHUTTLE_SEEDBYTES \

@@ -70,3 +70,39 @@ int32_t freeze(int32_t a) {
   a = caddq(a);
   return a;
 }
+
+/*************************************************
+* Name:        caddq2
+*
+* Description: Conditional add 2q. If input is negative, returns a + 2q;
+*              otherwise returns a. Constant-time (sign-bit mask).
+*
+* Arguments:   - int32_t: input
+*
+* Returns a if a >= 0, else a + 2q.
+**************************************************/
+int32_t caddq2(int32_t a) {
+  a += (a >> 31) & SHUTTLE_DQ;
+  return a;
+}
+
+/*************************************************
+* Name:        reduce_mod_2q
+*
+* Description: Reduce arbitrary int32_t to canonical residue in [0, 2q).
+*              Uses integer modulus then positive-corrects.
+*
+*              This is the reference implementation; it relies on % which
+*              the compiler lowers efficiently for 14-bit q. A Barrett
+*              version is possible but unnecessary for ref code since this
+*              helper is called only post-NTT (already small range).
+*
+* Arguments:   - int32_t: input
+*
+* Returns r in [0, 2q) with r congruent to a mod 2q.
+**************************************************/
+int32_t reduce_mod_2q(int32_t a) {
+  int32_t r = a % SHUTTLE_DQ;
+  r += (r >> 31) & SHUTTLE_DQ;      /* make non-negative */
+  return r;
+}

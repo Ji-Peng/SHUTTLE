@@ -514,3 +514,273 @@ int64_t polyvec_sq_norm(const polyvec *v) {
 
   return norm;
 }
+
+/**************************************************************/
+/*********** mod 2q polyveck helpers (Phase 6b-1) ************/
+/**************************************************************/
+
+void polyveck_highbits_mod_2q(polyveck *out, const polyveck *w) {
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_M; ++i)
+    poly_highbits_mod_2q(&out->vec[i], &w->vec[i]);
+}
+
+void polyveck_lsb_extract(uint8_t bitmap[SHUTTLE_M * SHUTTLE_N / 8],
+                          const polyveck *w)
+{
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_M; ++i)
+    poly_lsb_extract(&bitmap[i * (SHUTTLE_N / 8)], &w->vec[i]);
+}
+
+void polyveck_lift_to_2q(polyveck *out,
+                         const polyveck *u_mod_q,
+                         const poly *Y0)
+{
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_M; ++i)
+    poly_lift_to_2q(&out->vec[i], &u_mod_q->vec[i], Y0);
+}
+
+void polyveck_sub_2z2_mod2q(polyveck *w, const polyveck *z2) {
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_M; ++i)
+    poly_sub_2z2_mod2q(&w->vec[i], &z2->vec[i]);
+}
+
+/*************************************************
+* Name:        compute_commitment_mod2q
+*
+* Description: comY = hat_A * v (mod 2q) via mod q NTT + lift.
+*              See polyvec.h for argument semantics.
+**************************************************/
+void compute_commitment_mod2q(polyveck *comY,
+                              const polyveck *a_gen_hat,
+                              const polyveck A_gen_hat[SHUTTLE_L],
+                              const polyveck *b_hat,
+                              const polyvec *v)
+{
+  polyveck U;
+  polyvec v_hat;
+  poly tmp;
+  unsigned int i, j;
+
+  /* NTT-transform the input (private copy). */
+  v_hat = *v;
+  polyvec_ntt(&v_hat);
+
+  /* Step 1: Build U_modq in NTT domain:
+   *   U[i] = (a_gen[i] - b[i]) * v_hat[0] + sum_j A_gen_hat[j][i] * v_hat[1+j]
+   *
+   * Note: we DO NOT include the identity-block term v_hat[1+L+i] here because
+   * poly_pointwise_montgomery introduces a 1/MONT factor while a bare addition
+   * of NTT-form values does not. Mixing the two would force invntt_tomont to
+   * apply an inconsistent Montgomery correction. We add the identity block in
+   * the coefficient domain after invntt_tomont, where both operands are
+   * plain integers mod q. */
+  for(i = 0; i < SHUTTLE_M; ++i) {
+    poly_pointwise_montgomery(&U.vec[i], &a_gen_hat->vec[i], &v_hat.vec[0]);
+
+    poly_pointwise_montgomery(&tmp, &b_hat->vec[i], &v_hat.vec[0]);
+    poly_sub(&U.vec[i], &U.vec[i], &tmp);
+
+    for(j = 0; j < SHUTTLE_L; ++j) {
+      poly_pointwise_montgomery(&tmp, &A_gen_hat[j].vec[i], &v_hat.vec[1 + j]);
+      poly_add(&U.vec[i], &U.vec[i], &tmp);
+    }
+  }
+
+  /* INTT and canonicalize to [0, q). */
+  polyveck_invntt_tomont(&U);
+  polyveck_reduce(&U);
+  polyveck_caddq(&U);
+
+  /* Step 2: Add the identity-block contribution v[1+L+i] in coefficient
+   * domain. Uses the ORIGINAL (pre-NTT) v, not v_hat. */
+  for(i = 0; i < SHUTTLE_M; ++i)
+    poly_add(&U.vec[i], &U.vec[i], &v->vec[1 + SHUTTLE_L + i]);
+  polyveck_reduce(&U);
+  polyveck_caddq(&U);
+
+  /* Step 3: Lift to mod 2q using pre-NTT v->vec[0] (Y_0) parity bits. */
+  polyveck_lift_to_2q(comY, &U, &v->vec[0]);
+}
+
+/*************************************************
+* Name:        polyveck_make_hint_mod2q
+**************************************************/
+void polyveck_make_hint_mod2q(polyveck *h,
+                              const polyveck *w,
+                              const polyveck *z2)
+{
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_M; ++i)
+    poly_make_hint_mod2q(&h->vec[i], &w->vec[i], &z2->vec[i]);
+}
+
+/*************************************************
+* Name:        polyveck_use_hint_wh_mod2q
+**************************************************/
+void polyveck_use_hint_wh_mod2q(polyveck *w_h,
+                                const polyveck *tilde_w,
+                                const polyveck *h)
+{
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_M; ++i)
+    poly_use_hint_wh_mod2q(&w_h->vec[i], &tilde_w->vec[i], &h->vec[i]);
+}
+
+/*************************************************
+* Name:        polyveck_recover_z2_mod2q
+**************************************************/
+void polyveck_recover_z2_mod2q(polyveck *z2_out,
+                               const polyveck *w_h,
+                               const polyveck *w_0,
+                               const polyveck *tilde_w)
+{
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_M; ++i)
+    poly_recover_z2_mod2q(&z2_out->vec[i], &w_h->vec[i],
+                          &w_0->vec[i], &tilde_w->vec[i]);
+}
+
+/*************************************************
+* Name:        polyveck_lsb_from_bitmap
+*
+* Description: Inverse of polyveck_lsb_extract. Each bit becomes a 0/1
+*              coefficient of the output polyveck.
+**************************************************/
+void polyveck_lsb_from_bitmap(polyveck *out,
+                              const uint8_t bitmap[SHUTTLE_M * SHUTTLE_N / 8])
+{
+  unsigned int i, j;
+  for(i = 0; i < SHUTTLE_M; ++i) {
+    const uint8_t *row = &bitmap[i * (SHUTTLE_N / 8)];
+    for(j = 0; j < SHUTTLE_N; ++j)
+      out->vec[i].coeffs[j] = (int32_t)((row[j >> 3] >> (j & 7)) & 1);
+  }
+}
+
+/*************************************************
+* Name:        polyveck_hint_pack_basic
+*
+* Description: Pack hint polyveck using 1 signed byte per coefficient.
+*              For current modes, |h|_inf <= 18 (mode-128) or 14 (mode-256),
+*              well within int8 range. Total size M * N bytes.
+**************************************************/
+void polyveck_hint_pack_basic(uint8_t out[SHUTTLE_HINT_PACKEDBYTES_BASIC],
+                              const polyveck *h)
+{
+  unsigned int i, j;
+  for(i = 0; i < SHUTTLE_M; ++i)
+    for(j = 0; j < SHUTTLE_N; ++j)
+      out[i * SHUTTLE_N + j] = (uint8_t)(int8_t)h->vec[i].coeffs[j];
+}
+
+/*************************************************
+* Name:        polyveck_hint_unpack_basic
+**************************************************/
+void polyveck_hint_unpack_basic(polyveck *h,
+                                const uint8_t in[SHUTTLE_HINT_PACKEDBYTES_BASIC])
+{
+  unsigned int i, j;
+  for(i = 0; i < SHUTTLE_M; ++i)
+    for(j = 0; j < SHUTTLE_N; ++j)
+      h->vec[i].coeffs[j] = (int32_t)(int8_t)in[i * SHUTTLE_N + j];
+}
+
+/*************************************************
+* Name:        compute_b_v2
+*
+* Description: Clean keygen b = a_gen + A_gen*s + e (mod q). Identity-block
+*              addition is done in the coefficient domain to avoid the
+*              mixed-Montgomery scaling of Phase 6a's compute_commitment.
+**************************************************/
+void compute_b_v2(polyveck *b,
+                  const polyveck *a_gen,
+                  const polyveck A_gen_hat[SHUTTLE_L],
+                  const polyvecl *s,
+                  const polyveck *e)
+{
+  unsigned int i, j;
+  polyvecl s_hat;
+  poly tmp, acc;
+
+  /* NTT(s) — private copy. */
+  s_hat = *s;
+  polyvecl_ntt(&s_hat);
+
+  for(i = 0; i < SHUTTLE_M; ++i) {
+    /* acc = sum_j A_gen_hat[j][i] * s_hat[j]  (NTT domain, /MONT per product) */
+    poly_pointwise_montgomery(&acc, &A_gen_hat[0].vec[i], &s_hat.vec[0]);
+    for(j = 1; j < SHUTTLE_L; ++j) {
+      poly_pointwise_montgomery(&tmp, &A_gen_hat[j].vec[i], &s_hat.vec[j]);
+      poly_add(&acc, &acc, &tmp);
+    }
+    /* INTT + canonicalize to [0, q). */
+    poly_invntt_tomont(&acc);
+    poly_reduce(&acc);
+    poly_caddq(&acc);
+
+    /* b[i] = a_gen[i] + acc + e[i]  (coefficient domain). */
+    poly_add(&b->vec[i], &a_gen->vec[i], &acc);
+    poly_add(&b->vec[i], &b->vec[i], &e->vec[i]);
+    poly_reduce(&b->vec[i]);
+    poly_caddq(&b->vec[i]);
+  }
+}
+
+/*************************************************
+* Name:        compute_tilde_w_mod2q
+*
+* Description: Verifier's tilde_w = hat_A_1 * z_1 - q*c*j (mod 2q). See
+*              polyvec.h for the full formula and argument semantics.
+*
+*              Implemented via:
+*                U_ver = (a - b) * Z_0 + A_gen * z_1[1..L]  (mod q)
+*                tilde_w = lift(U_ver, Z_0 - c)             (mod 2q)
+*              The identity-block addition is absent (verifier has no z_2).
+**************************************************/
+void compute_tilde_w_mod2q(polyveck *tilde_w,
+                           const polyveck *a_gen_hat,
+                           const polyveck A_gen_hat[SHUTTLE_L],
+                           const polyveck *b_hat,
+                           const poly *z_1,
+                           const poly *c_poly)
+{
+  unsigned int i, j;
+  polyveck U_ver;
+  poly tmp;
+
+  /* NTT(z_1) on a private array of 1 + L polys. */
+  poly z_hat[1 + SHUTTLE_L];
+  for(i = 0; i < 1 + SHUTTLE_L; ++i) {
+    z_hat[i] = z_1[i];
+    poly_ntt(&z_hat[i]);
+  }
+
+  for(i = 0; i < SHUTTLE_M; ++i) {
+    /* U_ver[i] = (a_gen[i] - b[i]) * Z_0  (NTT domain, /MONT per product). */
+    poly_pointwise_montgomery(&U_ver.vec[i], &a_gen_hat->vec[i], &z_hat[0]);
+    poly_pointwise_montgomery(&tmp, &b_hat->vec[i], &z_hat[0]);
+    poly_sub(&U_ver.vec[i], &U_ver.vec[i], &tmp);
+
+    /* + sum_j A_gen_hat[j][i] * z_hat[1+j]. */
+    for(j = 0; j < SHUTTLE_L; ++j) {
+      poly_pointwise_montgomery(&tmp, &A_gen_hat[j].vec[i], &z_hat[1 + j]);
+      poly_add(&U_ver.vec[i], &U_ver.vec[i], &tmp);
+    }
+  }
+
+  /* INTT + canonicalize to [0, q). */
+  polyveck_invntt_tomont(&U_ver);
+  polyveck_reduce(&U_ver);
+  polyveck_caddq(&U_ver);
+
+  /* Lift parity = (Z_0 - c) mod 2. Compute a throwaway poly for parity. */
+  poly parity;
+  for(j = 0; j < SHUTTLE_N; ++j)
+    parity.coeffs[j] = z_1[0].coeffs[j] - c_poly->coeffs[j];
+
+  polyveck_lift_to_2q(tilde_w, &U_ver, &parity);
+}

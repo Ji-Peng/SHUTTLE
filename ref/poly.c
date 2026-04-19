@@ -708,3 +708,235 @@ void polyz0_unpack(poly *r, const uint8_t *a) {
       r->coeffs[8 * i + j] = center - (int32_t)t[j];
   }
 }
+
+/**************************************************************/
+/*********** z[1..L] split/combine (Phase 6c) *****************/
+/**************************************************************/
+
+/*************************************************
+* Name:        polyz1_split
+*
+* Description: Per-coefficient round-half-up split of a z[1..L] polynomial
+*              into HighBits and LowBits parts. The HighBits land in the
+*              mode's z1 rANS vocabulary; the LowBits fit in ALPHA_H_BITS
+*              bits using the (-alpha_h/2, alpha_h/2] -> [0, alpha_h-1]
+*              bijection implemented by polyz1_lo_pack.
+*
+*              Uses arithmetic right shift (sign-preserving) on signed int32_t
+*              which all SHUTTLE reference targets satisfy (GCC, Clang).
+*              Matches the semantics used by rounding.c::highbits_mod_2q.
+*
+* Arguments:   - int32_t *hi: output HighBits, length N
+*              - int32_t *lo: output LowBits (in (-alpha_h/2, alpha_h/2]), length N
+*              - const poly *a: input polynomial, coeffs in [-Z_BOUND, Z_BOUND]
+**************************************************/
+void polyz1_split(int32_t *hi, int32_t *lo, const poly *a) {
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_N; ++i) {
+    int32_t z = a->coeffs[i];
+    int32_t h = (z + SHUTTLE_HALF_ALPHA_H) >> SHUTTLE_ALPHA_H_BITS;
+    hi[i] = h;
+    lo[i] = z - (h << SHUTTLE_ALPHA_H_BITS);
+  }
+}
+
+/*************************************************
+* Name:        polyz1_combine
+*
+* Description: Inverse of polyz1_split: a[i] = hi[i] * alpha_h + lo[i].
+*              Because alpha_h is a power of two, equivalent to a left shift.
+**************************************************/
+void polyz1_combine(poly *a, const int32_t *hi, const int32_t *lo) {
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_N; ++i)
+    a->coeffs[i] = (hi[i] << SHUTTLE_ALPHA_H_BITS) + lo[i];
+}
+
+/*************************************************
+* Name:        polyz1_lo_pack / polyz1_lo_unpack
+*
+* Description: Bit-pack N low-coefficients at ALPHA_H_BITS bits each.
+*
+*              For mode-128 (ALPHA_H_BITS=7): 8 coef -> 7 bytes.
+*              For mode-256 (ALPHA_H_BITS=8): trivial byte copy.
+*
+*              Packed representation is `lo & (alpha_h - 1)` so the wrap
+*              around zero is lossless and the unpacker recovers lo by
+*              treating the high half of [0, alpha_h-1] as negative.
+**************************************************/
+#if SHUTTLE_ALPHA_H_BITS == 7
+void polyz1_lo_pack(uint8_t *r, const int32_t *lo) {
+  unsigned int i;
+  uint32_t c[8];
+  for(i = 0; i < SHUTTLE_N / 8; ++i) {
+    unsigned int j;
+    for(j = 0; j < 8; ++j)
+      c[j] = (uint32_t)(lo[8 * i + j] & (SHUTTLE_ALPHA_H - 1));
+
+    r[7 * i + 0] = (uint8_t)(c[0]      | (c[1] << 7));
+    r[7 * i + 1] = (uint8_t)((c[1] >> 1) | (c[2] << 6));
+    r[7 * i + 2] = (uint8_t)((c[2] >> 2) | (c[3] << 5));
+    r[7 * i + 3] = (uint8_t)((c[3] >> 3) | (c[4] << 4));
+    r[7 * i + 4] = (uint8_t)((c[4] >> 4) | (c[5] << 3));
+    r[7 * i + 5] = (uint8_t)((c[5] >> 5) | (c[6] << 2));
+    r[7 * i + 6] = (uint8_t)((c[6] >> 6) | (c[7] << 1));
+  }
+}
+
+void polyz1_lo_unpack(int32_t *lo, const uint8_t *r) {
+  unsigned int i;
+  uint32_t c[8];
+  const int32_t half = SHUTTLE_HALF_ALPHA_H;
+  const int32_t alpha = SHUTTLE_ALPHA_H;
+  for(i = 0; i < SHUTTLE_N / 8; ++i) {
+    unsigned int j;
+    c[0] = ((uint32_t)r[7 * i + 0])                                 & 0x7F;
+    c[1] = (((uint32_t)r[7 * i + 0] >> 7) | ((uint32_t)r[7 * i + 1] << 1)) & 0x7F;
+    c[2] = (((uint32_t)r[7 * i + 1] >> 6) | ((uint32_t)r[7 * i + 2] << 2)) & 0x7F;
+    c[3] = (((uint32_t)r[7 * i + 2] >> 5) | ((uint32_t)r[7 * i + 3] << 3)) & 0x7F;
+    c[4] = (((uint32_t)r[7 * i + 3] >> 4) | ((uint32_t)r[7 * i + 4] << 4)) & 0x7F;
+    c[5] = (((uint32_t)r[7 * i + 4] >> 3) | ((uint32_t)r[7 * i + 5] << 5)) & 0x7F;
+    c[6] = (((uint32_t)r[7 * i + 5] >> 2) | ((uint32_t)r[7 * i + 6] << 6)) & 0x7F;
+    c[7] = ( (uint32_t)r[7 * i + 6] >> 1)                                  & 0x7F;
+    for(j = 0; j < 8; ++j) {
+      int32_t v = (int32_t)c[j];
+      lo[8 * i + j] = (v >= half) ? v - alpha : v;
+    }
+  }
+}
+#elif SHUTTLE_ALPHA_H_BITS == 8
+void polyz1_lo_pack(uint8_t *r, const int32_t *lo) {
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_N; ++i)
+    r[i] = (uint8_t)(lo[i] & 0xFF);
+}
+
+void polyz1_lo_unpack(int32_t *lo, const uint8_t *r) {
+  unsigned int i;
+  const int32_t half = SHUTTLE_HALF_ALPHA_H;
+  const int32_t alpha = SHUTTLE_ALPHA_H;
+  for(i = 0; i < SHUTTLE_N; ++i) {
+    int32_t v = (int32_t)r[i];
+    lo[i] = (v >= half) ? v - alpha : v;
+  }
+}
+#else
+#  error "polyz1_lo_pack/unpack unsupported ALPHA_H_BITS"
+#endif
+
+/**************************************************************/
+/*********** mod 2q helpers (Phase 6b-1) **********************/
+/**************************************************************/
+
+/*************************************************
+* Name:        poly_highbits_mod_2q
+*
+* Description: Apply highbits_mod_2q coefficient-wise. Input coefficients
+*              must be in [0, 2q); outputs are bucket indices in [0, HINT_MAX).
+**************************************************/
+void poly_highbits_mod_2q(poly *out, const poly *w) {
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_N; ++i)
+    out->coeffs[i] = highbits_mod_2q(w->coeffs[i]);
+}
+
+/*************************************************
+* Name:        poly_lsb_extract
+*
+* Description: Extract the least significant bit of each coefficient of w
+*              (expected in [0, 2q)) into a bitmap of N/8 bytes. Bit i is
+*              the LSB of coefficient i. Bits are little-endian within each
+*              byte (bit 0 of byte 0 = coefficient 0, bit 7 of byte 0 =
+*              coefficient 7, etc.).
+**************************************************/
+void poly_lsb_extract(uint8_t *bitmap, const poly *w) {
+  unsigned int i;
+  memset(bitmap, 0, SHUTTLE_N / 8);
+  for(i = 0; i < SHUTTLE_N; ++i) {
+    uint8_t bit = (uint8_t)(w->coeffs[i] & 1);
+    bitmap[i >> 3] |= (uint8_t)(bit << (i & 7));
+  }
+}
+
+/*************************************************
+* Name:        poly_lift_to_2q
+*
+* Description: Lift a mod q polynomial U (coefficients in [0, q)) to mod 2q
+*              using the per-coefficient parity of Y0: out[j] = 2*U[j] +
+*              q * (Y0[j] & 1), reduced to [0, 2q). Only the LSB of Y0[j]
+*              is used; higher bits are ignored.
+**************************************************/
+void poly_lift_to_2q(poly *out, const poly *u_mod_q, const poly *Y0) {
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_N; ++i)
+    out->coeffs[i] = lift_to_2q(u_mod_q->coeffs[i], Y0->coeffs[i]);
+}
+
+/*************************************************
+* Name:        poly_sub_2z2_mod2q
+*
+* Description: In-place w <- (w - 2*z2) mod 2q, coefficient-wise. Input w
+*              must already be in [0, 2q); z2 may have arbitrary int32_t
+*              coefficients. Result is canonicalized to [0, 2q).
+**************************************************/
+void poly_sub_2z2_mod2q(poly *w, const poly *z2) {
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_N; ++i)
+    w->coeffs[i] = reduce_mod_2q(w->coeffs[i] - 2 * z2->coeffs[i]);
+}
+
+/*************************************************
+* Name:        poly_compress_y_slot0
+*
+* Description: CompressY on the first slot. Implements
+*              out[j] = round_half_up(in[j] / alpha_1)
+*              using arithmetic right shift with +alpha_1/2 bias.
+*
+*              Equivalent to HAETAE's decompose_z1 highbits for our
+*              alpha_1 factor. Works on full int32_t range (positive and
+*              negative) because arithmetic right shift on two's complement
+*              performs floor division toward -infinity, which combined
+*              with the +alpha_1/2 bias gives the desired round-half-up.
+*
+* Arguments:   - poly *out: output (compressed) polynomial
+*              - const poly *in: input polynomial (unbounded int32_t)
+**************************************************/
+void poly_compress_y_slot0(poly *out, const poly *in) {
+  unsigned int i;
+  const int32_t bias = SHUTTLE_ALPHA_1 >> 1;
+  for(i = 0; i < SHUTTLE_N; ++i)
+    out->coeffs[i] = (in->coeffs[i] + bias) >> SHUTTLE_ALPHA_1_BITS;
+}
+
+/*************************************************
+* Name:        poly_make_hint_mod2q
+**************************************************/
+void poly_make_hint_mod2q(poly *h, const poly *w, const poly *z2) {
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_N; ++i)
+    h->coeffs[i] = make_hint_mod2q(w->coeffs[i], z2->coeffs[i]);
+}
+
+/*************************************************
+* Name:        poly_use_hint_wh_mod2q
+**************************************************/
+void poly_use_hint_wh_mod2q(poly *w_h, const poly *tilde_w, const poly *h) {
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_N; ++i)
+    w_h->coeffs[i] = use_hint_wh_mod2q(tilde_w->coeffs[i], h->coeffs[i]);
+}
+
+/*************************************************
+* Name:        poly_recover_z2_mod2q
+**************************************************/
+void poly_recover_z2_mod2q(poly *z2_out,
+                           const poly *w_h,
+                           const poly *w_0,
+                           const poly *tilde_w)
+{
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_N; ++i)
+    z2_out->coeffs[i] = recover_z2_coef_mod2q(w_h->coeffs[i],
+                                               w_0->coeffs[i],
+                                               tilde_w->coeffs[i]);
+}
