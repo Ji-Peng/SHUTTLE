@@ -5,8 +5,8 @@
  *   1) sampler_sigma2 (batched CDT)
  *   2) approx_exp (V2: degree 9, table 2)
  *   3) stream256 (SHAKE-256 per-byte throughput)
- *   4) sample_gauss_N (full sampler, N=256)
- *   5) sample_gauss_N_4x (4-way parallel, 4 x N=256)
+ *   4) sample_gauss_N (full sampler, N=SHUTTLE_N)
+ *   5) sample_gauss_N_4x (4-way parallel, 4 x N=SHUTTLE_N)
  */
 
 #include <stdio.h>
@@ -19,7 +19,7 @@
 #include "speed_print.h"
 
 #define NTESTS 10000
-#define N 256
+#define N SHUTTLE_N
 
 int main(void) {
     uint8_t seed[SHUTTLE_SEEDBYTES];
@@ -103,7 +103,7 @@ int main(void) {
         t[i] = cpucycles();
         sample_gauss_N(r, seed, (uint64_t)i, N);
     }
-    print_results("sample_gauss_N (N=256):", t, NTESTS);
+    print_results("sample_gauss_N (N=SHUTTLE_N):", t, NTESTS);
 
     /* ---- 5. sample_gauss_N_4x (4-way parallel) ---- */
     {
@@ -116,7 +116,7 @@ int main(void) {
                                (uint64_t)(4*i+2), (uint64_t)(4*i+3),
                                N, N, N, N);
         }
-        print_results("sample_gauss_N_4x (4 x N=256):", t, NTESTS);
+        print_results("sample_gauss_N_4x (4 x N=SHUTTLE_N):", t, NTESTS);
     }
 
     return 0;

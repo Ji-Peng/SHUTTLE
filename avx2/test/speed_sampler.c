@@ -6,8 +6,8 @@
  *   1) sampler_sigma2 (AVX2 8-wide CDT)
  *   2) approx_exp (V2: degree 9, table 2)
  *   3) shake256x4_squeezeblocks (4-way parallel SHAKE-256, per-byte
- * throughput) 4) sample_gauss_N (full sampler, N=256) 5) sample_gauss_N_4x
- * (4-way parallel via keccak4x, 4 x N=256)
+ * throughput) 4) sample_gauss_N (full sampler, N=SHUTTLE_N) 5) sample_gauss_N_4x
+ * (4-way parallel via keccak4x, 4 x N=SHUTTLE_N)
  */
 
 #include <stdint.h>
@@ -22,7 +22,7 @@
 #include "speed_print.h"
 
 #define NTESTS 10000
-#define N 256
+#define N SHUTTLE_N
 
 int main(void)
 {
@@ -151,12 +151,12 @@ int main(void)
 #undef TOTAL_BYTES_4X
     }
 
-    /* ---- 4. sample_gauss_N (full sampler, N=256) ---- */
+    /* ---- 4. sample_gauss_N (full sampler, N=SHUTTLE_N) ---- */
     for (int i = 0; i < NTESTS; i++) {
         t[i] = cpucycles();
         sample_gauss_N(r, seed, (uint64_t)i, N);
     }
-    print_results("sample_gauss_N (N=256):", t, NTESTS);
+    print_results("sample_gauss_N (N=SHUTTLE_N):", t, NTESTS);
 
     /* ---- 5. sample_gauss_N_4x (4-way parallel via keccak4x) ---- */
     {
@@ -167,7 +167,7 @@ int main(void)
                               (uint64_t)(4 * i + 1), (uint64_t)(4 * i + 2),
                               (uint64_t)(4 * i + 3), N, N, N, N);
         }
-        print_results("sample_gauss_N_4x (4 x N=256):", t, NTESTS);
+        print_results("sample_gauss_N_4x (4 x N=SHUTTLE_N):", t, NTESTS);
     }
 
     return 0;
