@@ -5,123 +5,130 @@
 
 /* ================================================================ */
 /* rANS hint h frequency table for SHUTTLE-128                   */
-/* symbols: [-7, 7]  total 15, sum of freqs = 4096 */
+/* symbols: [-10, 10]  total 21, sum of freqs = 4096 */
 /* ================================================================ */
 #define SHUTTLE128_RANS_PROB_BITS 12
-#define SHUTTLE128_RANS_SYM_MIN  (-7)
-#define SHUTTLE128_RANS_SYM_MAX  (7)
-#define SHUTTLE128_RANS_NUM_SYMS 15
+#define SHUTTLE128_RANS_SYM_MIN  (-10)
+#define SHUTTLE128_RANS_SYM_MAX  (10)
+#define SHUTTLE128_RANS_NUM_SYMS 21
 
-static const int16_t shuttle128_rans_syms[15] = {
-      -7,   -6,   -5,   -4,   -3,   -2,   -1,    0,    1,    2,    3,    4,
-       5,    6,    7,
+static const int16_t shuttle128_rans_syms[21] = {
+     -10,   -9,   -8,   -7,   -6,   -5,   -4,   -3,   -2,   -1,    0,    1,
+       2,    3,    4,    5,    6,    7,    8,    9,   10,
 };
 
-static const uint16_t shuttle128_rans_freqs[15] = {
-        1,     1,     9,    50,   183,   474,   830,  1000,   830,   474,   183,    50,
-        9,     1,     1,
+static const uint16_t shuttle128_rans_freqs[21] = {
+        1,     1,     1,     1,     1,     9,    50,   184,   473,   831,   992,   831,
+      473,   184,    50,     9,     1,     1,     1,     1,     1,
 };
 
 /* ================================================================ */
 /* rANS hint h frequency table for SHUTTLE-256                   */
-/* symbols: [-6, 6]  total 13, sum of freqs = 4096 */
+/* symbols: [-8, 8]  total 17, sum of freqs = 4096 */
 /* ================================================================ */
 #define SHUTTLE256_RANS_PROB_BITS 12
-#define SHUTTLE256_RANS_SYM_MIN  (-6)
-#define SHUTTLE256_RANS_SYM_MAX  (6)
-#define SHUTTLE256_RANS_NUM_SYMS 13
+#define SHUTTLE256_RANS_SYM_MIN  (-8)
+#define SHUTTLE256_RANS_SYM_MAX  (8)
+#define SHUTTLE256_RANS_NUM_SYMS 17
 
-static const int16_t shuttle256_rans_syms[13] = {
-      -6,   -5,   -4,   -3,   -2,   -1,    0,    1,    2,    3,    4,    5,
-       6,
+static const int16_t shuttle256_rans_syms[17] = {
+      -8,   -7,   -6,   -5,   -4,   -3,   -2,   -1,    0,    1,    2,    3,
+       4,    5,    6,    7,    8,
 };
 
-static const uint16_t shuttle256_rans_freqs[13] = {
-        1,     1,     7,    68,   354,   954,  1326,   954,   354,    68,     7,     1,
-        1,
+static const uint16_t shuttle256_rans_freqs[17] = {
+        1,     1,     1,     1,     7,    68,   356,   954,  1318,   954,   356,    68,
+        7,     1,     1,     1,     1,
 };
 
 /* ================================================================ */
 /* rANS z[1..L] HighBits frequency table for SHUTTLE-128                   */
-/* symbols: [-4, 4]  total 9, sum of freqs = 4096 */
+/* symbols: [-6, 6]  total 13, sum of freqs = 4096 */
 /* ================================================================ */
 #define SHUTTLE128_RANS_Z1_PROB_BITS 12
-#define SHUTTLE128_RANS_Z1_SYM_MIN  (-4)
-#define SHUTTLE128_RANS_Z1_SYM_MAX  (4)
-#define SHUTTLE128_RANS_Z1_NUM_SYMS 9
+#define SHUTTLE128_RANS_Z1_SYM_MIN  (-6)
+#define SHUTTLE128_RANS_Z1_SYM_MAX  (6)
+#define SHUTTLE128_RANS_Z1_NUM_SYMS 13
 
-static const int16_t shuttle128_rans_z1_syms[9] = {
-      -4,   -3,   -2,   -1,    0,    1,    2,    3,    4,
+static const int16_t shuttle128_rans_z1_syms[13] = {
+      -6,   -5,   -4,   -3,   -2,   -1,    0,    1,    2,    3,    4,    5,
+       6,
 };
 
-static const uint16_t shuttle128_rans_z1_freqs[9] = {
-        1,     3,   116,   958,  1940,   958,   116,     3,     1,
+static const uint16_t shuttle128_rans_z1_freqs[13] = {
+        1,     1,     1,     3,   115,   960,  1934,   960,   115,     3,     1,     1,
+        1,
 };
 
 /* ================================================================ */
 /* rANS z[1..L] HighBits frequency table for SHUTTLE-256                   */
-/* symbols: [-3, 3]  total 7, sum of freqs = 4096 */
+/* symbols: [-5, 5]  total 11, sum of freqs = 4096 */
 /* ================================================================ */
 #define SHUTTLE256_RANS_Z1_PROB_BITS 12
-#define SHUTTLE256_RANS_Z1_SYM_MIN  (-3)
-#define SHUTTLE256_RANS_Z1_SYM_MAX  (3)
-#define SHUTTLE256_RANS_Z1_NUM_SYMS 7
+#define SHUTTLE256_RANS_Z1_SYM_MIN  (-5)
+#define SHUTTLE256_RANS_Z1_SYM_MAX  (5)
+#define SHUTTLE256_RANS_Z1_NUM_SYMS 11
 
-static const int16_t shuttle256_rans_z1_syms[7] = {
-      -3,   -2,   -1,    0,    1,    2,    3,
+static const int16_t shuttle256_rans_z1_syms[11] = {
+      -5,   -4,   -3,   -2,   -1,    0,    1,    2,    3,    4,    5,
 };
 
-static const uint16_t shuttle256_rans_z1_freqs[7] = {
-        1,    20,   779,  2496,   779,    20,     1,
+static const uint16_t shuttle256_rans_z1_freqs[11] = {
+        1,     1,     1,    20,   779,  2492,   779,    20,     1,     1,     1,
 };
 
 /* ================================================================ */
 /* rANS Z_0 = CompressY(z^(0)) frequency table for SHUTTLE-128                   */
-/* symbols: [-62, 62]  total 125, sum of freqs = 4096 */
+/* symbols: [-76, 76]  total 153, sum of freqs = 4096 */
 /* ================================================================ */
 #define SHUTTLE128_RANS_Z0_PROB_BITS 12
-#define SHUTTLE128_RANS_Z0_SYM_MIN  (-62)
-#define SHUTTLE128_RANS_Z0_SYM_MAX  (62)
-#define SHUTTLE128_RANS_Z0_NUM_SYMS 125
+#define SHUTTLE128_RANS_Z0_SYM_MIN  (-76)
+#define SHUTTLE128_RANS_Z0_SYM_MAX  (76)
+#define SHUTTLE128_RANS_Z0_NUM_SYMS 153
 
-static const int16_t shuttle128_rans_z0_syms[125] = {
-     -62,  -61,  -60,  -59,  -58,  -57,  -56,  -55,  -54,  -53,  -52,  -51,
-     -50,  -49,  -48,  -47,  -46,  -45,  -44,  -43,  -42,  -41,  -40,  -39,
-     -38,  -37,  -36,  -35,  -34,  -33,  -32,  -31,  -30,  -29,  -28,  -27,
-     -26,  -25,  -24,  -23,  -22,  -21,  -20,  -19,  -18,  -17,  -16,  -15,
-     -14,  -13,  -12,  -11,  -10,   -9,   -8,   -7,   -6,   -5,   -4,   -3,
-      -2,   -1,    0,    1,    2,    3,    4,    5,    6,    7,    8,    9,
-      10,   11,   12,   13,   14,   15,   16,   17,   18,   19,   20,   21,
-      22,   23,   24,   25,   26,   27,   28,   29,   30,   31,   32,   33,
-      34,   35,   36,   37,   38,   39,   40,   41,   42,   43,   44,   45,
-      46,   47,   48,   49,   50,   51,   52,   53,   54,   55,   56,   57,
-      58,   59,   60,   61,   62,
+static const int16_t shuttle128_rans_z0_syms[153] = {
+     -76,  -75,  -74,  -73,  -72,  -71,  -70,  -69,  -68,  -67,  -66,  -65,
+     -64,  -63,  -62,  -61,  -60,  -59,  -58,  -57,  -56,  -55,  -54,  -53,
+     -52,  -51,  -50,  -49,  -48,  -47,  -46,  -45,  -44,  -43,  -42,  -41,
+     -40,  -39,  -38,  -37,  -36,  -35,  -34,  -33,  -32,  -31,  -30,  -29,
+     -28,  -27,  -26,  -25,  -24,  -23,  -22,  -21,  -20,  -19,  -18,  -17,
+     -16,  -15,  -14,  -13,  -12,  -11,  -10,   -9,   -8,   -7,   -6,   -5,
+      -4,   -3,   -2,   -1,    0,    1,    2,    3,    4,    5,    6,    7,
+       8,    9,   10,   11,   12,   13,   14,   15,   16,   17,   18,   19,
+      20,   21,   22,   23,   24,   25,   26,   27,   28,   29,   30,   31,
+      32,   33,   34,   35,   36,   37,   38,   39,   40,   41,   42,   43,
+      44,   45,   46,   47,   48,   49,   50,   51,   52,   53,   54,   55,
+      56,   57,   58,   59,   60,   61,   62,   63,   64,   65,   66,   67,
+      68,   69,   70,   71,   72,   73,   74,   75,   76,
 };
 
-static const uint16_t shuttle128_rans_z0_freqs[125] = {
+static const uint16_t shuttle128_rans_z0_freqs[153] = {
         1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,
         1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,
-        1,     2,     2,     2,     3,     4,     5,     7,     7,    10,    11,    13,
-       15,    19,    21,    24,    29,    33,    35,    42,    46,    53,    57,    64,
-       69,    74,    82,    90,    97,   102,   104,   108,   115,   122,   125,   127,
-      128,   125,   102,   125,   128,   127,   125,   122,   115,   108,   104,   102,
-       97,    90,    82,    74,    69,    64,    57,    53,    46,    42,    35,    33,
-       29,    24,    21,    19,    15,    13,    11,    10,     7,     7,     5,     4,
-        3,     2,     2,     2,     1,     1,     1,     1,     1,     1,     1,     1,
         1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,
-        1,     1,     1,     1,     1,
+        1,     1,     1,     2,     2,     3,     3,     4,     5,     6,     8,     9,
+       11,    13,    16,    18,    21,    24,    28,    33,    37,    42,    47,    53,
+       58,    64,    70,    76,    82,    89,    95,   100,   105,   111,   116,   119,
+      123,   126,   128,   128,    68,   128,   128,   126,   123,   119,   116,   111,
+      105,   100,    95,    89,    82,    76,    70,    64,    58,    53,    47,    42,
+       37,    33,    28,    24,    21,    18,    16,    13,    11,     9,     8,     6,
+        5,     4,     3,     3,     2,     2,     1,     1,     1,     1,     1,     1,
+        1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,
+        1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,
+        1,     1,     1,     1,     1,     1,     1,     1,     1,
 };
 
 /* ================================================================ */
 /* rANS Z_0 = CompressY(z^(0)) frequency table for SHUTTLE-256                   */
-/* symbols: [-46, 46]  total 93, sum of freqs = 4096 */
+/* symbols: [-58, 58]  total 117, sum of freqs = 4096 */
 /* ================================================================ */
 #define SHUTTLE256_RANS_Z0_PROB_BITS 12
-#define SHUTTLE256_RANS_Z0_SYM_MIN  (-46)
-#define SHUTTLE256_RANS_Z0_SYM_MAX  (46)
-#define SHUTTLE256_RANS_Z0_NUM_SYMS 93
+#define SHUTTLE256_RANS_Z0_SYM_MIN  (-58)
+#define SHUTTLE256_RANS_Z0_SYM_MAX  (58)
+#define SHUTTLE256_RANS_Z0_NUM_SYMS 117
 
-static const int16_t shuttle256_rans_z0_syms[93] = {
+static const int16_t shuttle256_rans_z0_syms[117] = {
+     -58,  -57,  -56,  -55,  -54,  -53,  -52,  -51,  -50,  -49,  -48,  -47,
      -46,  -45,  -44,  -43,  -42,  -41,  -40,  -39,  -38,  -37,  -36,  -35,
      -34,  -33,  -32,  -31,  -30,  -29,  -28,  -27,  -26,  -25,  -24,  -23,
      -22,  -21,  -20,  -19,  -18,  -17,  -16,  -15,  -14,  -13,  -12,  -11,
@@ -129,17 +136,20 @@ static const int16_t shuttle256_rans_z0_syms[93] = {
        2,    3,    4,    5,    6,    7,    8,    9,   10,   11,   12,   13,
       14,   15,   16,   17,   18,   19,   20,   21,   22,   23,   24,   25,
       26,   27,   28,   29,   30,   31,   32,   33,   34,   35,   36,   37,
-      38,   39,   40,   41,   42,   43,   44,   45,   46,
+      38,   39,   40,   41,   42,   43,   44,   45,   46,   47,   48,   49,
+      50,   51,   52,   53,   54,   55,   56,   57,   58,
 };
 
-static const uint16_t shuttle256_rans_z0_freqs[93] = {
+static const uint16_t shuttle256_rans_z0_freqs[117] = {
         1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,
-        1,     1,     1,     1,     1,     1,     2,     3,     4,     4,     6,     8,
-       10,    15,    18,    22,    27,    34,    40,    48,    57,    66,    76,    87,
-       97,   111,   122,   136,   139,   148,   162,   171,   170,   173,   148,   173,
-      170,   171,   162,   148,   139,   136,   122,   111,    97,    87,    76,    66,
-       57,    48,    40,    34,    27,    22,    18,    15,    10,     8,     6,     4,
+        1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,
+        1,     1,     1,     1,     1,     1,     2,     3,     4,     5,     6,     8,
+       11,    14,    18,    22,    27,    33,    40,    48,    57,    66,    77,    88,
+       99,   110,   121,   133,   143,   152,   160,   166,   172,   174,   118,   174,
+      172,   166,   160,   152,   143,   133,   121,   110,    99,    88,    77,    66,
+       57,    48,    40,    33,    27,    22,    18,    14,    11,     8,     6,     5,
         4,     3,     2,     1,     1,     1,     1,     1,     1,     1,     1,     1,
+        1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,     1,
         1,     1,     1,     1,     1,     1,     1,     1,     1,
 };
 

@@ -7,18 +7,32 @@
  * Secret key format:
  *   rho || tr || key || polyeta_pack(s[0..L-1]) || polyeta_pack(e[0..M-1])
  *
- * Signature format (NGCC-Signature Alg 2 compressed form with full rANS
- * entropy coding for Z_0, HighBits(z[1..L]) and hint h; see packing.h
- * for the byte-slot diagram and per-mode reservation budgets):
+ * Signature format (NGCC-Signature Alg 2 compressed form):
+ *
  *   seedC || irs_signs
- *     || uint16 z0_rans_len || rANS(Z_0) + pad
+ *     || uint16 z0_rans_len || rANS(Z_0)             + pad to Z0_RESERVED
  *     || L * polyz1_lo_pack(lo(z[1..L]))
- *     || uint16 z1_rans_len || rANS(hi(z[1..L])) + pad
- *     || uint16 hint_rans_len || rANS(h) + pad
+ *     || uint16 z1_rans_len || rANS(hi(z[1..L]))     + pad to Z1_RESERVED
+ *     || uint16 hint_rans_len || rANS(h)             + pad to HINT_RESERVED
+ *
+ * Each rANS block is a fixed-size slot (length prefix + encoded stream +
+ * zero padding). The fixed slot is what lets the signature have a single
+ * on-the-wire length; the tradeoff (wasting a few bytes vs. variable-length
+ * encoding) is analysed in docs/NGCC_Sign/SHUTTLE_rANS_analysis.md and the
+ * resulting budgets live in params.h (SHUTTLE_*_RESERVED_BYTES).
+ *
+ * Three rANS streams: Z_0 is encoded directly, z[1..L] is split into
+ * (hi, lo) with only hi going through rANS (see shuttle_rans.h for the
+ * hi/lo design rationale), h is encoded directly.
  *
  * IRS sign bits: TAU bits packed into IRS_SIGNBYTES bytes. Bit i is 1 if
  * irs_signs[i] == +1, 0 if irs_signs[i] == -1. Combined with the challenge
  * c (from c_tilde), these bits define c_eff = sum_i irs_sign_i * x^{j_i}.
+ *
+ * Encoder-side OOV / overflow return values propagate back to
+ * sign.c::crypto_sign_signature, which treats them as a signing-round
+ * rejection. Budgets are tuned so the combined rANS rejection rate is
+ * far below the IRS rejection rate.
  */
 
 #include <string.h>

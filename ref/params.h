@@ -174,24 +174,30 @@
 /* ============================================================
  * rANS reservation budgets (consumed by packing.c).
  *
- * Phase 6b-4 / 6c-1 empirical measurement:
- *   mode-128: hint rANS ~177 B typical, tail <= 210 B.
- *             z1   rANS ~174 B typical, tail <= 210 B.
- *   mode-256: hint rANS ~300 B typical, tail <= 340 B.
- *             z1   rANS ~275 B typical, tail <= 330 B.
+ * Target: per-block total failure p_block = 2^{-20} (overflow + OOV).
+ *   p_ovf per block = 2^{-21} drives these reserved byte sizes.
+ *   p_OOV per block = 2^{-21} drives the rANS vocabulary half-widths
+ *                     baked into rans_tables.h.
+ * Combined per-signature rANS failure ~ 3 * 2^{-20} = 2^{-18.4}, which
+ * is << p_irs ~ 0.5 and therefore invisible on throughput.
  *
- * Reserved sizes carry a safety margin so signer-side reject probability
- * stays negligible (< 2^-40 target). Each block also has a 2-byte LE
- * length prefix for the actual rANS stream length.
+ * Auto-calibrated by SHUTTLE/tools/calibrate_rans.py (5000 / 2500 trials
+ * for mode-128 / mode-256). Per-block R >= max(empirical max length,
+ * ceil(mu + Phi^{-1}(1 - 2^{-21}) * sigma) + 4 B rANS-flush margin),
+ * then rounded up to a 2-byte boundary. Each block also carries a
+ * 2-byte LE length prefix for the true encoded stream length.
+ *
+ * See docs/NGCC_Sign/SHUTTLE_rANS_analysis.md for the full trade-off
+ * derivation.
  * ============================================================ */
 #if SHUTTLE_MODE == 128
-#  define SHUTTLE_HINT_RESERVED_BYTES    256
-#  define SHUTTLE_Z1_RANS_RESERVED_BYTES 240
-#  define SHUTTLE_Z0_RANS_RESERVED_BYTES 240
+#  define SHUTTLE_HINT_RESERVED_BYTES    200
+#  define SHUTTLE_Z1_RANS_RESERVED_BYTES 198
+#  define SHUTTLE_Z0_RANS_RESERVED_BYTES 202
 #elif SHUTTLE_MODE == 256
-#  define SHUTTLE_HINT_RESERVED_BYTES    400
-#  define SHUTTLE_Z1_RANS_RESERVED_BYTES 360
-#  define SHUTTLE_Z0_RANS_RESERVED_BYTES 430
+#  define SHUTTLE_HINT_RESERVED_BYTES    330
+#  define SHUTTLE_Z1_RANS_RESERVED_BYTES 306
+#  define SHUTTLE_Z0_RANS_RESERVED_BYTES 360
 #endif
 
 #define SHUTTLE_HINT_BLOCK_BYTES    (2 + SHUTTLE_HINT_RESERVED_BYTES)

@@ -38,7 +38,7 @@ def sample_round_vec(rng: np.random.Generator, mode: int):
 
 
 def build_table(histogram_path: str, prob_bits: int = 12):
-    _, _, raw = load_histogram(histogram_path)
+    _, _, raw, _ = load_histogram(histogram_path)
     sym = symmetrize(raw)
     syms, freqs = quantize(sym, prob_bits)
     return RansTable(syms=syms, freqs=freqs, prob_bits=prob_bits), syms, freqs

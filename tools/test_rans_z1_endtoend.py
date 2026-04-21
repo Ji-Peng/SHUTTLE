@@ -31,7 +31,7 @@ import numpy as np
 
 
 def build_table(histogram_path: str, prob_bits: int = 12):
-    mode, kind, raw = load_histogram(histogram_path)
+    mode, kind, raw, _ = load_histogram(histogram_path)
     if kind != "z1_high":
         raise ValueError(f"expected kind=z1_high, got {kind!r} in {histogram_path}")
     sym = symmetrize(raw)

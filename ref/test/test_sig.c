@@ -38,6 +38,10 @@
 #  define z1_freqs        shuttle128_rans_z1_freqs
 #  define Z1_PROB_BITS    SHUTTLE128_RANS_Z1_PROB_BITS
 #  define Z1_SYM_MAX_ABS  SHUTTLE128_RANS_Z1_SYM_MAX
+#  define Z0_NUM_SYMS     SHUTTLE128_RANS_Z0_NUM_SYMS
+#  define z0_syms         shuttle128_rans_z0_syms
+#  define z0_freqs        shuttle128_rans_z0_freqs
+#  define Z0_PROB_BITS    SHUTTLE128_RANS_Z0_PROB_BITS
 #  define Z0_SYM_MIN      SHUTTLE128_RANS_Z0_SYM_MIN
 #  define Z0_SYM_MAX      SHUTTLE128_RANS_Z0_SYM_MAX
 #else
@@ -50,12 +54,17 @@
 #  define z1_freqs        shuttle256_rans_z1_freqs
 #  define Z1_PROB_BITS    SHUTTLE256_RANS_Z1_PROB_BITS
 #  define Z1_SYM_MAX_ABS  SHUTTLE256_RANS_Z1_SYM_MAX
+#  define Z0_NUM_SYMS     SHUTTLE256_RANS_Z0_NUM_SYMS
+#  define z0_syms         shuttle256_rans_z0_syms
+#  define z0_freqs        shuttle256_rans_z0_freqs
+#  define Z0_PROB_BITS    SHUTTLE256_RANS_Z0_PROB_BITS
 #  define Z0_SYM_MIN      SHUTTLE256_RANS_Z0_SYM_MIN
 #  define Z0_SYM_MAX      SHUTTLE256_RANS_Z0_SYM_MAX
 #endif
 
 #define HINT_PROB_TOTAL   (1u << HINT_PROB_BITS)
 #define Z1_PROB_TOTAL     (1u << Z1_PROB_BITS)
+#define Z0_PROB_TOTAL     (1u << Z0_PROB_BITS)
 
 static int32_t sample_hint_sym(void) {
   uint32_t r = (uint32_t)rand() & (HINT_PROB_TOTAL - 1);
@@ -78,22 +87,29 @@ static int32_t sample_z1_hi(void) {
   return z1_syms[Z1_NUM_SYMS - 1];
 }
 
-/* Fill z_1[1..L] matching the actual z1 distribution used by the signer:
- *   z[i] = hi * alpha_h + lo,  hi ~ z1 table,  lo ~ uniform [-alpha_h/2, alpha_h/2).
- * This guarantees pack_sig never hits OOV or overflow. */
-static void fill_z1(poly *z_1) {
-  /* Z_0 coefficients: draw from the z0 rANS vocabulary range. A narrow
-   * triangular-ish distribution keeps us safely inside the trained symbol
-   * set (|Z_0| <= ~12 covers >99% of the actual signer output). */
-  int32_t z0_range = Z0_SYM_MAX;   /* symmetric */
-  for (unsigned j = 0; j < SHUTTLE_N; ++j) {
-    int32_t v = 0;
-    for (int k = 0; k < 3; ++k)
-      v += (rand() % (z0_range / 2 + 1)) - (z0_range / 4);
-    if (v > Z0_SYM_MAX) v = Z0_SYM_MAX;
-    if (v < Z0_SYM_MIN) v = Z0_SYM_MIN;
-    z_1[0].coeffs[j] = v;
+/* Draw a Z_0 coefficient from the rANS table distribution. Using the
+ * calibrated distribution (rather than a handcrafted triangular one)
+ * keeps encoded lengths consistent with the signer and lets the test
+ * round-trip under tightened overflow budgets. */
+static int32_t sample_z0_sym(void) {
+  uint32_t r = (uint32_t)rand() & (Z0_PROB_TOTAL - 1);
+  uint32_t cum = 0;
+  for (unsigned i = 0; i < Z0_NUM_SYMS; ++i) {
+    cum += z0_freqs[i];
+    if (r < cum) return z0_syms[i];
   }
+  return z0_syms[Z0_NUM_SYMS - 1];
+}
+
+/* Fill z_1[0..L] matching the signer's distribution:
+ *   Z_0     : z0 rANS table
+ *   z[1..L] : hi * alpha_h + lo,  hi ~ z1 table,
+ *             lo ~ uniform [-alpha_h/2, alpha_h/2).
+ * This guarantees pack_sig never hits OOV or overflow at the calibrated
+ * budgets. */
+static void fill_z1(poly *z_1) {
+  for (unsigned j = 0; j < SHUTTLE_N; ++j)
+    z_1[0].coeffs[j] = sample_z0_sym();
 
   for (unsigned i = 1; i <= SHUTTLE_L; ++i)
     for (unsigned j = 0; j < SHUTTLE_N; ++j) {

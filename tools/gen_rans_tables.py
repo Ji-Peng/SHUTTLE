@@ -8,9 +8,11 @@ a C header snippet embedding the table.
 Quantization procedure (safe against zero-frequency symbols):
 
   1. Enforce symmetry: replace p(v) with (p(v) + p(-v)) / 2.
-  2. Compute exact real frequencies  f(v) = p(v) * PROB_TOTAL.
-  3. Round each f(v) to nearest integer, minimum 1 for observed symbols.
-  4. Adjust the single largest bucket's frequency up or down so the sum
+  2. Optionally extend the vocabulary to [-M, M] for a target per-block
+     OOV probability p_OOV (see SHUTTLE_rANS_analysis.md eq. 23).
+  3. Compute exact real frequencies  f(v) = p(v) * PROB_TOTAL.
+  4. Round each f(v) to nearest integer, minimum 1 for observed symbols.
+  5. Adjust the single largest bucket's frequency up or down so the sum
      equals PROB_TOTAL exactly.
 
 Output format is controlled by --format:
@@ -22,7 +24,7 @@ Usage:
 
 Combined-mode usage (emit a single C header for both modes):
   python3 gen_rans_tables.py hints_mode128.json hints_mode256.json \
-      --prob-bits 12 --format c --out rans_tables.h
+      --prob-bits 12 --p-oov 4.77e-7 --format c --out rans_tables.h
 """
 
 from __future__ import annotations
@@ -31,21 +33,102 @@ import argparse
 import json
 import math
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
-def load_histogram(path: str) -> Tuple[int, str, Dict[int, int]]:
-    """Load a histogram JSON. Returns (mode, kind, {value: count}).
+# Per-kind block size (#samples per signature round) for OOV-probability math.
+# n_block enters eq. (23) as: M >= sigma_eff * Phi^{-1}(1 - p/(2 n_b)).
+#   hint_h : M * n  per round
+#   z1_high: L * n  per round
+#   z0     :     n  per round
+def _n_block(kind: str, params: dict) -> int:
+    n = params["n"]
+    if kind == "hint_h":
+        return params["M"] * n
+    if kind == "z1_high":
+        return params["L"] * n
+    if kind == "z0":
+        return n
+    raise ValueError(f"unknown kind {kind!r}")
+
+
+def load_histogram(path: str) -> Tuple[int, str, Dict[int, int], dict]:
+    """Load a histogram JSON. Returns (mode, kind, {value: count}, params).
 
     `kind` defaults to "hint_h" for backward compatibility with histograms
-    produced before the kind tag was added.
+    produced before the kind tag was added. `params` holds the recorded
+    MODE_PARAMS dict (n/L/M/tau/...), used for OOV-probability math.
     """
     with open(path) as f:
         data = json.load(f)
     mode = data["mode"]
     kind = data.get("kind", "hint_h")
     h = {int(k): int(v) for k, v in data["histogram"].items()}
-    return mode, kind, h
+    params = data.get("params", {})
+    return mode, kind, h, params
+
+
+def _empirical_sigma(h: Dict[int, int]) -> float:
+    """Estimate the effective standard deviation of the histogram (zero-mean)."""
+    total = sum(h.values())
+    if total == 0:
+        return 0.0
+    mean = sum(v * c for v, c in h.items()) / total
+    var = sum((v - mean) ** 2 * c for v, c in h.items()) / total
+    return math.sqrt(var)
+
+
+def _normal_quantile(p: float) -> float:
+    """Phi^{-1}(p) via Beasley-Springer-Moro (no scipy dependency)."""
+    if not (0.0 < p < 1.0):
+        raise ValueError(f"quantile out of range: {p}")
+    a = [-3.969683028665376e+01,  2.209460984245205e+02,
+         -2.759285104469687e+02,  1.383577518672690e+02,
+         -3.066479806614716e+01,  2.506628277459239e+00]
+    b = [-5.447609879822406e+01,  1.615858368580409e+02,
+         -1.556989798598866e+02,  6.680131188771972e+01,
+         -1.328068155288572e+01]
+    c = [-7.784894002430293e-03, -3.223964580411365e-01,
+         -2.400758277161838e+00, -2.549732539343734e+00,
+          4.374664141464968e+00,  2.938163982698783e+00]
+    d = [ 7.784695709041462e-03,  3.224671290700398e-01,
+          2.445134137142996e+00,  3.754408661907416e+00]
+    plow = 0.02425
+    phigh = 1 - plow
+    if p < plow:
+        q = math.sqrt(-2 * math.log(p))
+        return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / \
+               ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
+    if p <= phigh:
+        q = p - 0.5
+        r = q * q
+        return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5]) * q / \
+               (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1)
+    q = math.sqrt(-2 * math.log(1 - p))
+    return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / \
+            ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
+
+
+def target_vocab_radius(h: Dict[int, int], kind: str, params: dict,
+                        p_oov: float) -> int:
+    """Required half-width M to meet a per-block OOV probability target.
+
+    Uses the Gaussian-approximation of the distribution with empirical sigma
+    and block size n_b = _n_block(kind, params). See analysis doc eq. (23):
+
+        M >= sigma_eff * Phi^{-1}(1 - p_oov / (2 n_b))
+
+    Falls back to the observed max |v| if params are missing (old JSONs).
+    """
+    observed = max(abs(v) for v in h) if h else 0
+    if not params or p_oov is None or p_oov <= 0:
+        return observed
+    n_b = _n_block(kind, params)
+    sigma = _empirical_sigma(h)
+    if sigma <= 0:
+        return observed
+    q = _normal_quantile(1.0 - p_oov / (2.0 * n_b))
+    return max(observed, int(math.ceil(sigma * q)))
 
 
 # Map distribution kind -> (macro infix, var infix, human label)
@@ -56,16 +139,21 @@ KIND_META = {
 }
 
 
-def symmetrize(h: Dict[int, int]) -> Dict[int, int]:
+def symmetrize(h: Dict[int, int], target_radius: Optional[int] = None) -> Dict[int, int]:
     """Build a zero-mean symmetric, contiguous-vocabulary distribution.
 
     Procedure:
       1. Average h[v] and h[-v] (ties on rare tail symbols default to 1).
       2. Ensure every integer in [-max_abs, max_abs] appears, filling gaps
-         with count 1. This keeps the symbol list contiguous so the C
-         encoder/decoder's `sym - sym_min` indexing stays valid, and avoids
-         false OOV rejections on values that happen to be unseen in the
-         training window but land inside the observed range.
+         with count 1. Keeps the symbol list contiguous so the C decoder's
+         `sym - sym_min` indexing stays valid and avoids false OOV rejections
+         on values that happen to be unseen in the training window but land
+         inside the observed range.
+      3. If `target_radius` is given and larger than the observed max |v|,
+         extend the vocabulary symmetrically with count=1 padding. This is
+         how the generator meets a per-block p_OOV target: eq. (23) gives
+         the minimum radius, and unseen-but-reserved tail symbols land on
+         freq=1 after quantization (entropy cost < 0.01 bit/coef).
     """
     out = {}
     seen = set()
@@ -87,6 +175,8 @@ def symmetrize(h: Dict[int, int]) -> Dict[int, int]:
     if not out:
         return out
     max_abs = max(abs(v) for v in out)
+    if target_radius is not None and target_radius > max_abs:
+        max_abs = target_radius
     for v in range(-max_abs, max_abs + 1):
         out.setdefault(v, 1)
     return out
@@ -192,6 +282,11 @@ def main():
                     help="JSON files produced by sample_hints.py")
     ap.add_argument("--prob-bits", type=int, default=12,
                     help="log2(total frequency). default 12 (freqs sum to 4096).")
+    ap.add_argument("--p-oov", type=float, default=None,
+                    help="target per-block OOV probability. When given, the "
+                         "vocabulary is extended symmetrically with freq=1 "
+                         "padding until M >= sigma_eff * Phi^{-1}(1-p/(2 n_b)). "
+                         "Typical: 4.77e-7 (~2^{-21}) for p_block = 2^{-20}.")
     ap.add_argument("--format", choices=["text", "c"], default="text")
     ap.add_argument("--out", default=None,
                     help="output path (default stdout; only meaningful for --format c)")
@@ -208,11 +303,17 @@ def main():
         print("", file=outf)
 
     for path in args.histograms:
-        mode, kind, raw = load_histogram(path)
-        sym = symmetrize(raw)
+        mode, kind, raw, params = load_histogram(path)
+        target_m = target_vocab_radius(raw, kind, params, args.p_oov) \
+            if args.p_oov is not None else None
+        sym = symmetrize(raw, target_radius=target_m)
         syms, freqs = quantize(sym, args.prob_bits)
         if args.format == "text":
             print_text_summary(path, mode, kind, syms, freqs, args.prob_bits, raw)
+            if target_m is not None:
+                observed = max(abs(v) for v in raw) if raw else 0
+                print(f"OOV target: p={args.p_oov:.2e}, observed M={observed}, "
+                      f"required M={target_m}, final M={max(abs(s) for s in syms)}")
         else:
             emit_c_table(mode, kind, syms, freqs, args.prob_bits, outf)
 

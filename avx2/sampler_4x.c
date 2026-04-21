@@ -138,6 +138,16 @@ void sample_gauss_N_4x(int16_t *r0, int16_t *r1,
         }
         if (need_refill) {
             for (int j = 0; j < 4; j++) {
+                /* For lanes already done (including len=0 idle lanes), drop
+                 * the remaining stream so repeated refills don't walk
+                 * past BUF_4X_SIZE. The 4-way squeeze writes into all four
+                 * lane buffers unconditionally, so we must keep each lane's
+                 * write offset within bounds. */
+                if (coefcnt[j] >= len[j]) {
+                    pos[j] = 0;
+                    avail[j] = 0;
+                    continue;
+                }
                 if (avail[j] > 0 && pos[j] > 0)
                     memmove(buf[j], buf[j] + pos[j], avail[j]);
                 pos[j] = 0;
