@@ -184,6 +184,38 @@
 #endif
 
 /* ============================================================
+ * rANS hi/lo split parameters (implementation-defined; see
+ *   agent/rANS/SHUTTLE_rANS.tex Tab 1).
+ *
+ *   alpha_r  : the rANS hi/lo split step for z^(1..lenS); a power of two,
+ *              fixed across modes. The HighBits of z^(i) live in the
+ *              z-hi rANS vocabulary at scale r/alpha_r; the LowBits are
+ *              uniform in [-alpha_r/2, alpha_r/2) and bit-packed at
+ *              log2(alpha_r) bits/coef.
+ *   alpha_0' : the second-level split step for z^(0). Chosen as
+ *              alpha_r / alpha_1 so that HighBits_{alpha_0'}(z^(0))
+ *              shares the same effective scale r/alpha_r as the rest
+ *              of the z-hi stream (see tex §2.5 and Cor 3). LowBits
+ *              are bit-packed at log2(alpha_0') bits/coef.
+ *
+ *   alpha_h  : NOT used by rANS; it is the spec-level HighBits/MakeHint
+ *              parameter, separate from alpha_r / alpha_0'.
+ * ============================================================ */
+#define SHUTTLE_ALPHA_R       64
+#define SHUTTLE_ALPHA_R_BITS  6
+#define SHUTTLE_HALF_ALPHA_R  (SHUTTLE_ALPHA_R / 2)
+
+#define SHUTTLE_ALPHA_0P      (SHUTTLE_ALPHA_R / SHUTTLE_ALPHA_1)
+#if   SHUTTLE_ALPHA_0P == 8
+#  define SHUTTLE_ALPHA_0P_BITS 3
+#elif SHUTTLE_ALPHA_0P == 4
+#  define SHUTTLE_ALPHA_0P_BITS 2
+#else
+#  error "Unsupported SHUTTLE_ALPHA_0P (expected 4 or 8)"
+#endif
+#define SHUTTLE_HALF_ALPHA_0P (SHUTTLE_ALPHA_0P / 2)
+
+/* ============================================================
  * Derived packing sizes (all in bytes)
  * ============================================================ */
 /* eta=1: coefficients in {-1,0,1}, encode as 2 bits/coeff */
@@ -224,37 +256,40 @@
 /* ============================================================
  * rANS reservation budgets (consumed by packing.c).
  *
- * Calibrated empirically by SHUTTLE/tools/calibrate_rans.py for the
- * (q, n, sigma, alpha_h, tau) tuple of each mode. The values for
- * SHUTTLE-128 are the historical 13313-tuned numbers; for SHUTTLE-256
- * and SHUTTLE-512 the values are conservative initial estimates that
- * MUST be recalibrated for the spec's new q values before final
- * submission. Recalibration target: per-block overflow probability
- * <= 2^{-21}.
+ * Analytically derived from agent/rANS/SHUTTLE_rANS.tex Tab 8
+ * (tab:reserve-2stream): per-stream overflow probability p_k = 2^-21,
+ * total p_rans^* = 2^-20 by union bound. z-hi stream uses Gauss CLT;
+ * hint stream uses Gauss CLT for mode-128 (lambda >> 30) and the
+ * Poisson model for mode-256/512 (narrow sigma).
+ *
+ * Regenerate with: python3 tools/SigSize.py
+ *
+ * OOV failure does not exist: the rANS vocabulary covers the full
+ * |sym| <= M_voc tight bound derived from the 11*sigma truncation
+ * of SampleY, so the only rejection cause is the rare overflow event.
  * ============================================================ */
 #if SHUTTLE_MODE == 128
-#  define SHUTTLE_HINT_RESERVED_BYTES    200
-#  define SHUTTLE_Z1_RANS_RESERVED_BYTES 198
-#  define SHUTTLE_Z0_RANS_RESERVED_BYTES 202
+/* mode-128 plumbing: sigma_zhi = sigma_hint = r/alpha_r = 101/64 ~= 1.58,
+ * so z-hi and hint share the same frequency table but stay in two streams
+ * (kept independent for decoder simplicity). */
+#  define SHUTTLE_ZHI_RESERVED_BYTES    375
+#  define SHUTTLE_HINT_RESERVED_BYTES   194
 #elif SHUTTLE_MODE == 256
-/* TODO: recalibrate for q=32257 + alpha_h=1024 (was 256). Bumped up
- * conservatively until calibration tools rerun. */
-#  define SHUTTLE_HINT_RESERVED_BYTES    420
-#  define SHUTTLE_Z1_RANS_RESERVED_BYTES 420
-#  define SHUTTLE_Z0_RANS_RESERVED_BYTES 460
+#  define SHUTTLE_ZHI_RESERVED_BYTES    883
+#  define SHUTTLE_HINT_RESERVED_BYTES    28
 #elif SHUTTLE_MODE == 512
-/* TODO: recalibrate. Mode-512 estimates are 2x mode-256. */
-#  define SHUTTLE_HINT_RESERVED_BYTES    840
-#  define SHUTTLE_Z1_RANS_RESERVED_BYTES 840
-#  define SHUTTLE_Z0_RANS_RESERVED_BYTES 920
+#  define SHUTTLE_ZHI_RESERVED_BYTES   1987
+#  define SHUTTLE_HINT_RESERVED_BYTES     9
 #endif
 
+#define SHUTTLE_ZHI_BLOCK_BYTES     (2 + SHUTTLE_ZHI_RESERVED_BYTES)
 #define SHUTTLE_HINT_BLOCK_BYTES    (2 + SHUTTLE_HINT_RESERVED_BYTES)
-#define SHUTTLE_Z1_RANS_BLOCK_BYTES (2 + SHUTTLE_Z1_RANS_RESERVED_BYTES)
-#define SHUTTLE_Z0_RANS_BLOCK_BYTES (2 + SHUTTLE_Z0_RANS_RESERVED_BYTES)
 
-/* Packed size of the LowBits part of z[1..L] -- ALPHA_H_BITS per coef. */
-#define SHUTTLE_POLYZ1_LO_PACKEDBYTES ((SHUTTLE_N * SHUTTLE_ALPHA_H_BITS + 7) / 8)
+/* Packed size of the LowBits part of z^(0): ALPHA_0P_BITS per coef. */
+#define SHUTTLE_POLYZ0_LO_PACKEDBYTES ((SHUTTLE_N * SHUTTLE_ALPHA_0P_BITS + 7) / 8)
+
+/* Packed size of the LowBits part of z[1..lenS]: ALPHA_R_BITS per coef. */
+#define SHUTTLE_POLYZ1_LO_PACKEDBYTES ((SHUTTLE_N * SHUTTLE_ALPHA_R_BITS + 7) / 8)
 
 /* ============================================================
  * Public / secret key + signature sizes
@@ -268,11 +303,22 @@
                                    + SHUTTLE_L * SHUTTLE_POLYETA_PACKEDBYTES \
                                    + SHUTTLE_M * SHUTTLE_POLYETA_PACKEDBYTES)
 
+/* Signature layout (two rANS streams, see SHUTTLE_rANS.tex §3.3):
+ *   seedC || irs_signs
+ *   || uint16 zhi_rans_len || rANS(z-hi) + pad to ZHI_RESERVED
+ *   || polyz0_lo_pack(lo(z^(0)))
+ *   || L * polyz1_lo_pack(lo(z^(1..lenS)))
+ *   || uint16 hint_rans_len || rANS(hint) + pad to HINT_RESERVED
+ *
+ * The z-hi rANS block carries n*(lenS+1) coefficients: the HighBits of
+ * z^(0) at step alpha_0' followed by the HighBits of z^(1..lenS) at
+ * step alpha_r. All share the same effective scale r/alpha_r, hence the
+ * same frequency table (tex §2.5). */
 #define SHUTTLE_BYTES  ( SHUTTLE_CTILDEBYTES \
                        + SHUTTLE_IRS_SIGNBYTES \
-                       + SHUTTLE_Z0_RANS_BLOCK_BYTES \
+                       + SHUTTLE_ZHI_BLOCK_BYTES \
+                       + SHUTTLE_POLYZ0_LO_PACKEDBYTES \
                        + SHUTTLE_L * SHUTTLE_POLYZ1_LO_PACKEDBYTES \
-                       + SHUTTLE_Z1_RANS_BLOCK_BYTES \
                        + SHUTTLE_HINT_BLOCK_BYTES )
 
 /* ============================================================

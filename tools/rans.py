@@ -133,11 +133,25 @@ class RansEncoder:
         self.state &= STATE_MASK
 
     def finalize(self) -> bytes:
-        """Flush the state into the output stream and return a byte buffer."""
+        """Flush the state into the output stream and return a byte buffer.
+
+        The final-state flush is little-endian (matching ryg_rans and HAETAE):
+        emit x & 0xff, (x >> 8) & 0xff, (x >> 16) & 0xff, (x >> 24) & 0xff.
+        After the reverse below, those four bytes are the *first* four bytes
+        of the output stream, in the same order the decoder reads them.
+        """
         x = self.state
-        for _ in range(4):
-            self.out_bytes.append(x & 0xFF)
-            x >>= BYTE_BITS
+        flush_le = [(x >> (8 * i)) & 0xFF for i in range(4)]
+        # During put() bytes were appended in renorm order (oldest first
+        # in self.out_bytes); after the reverse the renorm bytes will land
+        # at the *tail* of the output stream, which is exactly what the
+        # decoder expects. The flush bytes must end up at the *head*, so
+        # we append them in the order (LSB, ..., MSB) and rely on the
+        # reverse below to put MSB first — but we actually want LSB first
+        # in the final output. Easier: append flush in reverse-of-desired
+        # order, then reverse the whole buffer.
+        for b in reversed(flush_le):
+            self.out_bytes.append(b)
         # out_bytes was built with "most-recently-emitted byte last"; rANS
         # decode reads bytes in the opposite order, so reverse now.
         self.out_bytes.reverse()
@@ -163,13 +177,13 @@ class RansDecoder:
         self.stream = stream
         self.pos = 0
 
-        # Prime the 32-bit state from the first 4 bytes (they were the
-        # last 4 bytes written during finalize()).
+        # Prime the 32-bit state from the first 4 bytes. The encoder
+        # writes them little-endian, so reassemble in the matching order.
         if len(stream) < 4:
             raise ValueError("stream too short to decode rANS state")
         x = 0
         for i in range(4):
-            x = (x << 8) | stream[i]
+            x |= stream[i] << (8 * i)
         self.state = x
         self.pos = 4
 
@@ -209,9 +223,20 @@ def encode(symbols: Sequence[int], table: RansTable) -> bytes:
 
 
 def decode(stream: bytes, table: RansTable, n: int) -> List[int]:
-    """Decode n symbols from the byte stream."""
+    """Decode n symbols from the byte stream.
+
+    After consuming the n symbols, verify that the residual state equals
+    RANS_L (the initial encoder state). A faithful round-trip always
+    leaves x == RANS_L; any mismatch indicates a corrupted byte stream.
+    """
     dec = RansDecoder(table, stream)
-    return [dec.get() for _ in range(n)]
+    out = [dec.get() for _ in range(n)]
+    if dec.state != RANS_L:
+        raise RuntimeError(
+            f"rANS final-state verification failed: x = {dec.state:#x}, "
+            f"expected RANS_L = {RANS_L:#x}"
+        )
+    return out
 
 
 # ---------------------------------------------------------------------------

@@ -1,37 +1,36 @@
 /*
- * packing.h - Serialization of keys and signatures for SHUTTLE (NGCC-Signature
- * Alg 2 compressed form with full rANS entropy coding).
+ * packing.h - Serialization of keys and signatures for SHUTTLE
+ * (NGCC-Signature Alg 2 compressed form, two-stream rANS entropy coding).
  *
- * Three distributions are entropy-coded with independent rANS tables
- * (see rans_tables.h):
- *   1. Z_0 = CompressY(z^(0))                    via shuttle_rans_encode_z0
- *   2. HighBits(z^{(1..L)})                      via shuttle_rans_encode_z1
- *      (LowBits bit-packed uniformly at ALPHA_H_BITS/coef by polyz1_lo_pack)
- *   3. Hint h                                     via shuttle_rans_encode
+ * Two rANS streams, one shared frequency table for z-hi + (when scales
+ * coincide) for hint as well. See SHUTTLE_rANS.tex §3.3 for the design.
+ *   z-hi : HighBits_{alpha_0'}(z^(0)) ⨁ HighBits_{alpha_r}(z^(1..lenS))
+ *          via shuttle_rans_encode_zhi
+ *   hint : MakeHint output, via shuttle_rans_encode_hint
  *
- * Byte layout (mode-128, SHUTTLE_BYTES = 1450 B):
- *   [  0 ..  32)          seedC (c_tilde)
- *   [ 32 ..  36)          irs_signs bitmap (ceil(TAU/8))
- *   [ 36 ..  38)          uint16 LE: Z_0 rANS length
- *   [ 38 .. 278)          Z_0 rANS stream + zero pad          (240 B reserved)
- *   [278 .. 950)          L * polyz1_lo_pack(lo[i])           (3 * 224 = 672 B)
- *   [950 .. 952)          uint16 LE: z1 rANS length
- *   [952 ..1192)          z1 rANS high stream + zero pad      (240 B reserved)
- *   [1192..1194)          uint16 LE: hint rANS length
- *   [1194..1450)          hint rANS + zero pad                (256 B reserved)
+ * LowBits are bit-packed uniformly:
+ *   - z^(0)        : ALPHA_0P_BITS/coef via polyz0_lo_pack
+ *   - z^(1..lenS)  : ALPHA_R_BITS = 6/coef via polyz1_lo_pack
  *
- * SHUTTLE_BYTES = CTILDEBYTES + IRS_SIGNBYTES + Z0_RANS_BLOCK_BYTES
- *               + L * POLYZ1_LO_PACKEDBYTES + Z1_RANS_BLOCK_BYTES
+ * Byte layout (see packing.c::OFF_* for the offsets):
+ *   seedC || irs_signs
+ *   || uint16 zhi_rans_len  || rANS(z-hi)      + pad to ZHI_RESERVED
+ *   || polyz0_lo_pack(lo(z^(0)))
+ *   || L * polyz1_lo_pack(lo(z^(1..lenS)))
+ *   || uint16 hint_rans_len || rANS(hint)      + pad to HINT_RESERVED
+ *
+ * SHUTTLE_BYTES = CTILDEBYTES + IRS_SIGNBYTES + ZHI_BLOCK_BYTES
+ *               + POLYZ0_LO_PACKEDBYTES + L * POLYZ1_LO_PACKEDBYTES
  *               + HINT_BLOCK_BYTES.
  *
- * Signer-side reject conditions (caller must restart IRS):
- *   - Any Z_0 coefficient falls outside the z0 rANS vocabulary.
- *   - Any HighBits value of z^{(1..L)} falls outside the z1 vocabulary.
- *   - Any rANS-encoded stream exceeds its reservation.
+ * Signer-side reject conditions (caller restarts IRS):
+ *   - Any rANS-encoded stream exceeds its reservation (rc = -2).
+ *   (OOV cannot happen: the rANS vocabulary covers the 11*sigma tight
+ *    bound, so every legal signature coefficient is in-vocabulary.)
  *
  * Verifier-side rejects:
  *   - Length field exceeds reservation.
- *   - rANS decode underflows.
+ *   - rANS decode underflows or fails the final-state check (x != L).
  */
 
 #ifndef SHUTTLE_PACKING_H

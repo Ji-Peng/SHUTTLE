@@ -55,9 +55,9 @@ int main(void)
          SHUTTLE_ETA, SHUTTLE_TAU, SHUTTLE_SIGMA, SHUTTLE_ALPHA_1, SHUTTLE_ALPHA_H);
   printf("  Public key:  %d bytes\n", SHUTTLE_PUBLICKEYBYTES);
   printf("  Secret key:  %d bytes\n", SHUTTLE_SECRETKEYBYTES);
-  printf("  Signature:   %d bytes (rANS-compressed Z_0 + z1 hi + hint)\n", SHUTTLE_BYTES);
-  printf("    z1 reserved:  %d B; hint reserved: %d B\n\n",
-         SHUTTLE_Z1_RANS_RESERVED_BYTES, SHUTTLE_HINT_RESERVED_BYTES);
+  printf("  Signature:   %d bytes (rANS: unified z-hi stream + hint stream)\n", SHUTTLE_BYTES);
+  printf("    z-hi reserved: %d B; hint reserved: %d B\n\n",
+         SHUTTLE_ZHI_RESERVED_BYTES, SHUTTLE_HINT_RESERVED_BYTES);
 
   /* ---- Test 1: Key Generation ---- */
   printf("[Test 1] Key generation...\n");

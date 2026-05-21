@@ -1,24 +1,28 @@
 /*
  * shuttle_rans.c - Byte-wise rANS encoder/decoder for SHUTTLE.
  *
- * Supports two frequency tables at compile time (SHUTTLE_MODE selects the
- * active mode; within a mode we expose both a HINT table and a Z1 table):
+ * Two contexts, two public API pairs (see shuttle_rans.h for the full
+ * design notes; agent/rANS/SHUTTLE_rANS.tex §2.2-2.3 for the algebra):
  *
- *   - hint table : distribution of the mod-2(q-1) signed hint h (Alg 2).
- *   - z1 table   : distribution of HighBits(z[1..L]) = round(z / alpha_h)
- *                   used by Phase 6c to compress z[1..L].
+ *   z-hi  : HighBits_{alpha_0'}(z^(0)) ⨁ HighBits_{alpha_r}(z^(1..lenS))
+ *   hint  : MakeHint output
  *
- * Both tables share the same encoder/decoder core, differing only in the
- * CDF, symbol array, and symbol-range metadata. A ctx struct captures the
- * per-table data; lazy initialization builds both CDFs and both reverse
- * lookups on first use.
+ * For mode-128 sigma_zhi == sigma_hint, so the two contexts alias the
+ * same unified table (defined in rans_tables.h with the *_unified macros
+ * and aliased back to the *_zhi / *_hint names).
  *
- * State x is uint32_t; bytes emitted to TAIL of the output buffer during
- * encode (LIFO), then compacted to the front via memmove so the final
- * layout is a prefix of length *out_len. Decoder primes from the leading
- * 4 bytes (the last 4 written by the encoder).
+ * State is uint32_t; bytes are emitted to the TAIL of the output buffer
+ * during encode (LIFO), then compacted with memmove so the final layout
+ * is a prefix of length *out_len. The 4-byte flush at the end is written
+ * little-endian, matching ryg_rans / HAETAE. Decoding reads the leading
+ * 4 little-endian bytes to prime the state, then walks the stream.
+ *
+ * Final-state check on decode: after the last symbol is consumed, x must
+ * equal L_ren (= 2^23). Any byte-level corruption that did not blow up
+ * the renorm loop will, with overwhelming probability, land here.
  */
 
+#include <assert.h>
 #include <string.h>
 
 #include "params.h"
@@ -26,102 +30,90 @@
 #include "rans_tables.h"
 
 /* ============================================================
- * Per-mode table bindings. We bind both hint and z1 tables.
+ * Per-mode table bindings.
+ *
+ * The ZHI_/HINT_ infixes in rans_tables.h already account for the mode-128
+ * alias to *_unified, so we always reference the ZHI / HINT symbols below
+ * regardless of whether they alias the same data underneath.
  * ============================================================ */
 
 #if SHUTTLE_MODE == 128
-#  define SRANS_HINT_PROB_BITS  SHUTTLE128_RANS_PROB_BITS
-#  define SRANS_HINT_NUM_SYMS   SHUTTLE128_RANS_NUM_SYMS
-#  define SRANS_HINT_SYM_MIN    SHUTTLE128_RANS_SYM_MIN
-#  define SRANS_HINT_SYM_MAX    SHUTTLE128_RANS_SYM_MAX
-#  define srans_hint_syms       shuttle128_rans_syms
-#  define srans_hint_freqs      shuttle128_rans_freqs
+#  define SRANS_ZHI_NUM_SYMS    SHUTTLE128_RANS_ZHI_NUM_SYMS
+#  define SRANS_ZHI_SYM_MIN     SHUTTLE128_RANS_ZHI_SYM_MIN
+#  define SRANS_ZHI_SYM_MAX     SHUTTLE128_RANS_ZHI_SYM_MAX
+#  define srans_zhi_syms        shuttle128_rans_zhi_syms
+#  define srans_zhi_freqs       shuttle128_rans_zhi_freqs
 
-#  define SRANS_Z1_PROB_BITS    SHUTTLE128_RANS_Z1_PROB_BITS
-#  define SRANS_Z1_NUM_SYMS     SHUTTLE128_RANS_Z1_NUM_SYMS
-#  define SRANS_Z1_SYM_MIN      SHUTTLE128_RANS_Z1_SYM_MIN
-#  define SRANS_Z1_SYM_MAX      SHUTTLE128_RANS_Z1_SYM_MAX
-#  define srans_z1_syms         shuttle128_rans_z1_syms
-#  define srans_z1_freqs        shuttle128_rans_z1_freqs
-
-#  define SRANS_Z0_PROB_BITS    SHUTTLE128_RANS_Z0_PROB_BITS
-#  define SRANS_Z0_NUM_SYMS     SHUTTLE128_RANS_Z0_NUM_SYMS
-#  define SRANS_Z0_SYM_MIN      SHUTTLE128_RANS_Z0_SYM_MIN
-#  define SRANS_Z0_SYM_MAX      SHUTTLE128_RANS_Z0_SYM_MAX
-#  define srans_z0_syms         shuttle128_rans_z0_syms
-#  define srans_z0_freqs        shuttle128_rans_z0_freqs
+#  define SRANS_HINT_NUM_SYMS   SHUTTLE128_RANS_HINT_NUM_SYMS
+#  define SRANS_HINT_SYM_MIN    SHUTTLE128_RANS_HINT_SYM_MIN
+#  define SRANS_HINT_SYM_MAX    SHUTTLE128_RANS_HINT_SYM_MAX
+#  define srans_hint_syms       shuttle128_rans_hint_syms
+#  define srans_hint_freqs      shuttle128_rans_hint_freqs
 #elif SHUTTLE_MODE == 256
-#  define SRANS_HINT_PROB_BITS  SHUTTLE256_RANS_PROB_BITS
-#  define SRANS_HINT_NUM_SYMS   SHUTTLE256_RANS_NUM_SYMS
-#  define SRANS_HINT_SYM_MIN    SHUTTLE256_RANS_SYM_MIN
-#  define SRANS_HINT_SYM_MAX    SHUTTLE256_RANS_SYM_MAX
-#  define srans_hint_syms       shuttle256_rans_syms
-#  define srans_hint_freqs      shuttle256_rans_freqs
+#  define SRANS_ZHI_NUM_SYMS    SHUTTLE256_RANS_ZHI_NUM_SYMS
+#  define SRANS_ZHI_SYM_MIN     SHUTTLE256_RANS_ZHI_SYM_MIN
+#  define SRANS_ZHI_SYM_MAX     SHUTTLE256_RANS_ZHI_SYM_MAX
+#  define srans_zhi_syms        shuttle256_rans_zhi_syms
+#  define srans_zhi_freqs       shuttle256_rans_zhi_freqs
 
-#  define SRANS_Z1_PROB_BITS    SHUTTLE256_RANS_Z1_PROB_BITS
-#  define SRANS_Z1_NUM_SYMS     SHUTTLE256_RANS_Z1_NUM_SYMS
-#  define SRANS_Z1_SYM_MIN      SHUTTLE256_RANS_Z1_SYM_MIN
-#  define SRANS_Z1_SYM_MAX      SHUTTLE256_RANS_Z1_SYM_MAX
-#  define srans_z1_syms         shuttle256_rans_z1_syms
-#  define srans_z1_freqs        shuttle256_rans_z1_freqs
-
-#  define SRANS_Z0_PROB_BITS    SHUTTLE256_RANS_Z0_PROB_BITS
-#  define SRANS_Z0_NUM_SYMS     SHUTTLE256_RANS_Z0_NUM_SYMS
-#  define SRANS_Z0_SYM_MIN      SHUTTLE256_RANS_Z0_SYM_MIN
-#  define SRANS_Z0_SYM_MAX      SHUTTLE256_RANS_Z0_SYM_MAX
-#  define srans_z0_syms         shuttle256_rans_z0_syms
-#  define srans_z0_freqs        shuttle256_rans_z0_freqs
+#  define SRANS_HINT_NUM_SYMS   SHUTTLE256_RANS_HINT_NUM_SYMS
+#  define SRANS_HINT_SYM_MIN    SHUTTLE256_RANS_HINT_SYM_MIN
+#  define SRANS_HINT_SYM_MAX    SHUTTLE256_RANS_HINT_SYM_MAX
+#  define srans_hint_syms       shuttle256_rans_hint_syms
+#  define srans_hint_freqs      shuttle256_rans_hint_freqs
 #elif SHUTTLE_MODE == 512
-#  define SRANS_HINT_PROB_BITS  SHUTTLE512_RANS_PROB_BITS
-#  define SRANS_HINT_NUM_SYMS   SHUTTLE512_RANS_NUM_SYMS
-#  define SRANS_HINT_SYM_MIN    SHUTTLE512_RANS_SYM_MIN
-#  define SRANS_HINT_SYM_MAX    SHUTTLE512_RANS_SYM_MAX
-#  define srans_hint_syms       shuttle512_rans_syms
-#  define srans_hint_freqs      shuttle512_rans_freqs
+#  define SRANS_ZHI_NUM_SYMS    SHUTTLE512_RANS_ZHI_NUM_SYMS
+#  define SRANS_ZHI_SYM_MIN     SHUTTLE512_RANS_ZHI_SYM_MIN
+#  define SRANS_ZHI_SYM_MAX     SHUTTLE512_RANS_ZHI_SYM_MAX
+#  define srans_zhi_syms        shuttle512_rans_zhi_syms
+#  define srans_zhi_freqs       shuttle512_rans_zhi_freqs
 
-#  define SRANS_Z1_PROB_BITS    SHUTTLE512_RANS_Z1_PROB_BITS
-#  define SRANS_Z1_NUM_SYMS     SHUTTLE512_RANS_Z1_NUM_SYMS
-#  define SRANS_Z1_SYM_MIN      SHUTTLE512_RANS_Z1_SYM_MIN
-#  define SRANS_Z1_SYM_MAX      SHUTTLE512_RANS_Z1_SYM_MAX
-#  define srans_z1_syms         shuttle512_rans_z1_syms
-#  define srans_z1_freqs        shuttle512_rans_z1_freqs
-
-#  define SRANS_Z0_PROB_BITS    SHUTTLE512_RANS_Z0_PROB_BITS
-#  define SRANS_Z0_NUM_SYMS     SHUTTLE512_RANS_Z0_NUM_SYMS
-#  define SRANS_Z0_SYM_MIN      SHUTTLE512_RANS_Z0_SYM_MIN
-#  define SRANS_Z0_SYM_MAX      SHUTTLE512_RANS_Z0_SYM_MAX
-#  define srans_z0_syms         shuttle512_rans_z0_syms
-#  define srans_z0_freqs        shuttle512_rans_z0_freqs
+#  define SRANS_HINT_NUM_SYMS   SHUTTLE512_RANS_HINT_NUM_SYMS
+#  define SRANS_HINT_SYM_MIN    SHUTTLE512_RANS_HINT_SYM_MIN
+#  define SRANS_HINT_SYM_MAX    SHUTTLE512_RANS_HINT_SYM_MAX
+#  define srans_hint_syms       shuttle512_rans_hint_syms
+#  define srans_hint_freqs      shuttle512_rans_hint_freqs
 #else
 #  error "Unsupported SHUTTLE_MODE for rANS tables"
 #endif
 
-/* All tables use prob_bits = 12 by construction; per-table macros kept so
- * a future asymmetric layout works without edits. */
-#define SRANS_HINT_PROB_TOTAL   (1u << SRANS_HINT_PROB_BITS)
-#define SRANS_Z1_PROB_TOTAL     (1u << SRANS_Z1_PROB_BITS)
-#define SRANS_Z0_PROB_TOTAL     (1u << SRANS_Z0_PROB_BITS)
-
 /* ============================================================
  * Per-table context + lazy init.
+ *
+ * For mode-128 both contexts point to the same underlying tables, but
+ * each owns a *separate* cdf[] / sym_lookup[] scratch slot. That is
+ * harmless (they would derive identical contents anyway) and keeps the
+ * code path identical to mode-256/512.
  * ============================================================ */
 
 typedef struct {
     const int16_t  *syms;       /* length num_syms, contiguous SYM_MIN..SYM_MAX */
-    const uint16_t *freqs;      /* length num_syms, sum == prob_total */
-    const uint16_t *cdf;        /* length num_syms+1, lazy-built */
-    const uint16_t *sym_lookup; /* length prob_total, lazy-built */
+    const uint16_t *freqs;      /* length num_syms, sum == 2^PROB_BITS */
+    uint16_t       *cdf;        /* length num_syms+1, lazy-built */
+    uint16_t       *sym_lookup; /* length 2^PROB_BITS, lazy-built */
     int16_t         sym_min;
     int16_t         sym_max;
     uint16_t        num_syms;
-    uint8_t         prob_bits;
     uint8_t         initialized;
-    uint32_t        prob_total;
 } rans_ctx_t;
 
-/* Hint-table derived storage. */
+/* z-hi scratch storage. */
+static uint16_t g_zhi_cdf[SRANS_ZHI_NUM_SYMS + 1];
+static uint16_t g_zhi_sym_lookup[SHUTTLE_RANS_PROB_TOTAL];
+static rans_ctx_t g_ctx_zhi = {
+    .syms       = srans_zhi_syms,
+    .freqs      = srans_zhi_freqs,
+    .cdf        = g_zhi_cdf,
+    .sym_lookup = g_zhi_sym_lookup,
+    .sym_min    = SRANS_ZHI_SYM_MIN,
+    .sym_max    = SRANS_ZHI_SYM_MAX,
+    .num_syms   = SRANS_ZHI_NUM_SYMS,
+    .initialized = 0,
+};
+
+/* hint scratch storage. */
 static uint16_t g_hint_cdf[SRANS_HINT_NUM_SYMS + 1];
-static uint16_t g_hint_sym_lookup[SRANS_HINT_PROB_TOTAL];
+static uint16_t g_hint_sym_lookup[SHUTTLE_RANS_PROB_TOTAL];
 static rans_ctx_t g_ctx_hint = {
     .syms       = srans_hint_syms,
     .freqs      = srans_hint_freqs,
@@ -130,82 +122,44 @@ static rans_ctx_t g_ctx_hint = {
     .sym_min    = SRANS_HINT_SYM_MIN,
     .sym_max    = SRANS_HINT_SYM_MAX,
     .num_syms   = SRANS_HINT_NUM_SYMS,
-    .prob_bits  = SRANS_HINT_PROB_BITS,
     .initialized = 0,
-    .prob_total = SRANS_HINT_PROB_TOTAL,
-};
-
-/* z1-table derived storage. */
-static uint16_t g_z1_cdf[SRANS_Z1_NUM_SYMS + 1];
-static uint16_t g_z1_sym_lookup[SRANS_Z1_PROB_TOTAL];
-static rans_ctx_t g_ctx_z1 = {
-    .syms       = srans_z1_syms,
-    .freqs      = srans_z1_freqs,
-    .cdf        = g_z1_cdf,
-    .sym_lookup = g_z1_sym_lookup,
-    .sym_min    = SRANS_Z1_SYM_MIN,
-    .sym_max    = SRANS_Z1_SYM_MAX,
-    .num_syms   = SRANS_Z1_NUM_SYMS,
-    .prob_bits  = SRANS_Z1_PROB_BITS,
-    .initialized = 0,
-    .prob_total = SRANS_Z1_PROB_TOTAL,
-};
-
-/* z0-table derived storage. */
-static uint16_t g_z0_cdf[SRANS_Z0_NUM_SYMS + 1];
-static uint16_t g_z0_sym_lookup[SRANS_Z0_PROB_TOTAL];
-static rans_ctx_t g_ctx_z0 = {
-    .syms       = srans_z0_syms,
-    .freqs      = srans_z0_freqs,
-    .cdf        = g_z0_cdf,
-    .sym_lookup = g_z0_sym_lookup,
-    .sym_min    = SRANS_Z0_SYM_MIN,
-    .sym_max    = SRANS_Z0_SYM_MAX,
-    .num_syms   = SRANS_Z0_NUM_SYMS,
-    .prob_bits  = SRANS_Z0_PROB_BITS,
-    .initialized = 0,
-    .prob_total = SRANS_Z0_PROB_TOTAL,
 };
 
 static void rans_ctx_init(rans_ctx_t *ctx) {
-    uint16_t *cdf;
-    uint16_t *lookup;
     uint32_t running;
     unsigned i, k;
 
     if (ctx->initialized) return;
 
-    /* Safe cast: the storage slots are writable, even though the public
-     * struct view exposes them as const. */
-    cdf    = (uint16_t *)(uintptr_t)ctx->cdf;
-    lookup = (uint16_t *)(uintptr_t)ctx->sym_lookup;
-
     running = 0;
-    cdf[0] = 0;
+    ctx->cdf[0] = 0;
     for (i = 0; i < ctx->num_syms; ++i) {
         running += ctx->freqs[i];
-        cdf[i + 1] = (uint16_t)running;
+        ctx->cdf[i + 1] = (uint16_t)running;
     }
-    /* running == ctx->prob_total by construction of the table. */
+    /* running == 2^PROB_BITS by construction of the static table. */
 
     for (i = 0; i < ctx->num_syms; ++i) {
-        uint32_t start = cdf[i];
-        uint32_t end   = cdf[i + 1];
+        uint32_t start = ctx->cdf[i];
+        uint32_t end   = ctx->cdf[i + 1];
         for (k = start; k < end; ++k)
-            lookup[k] = (uint16_t)i;
+            ctx->sym_lookup[k] = (uint16_t)i;
     }
 
     ctx->initialized = 1;
 }
 
 /* Map a signed integer symbol to its index in ctx->syms.
- * Returns -1 if the symbol is outside [SYM_MIN, SYM_MAX]. */
-static int sym_to_index(const rans_ctx_t *ctx, int32_t sym) {
+ *
+ * The theoretical vocabulary covers [SYM_MIN, SYM_MAX] for every legal
+ * signature (SHUTTLE_rANS.tex §3 tight bound from the 11*sigma SampleY
+ * truncation), so OOV cannot occur for a faithful signer. We still
+ * assert it in debug builds so a generation-side bug (e.g. parameter
+ * drift or stale rans_tables.h) shows up immediately. */
+static inline int sym_to_index(const rans_ctx_t *ctx, int32_t sym) {
     int32_t idx = sym - ctx->sym_min;
-    if (idx < 0 || idx >= (int32_t)ctx->num_syms)
-        return -1;
-    if (ctx->syms[idx] != sym)
-        return -1;
+    assert(idx >= 0 && idx < (int32_t)ctx->num_syms);
+    assert(ctx->syms[idx] == sym);
     return (int)idx;
 }
 
@@ -226,30 +180,29 @@ static int encode_core(rans_ctx_t *ctx,
     write_pos = max_bytes;
 
     for (idx_i = n; idx_i > 0; --idx_i) {
-        int32_t sym = syms[idx_i - 1];
-        int si = sym_to_index(ctx, sym);
-        if (si < 0) return -1;
+        int si = sym_to_index(ctx, syms[idx_i - 1]);
 
         uint32_t freq  = ctx->freqs[si];
         uint32_t start = ctx->cdf[si];
 
-        uint32_t x_max = ((SHUTTLE_RANS_L >> ctx->prob_bits)
+        uint32_t x_max = ((SHUTTLE_RANS_L >> SHUTTLE_RANS_PROB_BITS)
                           << SHUTTLE_RANS_BYTE_BITS) * freq;
         while (x >= x_max) {
             if (write_pos == 0) return -2;
-            out[--write_pos] = (uint8_t)(x & 0xFF);
+            out[--write_pos] = (uint8_t)(x & 0xFFu);
             x >>= SHUTTLE_RANS_BYTE_BITS;
         }
 
-        x = ((x / freq) << ctx->prob_bits) + start + (x % freq);
+        x = ((x / freq) << SHUTTLE_RANS_PROB_BITS) + start + (x % freq);
     }
 
+    /* Final flush: write x as 4 little-endian bytes. */
     if (write_pos < 4) return -2;
     write_pos -= 4;
-    out[write_pos + 0] = (uint8_t)(x >> 24);
-    out[write_pos + 1] = (uint8_t)(x >> 16);
-    out[write_pos + 2] = (uint8_t)(x >>  8);
-    out[write_pos + 3] = (uint8_t)(x >>  0);
+    out[write_pos + 0] = (uint8_t)(x >>  0);
+    out[write_pos + 1] = (uint8_t)(x >>  8);
+    out[write_pos + 2] = (uint8_t)(x >> 16);
+    out[write_pos + 3] = (uint8_t)(x >> 24);
 
     {
         size_t bytes_used = max_bytes - write_pos;
@@ -267,13 +220,14 @@ static int decode_core(rans_ctx_t *ctx,
 
     if (in_len < 4) return -1;
 
-    uint32_t x = ((uint32_t)in[0] << 24)
-               | ((uint32_t)in[1] << 16)
-               | ((uint32_t)in[2] <<  8)
-               | ((uint32_t)in[3] <<  0);
+    /* Final flush was little-endian; read it back in matching order. */
+    uint32_t x = ((uint32_t)in[0] <<  0)
+               | ((uint32_t)in[1] <<  8)
+               | ((uint32_t)in[2] << 16)
+               | ((uint32_t)in[3] << 24);
     size_t pos = 4;
 
-    const uint32_t prob_mask = ctx->prob_total - 1;
+    const uint32_t prob_mask = SHUTTLE_RANS_PROB_TOTAL - 1u;
 
     for (size_t k = 0; k < n; ++k) {
         uint32_t c = x & prob_mask;
@@ -284,7 +238,7 @@ static int decode_core(rans_ctx_t *ctx,
 
         syms[k] = ctx->syms[si];
 
-        x = freq * (x >> ctx->prob_bits) + (c - start);
+        x = freq * (x >> SHUTTLE_RANS_PROB_BITS) + (c - start);
 
         while (x < SHUTTLE_RANS_L) {
             if (pos >= in_len) return -1;
@@ -293,6 +247,11 @@ static int decode_core(rans_ctx_t *ctx,
         }
     }
 
+    /* Final-state verification: a faithful round-trip leaves x == L_ren.
+     * Catches truncation, byte-level corruption and length-prefix
+     * tampering that survived the renorm loop. */
+    if (x != SHUTTLE_RANS_L) return -1;
+
     return 0;
 }
 
@@ -300,38 +259,26 @@ static int decode_core(rans_ctx_t *ctx,
  * Public API thin wrappers
  * ============================================================ */
 
-int shuttle_rans_encode(uint8_t *out, size_t *out_len, size_t max_bytes,
-                        const int32_t *syms, size_t n)
+int shuttle_rans_encode_zhi(uint8_t *out, size_t *out_len, size_t max_bytes,
+                            const int32_t *syms, size_t n)
+{
+    return encode_core(&g_ctx_zhi, out, out_len, max_bytes, syms, n);
+}
+
+int shuttle_rans_decode_zhi(int32_t *syms, size_t n,
+                            const uint8_t *in, size_t in_len)
+{
+    return decode_core(&g_ctx_zhi, syms, n, in, in_len);
+}
+
+int shuttle_rans_encode_hint(uint8_t *out, size_t *out_len, size_t max_bytes,
+                             const int32_t *syms, size_t n)
 {
     return encode_core(&g_ctx_hint, out, out_len, max_bytes, syms, n);
 }
 
-int shuttle_rans_decode(int32_t *syms, size_t n,
-                        const uint8_t *in, size_t in_len)
+int shuttle_rans_decode_hint(int32_t *syms, size_t n,
+                             const uint8_t *in, size_t in_len)
 {
     return decode_core(&g_ctx_hint, syms, n, in, in_len);
-}
-
-int shuttle_rans_encode_z1(uint8_t *out, size_t *out_len, size_t max_bytes,
-                           const int32_t *syms, size_t n)
-{
-    return encode_core(&g_ctx_z1, out, out_len, max_bytes, syms, n);
-}
-
-int shuttle_rans_decode_z1(int32_t *syms, size_t n,
-                           const uint8_t *in, size_t in_len)
-{
-    return decode_core(&g_ctx_z1, syms, n, in, in_len);
-}
-
-int shuttle_rans_encode_z0(uint8_t *out, size_t *out_len, size_t max_bytes,
-                           const int32_t *syms, size_t n)
-{
-    return encode_core(&g_ctx_z0, out, out_len, max_bytes, syms, n);
-}
-
-int shuttle_rans_decode_z0(int32_t *syms, size_t n,
-                           const uint8_t *in, size_t in_len)
-{
-    return decode_core(&g_ctx_z0, syms, n, in, in_len);
 }

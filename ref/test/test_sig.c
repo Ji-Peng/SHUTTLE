@@ -1,121 +1,157 @@
 /*
- * test_sig.c - round-trip tests for pack_sig / unpack_sig (Phase 6c-3).
- *
- * Constructs synthetic inputs matching the post-CompressY / post-MakeHint
- * ranges and validates byte-for-byte round-trip. The z[1..L] coefficients
- * are drawn from a triangular-sum distribution that keeps HighBits inside
- * the z1 rANS vocabulary; rare OOV throws are rejected before round-trip.
+ * test_sig.c - round-trip tests for pack_sig / unpack_sig under the
+ *              two-stream rANS layout (z-hi + hint).
  *
  * Tests:
- *   1. All-zero minimal round-trip.
- *   2. 10 random rounds (z_1 from narrow-triangular distribution, h from
- *      the hint-table distribution).
- *   3. OOV rejection on the z1 path (a z_1[1][0] coefficient so large its
- *      HighBit falls outside the z1 vocabulary).
+ *   1. Minimal hand-crafted round-trip (all-zero z and h).
+ *   2. 10 random rounds: z_1 drawn so HighBits live in the z-hi
+ *      vocabulary, h drawn from the hint table distribution; verifies
+ *      byte-for-byte round-trip and reports per-stream rANS lengths.
+ *
+ * Note: there is no OOV test here. The theoretical vocabulary covers
+ * every legal coefficient (SHUTTLE_rANS.tex §3 tight bound), and the
+ * encoder asserts on out-of-range symbols in debug builds rather than
+ * returning a soft error.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 
 #include "../params.h"
 #include "../poly.h"
 #include "../polyvec.h"
 #include "../packing.h"
+#include "../shuttle_rans.h"
 #include "../rans_tables.h"
 
 #define PASS(msg) do { printf("  [PASS] " msg "\n"); } while (0)
 #define FAIL(msg, ...) do { printf("  [FAIL] " msg "\n", __VA_ARGS__); return 1; } while (0)
 
 #if SHUTTLE_MODE == 128
-#  define HINT_NUM_SYMS   SHUTTLE128_RANS_NUM_SYMS
-#  define hint_syms       shuttle128_rans_syms
-#  define hint_freqs      shuttle128_rans_freqs
-#  define HINT_PROB_BITS  SHUTTLE128_RANS_PROB_BITS
-#  define Z1_NUM_SYMS     SHUTTLE128_RANS_Z1_NUM_SYMS
-#  define z1_syms         shuttle128_rans_z1_syms
-#  define z1_freqs        shuttle128_rans_z1_freqs
-#  define Z1_PROB_BITS    SHUTTLE128_RANS_Z1_PROB_BITS
-#  define Z1_SYM_MAX_ABS  SHUTTLE128_RANS_Z1_SYM_MAX
-#  define Z0_NUM_SYMS     SHUTTLE128_RANS_Z0_NUM_SYMS
-#  define z0_syms         shuttle128_rans_z0_syms
-#  define z0_freqs        shuttle128_rans_z0_freqs
-#  define Z0_PROB_BITS    SHUTTLE128_RANS_Z0_PROB_BITS
-#  define Z0_SYM_MIN      SHUTTLE128_RANS_Z0_SYM_MIN
-#  define Z0_SYM_MAX      SHUTTLE128_RANS_Z0_SYM_MAX
+#  define ZHI_NUM_SYMS   SHUTTLE128_RANS_ZHI_NUM_SYMS
+#  define zhi_syms       shuttle128_rans_zhi_syms
+#  define zhi_freqs      shuttle128_rans_zhi_freqs
+#  define HINT_NUM_SYMS  SHUTTLE128_RANS_HINT_NUM_SYMS
+#  define hint_syms      shuttle128_rans_hint_syms
+#  define hint_freqs     shuttle128_rans_hint_freqs
+#elif SHUTTLE_MODE == 256
+#  define ZHI_NUM_SYMS   SHUTTLE256_RANS_ZHI_NUM_SYMS
+#  define zhi_syms       shuttle256_rans_zhi_syms
+#  define zhi_freqs      shuttle256_rans_zhi_freqs
+#  define HINT_NUM_SYMS  SHUTTLE256_RANS_HINT_NUM_SYMS
+#  define hint_syms      shuttle256_rans_hint_syms
+#  define hint_freqs     shuttle256_rans_hint_freqs
 #else
-#  define HINT_NUM_SYMS   SHUTTLE256_RANS_NUM_SYMS
-#  define hint_syms       shuttle256_rans_syms
-#  define hint_freqs      shuttle256_rans_freqs
-#  define HINT_PROB_BITS  SHUTTLE256_RANS_PROB_BITS
-#  define Z1_NUM_SYMS     SHUTTLE256_RANS_Z1_NUM_SYMS
-#  define z1_syms         shuttle256_rans_z1_syms
-#  define z1_freqs        shuttle256_rans_z1_freqs
-#  define Z1_PROB_BITS    SHUTTLE256_RANS_Z1_PROB_BITS
-#  define Z1_SYM_MAX_ABS  SHUTTLE256_RANS_Z1_SYM_MAX
-#  define Z0_NUM_SYMS     SHUTTLE256_RANS_Z0_NUM_SYMS
-#  define z0_syms         shuttle256_rans_z0_syms
-#  define z0_freqs        shuttle256_rans_z0_freqs
-#  define Z0_PROB_BITS    SHUTTLE256_RANS_Z0_PROB_BITS
-#  define Z0_SYM_MIN      SHUTTLE256_RANS_Z0_SYM_MIN
-#  define Z0_SYM_MAX      SHUTTLE256_RANS_Z0_SYM_MAX
+#  define ZHI_NUM_SYMS   SHUTTLE512_RANS_ZHI_NUM_SYMS
+#  define zhi_syms       shuttle512_rans_zhi_syms
+#  define zhi_freqs      shuttle512_rans_zhi_freqs
+#  define HINT_NUM_SYMS  SHUTTLE512_RANS_HINT_NUM_SYMS
+#  define hint_syms      shuttle512_rans_hint_syms
+#  define hint_freqs     shuttle512_rans_hint_freqs
 #endif
 
-#define HINT_PROB_TOTAL   (1u << HINT_PROB_BITS)
-#define Z1_PROB_TOTAL     (1u << Z1_PROB_BITS)
-#define Z0_PROB_TOTAL     (1u << Z0_PROB_BITS)
+#define PROB_TOTAL (1u << SHUTTLE_RANS_PROB_BITS)
 
-static int32_t sample_hint_sym(void) {
-  uint32_t r = (uint32_t)rand() & (HINT_PROB_TOTAL - 1);
+static int32_t sample_from_table(const int16_t *syms, const uint16_t *freqs,
+                                 unsigned num_syms)
+{
+  uint32_t r = (uint32_t)rand() & (PROB_TOTAL - 1u);
   uint32_t cum = 0;
-  for (unsigned i = 0; i < HINT_NUM_SYMS; ++i) {
-    cum += hint_freqs[i];
-    if (r < cum) return hint_syms[i];
+  for (unsigned i = 0; i < num_syms; ++i) {
+    cum += freqs[i];
+    if (r < cum) return syms[i];
   }
-  return hint_syms[HINT_NUM_SYMS - 1];
+  return syms[num_syms - 1];
 }
 
-/* Draw a z1 HighBit from the rANS table distribution. */
-static int32_t sample_z1_hi(void) {
-  uint32_t r = (uint32_t)rand() & (Z1_PROB_TOTAL - 1);
-  uint32_t cum = 0;
-  for (unsigned i = 0; i < Z1_NUM_SYMS; ++i) {
-    cum += z1_freqs[i];
-    if (r < cum) return z1_syms[i];
+/* Pick the per-context vocab radii. */
+#if SHUTTLE_MODE == 128
+#  define ZHI_M_VOC   SHUTTLE128_RANS_ZHI_SYM_MAX
+#  define HINT_M_VOC  SHUTTLE128_RANS_HINT_SYM_MAX
+#elif SHUTTLE_MODE == 256
+#  define ZHI_M_VOC   SHUTTLE256_RANS_ZHI_SYM_MAX
+#  define HINT_M_VOC  SHUTTLE256_RANS_HINT_SYM_MAX
+#else
+#  define ZHI_M_VOC   SHUTTLE512_RANS_ZHI_SYM_MAX
+#  define HINT_M_VOC  SHUTTLE512_RANS_HINT_SYM_MAX
+#endif
+
+/* Discrete-Gaussian sampler over [-M_voc, M_voc] via inverse CDF on the
+ * theoretical PMF p(k) ∝ exp(-k^2 / (2 sigma^2)).
+ *
+ * The real signer samples y ~ D_{Z, r}; after the alpha_r split the
+ * HighBits follow this discrete distribution exactly (up to integer
+ * truncation). A continuous Gaussian rounded to integer is NOT
+ * equivalent — for narrow sigma (e.g. the hint context in mode-256/512)
+ * the rounded distribution overshoots p(±1) by an order of magnitude,
+ * which would blow the hint reservation in this test even though the
+ * real signer never gets near it. */
+static int32_t sample_discrete_gaussian(double sigma, int M_voc) {
+  /* Cache CDFs keyed by (sigma, M_voc). 4 slots is enough for the
+   * mode's z-hi + hint pair. */
+  enum { CACHE_SLOTS = 4 };
+  static struct {
+    double sigma;
+    int    M_voc;
+    int    valid;
+    double cdf[256];   /* 2*M_voc+1 entries; M_voc <= 50 across all modes. */
+  } cache[CACHE_SLOTS];
+  static int next_slot;
+
+  int slot = -1;
+  for (int s = 0; s < CACHE_SLOTS; ++s)
+    if (cache[s].valid && cache[s].sigma == sigma && cache[s].M_voc == M_voc) {
+      slot = s; break;
+    }
+  if (slot < 0) {
+    slot = next_slot;
+    next_slot = (next_slot + 1) % CACHE_SLOTS;
+    cache[slot].sigma = sigma;
+    cache[slot].M_voc = M_voc;
+    double Z = 0.0;
+    for (int k = -M_voc; k <= M_voc; ++k)
+      Z += exp(-(double)k * k / (2.0 * sigma * sigma));
+    double running = 0.0;
+    for (int k = -M_voc; k <= M_voc; ++k) {
+      running += exp(-(double)k * k / (2.0 * sigma * sigma)) / Z;
+      cache[slot].cdf[k + M_voc] = running;
+    }
+    cache[slot].valid = 1;
   }
-  return z1_syms[Z1_NUM_SYMS - 1];
+
+  double u = ((double)rand() + 1.0) / ((double)RAND_MAX + 2.0);
+  int len = 2 * M_voc + 1;
+  for (int i = 0; i < len; ++i)
+    if (u <= cache[slot].cdf[i]) return (int32_t)(i - M_voc);
+  return (int32_t)M_voc;
 }
 
-/* Draw a Z_0 coefficient from the rANS table distribution. Using the
- * calibrated distribution (rather than a handcrafted triangular one)
- * keeps encoded lengths consistent with the signer and lets the test
- * round-trip under tightened overflow budgets. */
-static int32_t sample_z0_sym(void) {
-  uint32_t r = (uint32_t)rand() & (Z0_PROB_TOTAL - 1);
-  uint32_t cum = 0;
-  for (unsigned i = 0; i < Z0_NUM_SYMS; ++i) {
-    cum += z0_freqs[i];
-    if (r < cum) return z0_syms[i];
-  }
-  return z0_syms[Z0_NUM_SYMS - 1];
+static inline int32_t sample_gaussian_zhi(int M_voc) {
+  return sample_discrete_gaussian(
+      (double)SHUTTLE_SIGMA / (double)SHUTTLE_ALPHA_R, M_voc);
 }
 
-/* Fill z_1[0..L] matching the signer's distribution:
- *   Z_0     : z0 rANS table
- *   z[1..L] : hi * alpha_h + lo,  hi ~ z1 table,
- *             lo ~ uniform [-alpha_h/2, alpha_h/2).
- * This guarantees pack_sig never hits OOV or overflow at the calibrated
- * budgets. */
+static inline int32_t sample_gaussian_hint(int M_voc) {
+  return sample_discrete_gaussian(
+      2.0 * (double)SHUTTLE_SIGMA / (double)SHUTTLE_ALPHA_H, M_voc);
+}
+
+/* Fill z_1[0..L] with coefficients whose split (z0 at alpha_0', z1 at
+ * alpha_r) yields HighBits drawn from the theoretical z-hi PMF. */
 static void fill_z1(poly *z_1) {
-  for (unsigned j = 0; j < SHUTTLE_N; ++j)
-    z_1[0].coeffs[j] = sample_z0_sym();
-
+  for (unsigned j = 0; j < SHUTTLE_N; ++j) {
+    int32_t hi = sample_gaussian_zhi(ZHI_M_VOC);
+    int32_t lo = (rand() % SHUTTLE_ALPHA_0P) - SHUTTLE_HALF_ALPHA_0P;
+    z_1[0].coeffs[j] = (hi << SHUTTLE_ALPHA_0P_BITS) + lo;
+  }
   for (unsigned i = 1; i <= SHUTTLE_L; ++i)
     for (unsigned j = 0; j < SHUTTLE_N; ++j) {
-      int32_t hi = sample_z1_hi();
-      int32_t lo = (rand() % SHUTTLE_ALPHA_H) - SHUTTLE_HALF_ALPHA_H;
-      z_1[i].coeffs[j] = (hi << SHUTTLE_ALPHA_H_BITS) + lo;
+      int32_t hi = sample_gaussian_zhi(ZHI_M_VOC);
+      int32_t lo = (rand() % SHUTTLE_ALPHA_R) - SHUTTLE_HALF_ALPHA_R;
+      z_1[i].coeffs[j] = (hi << SHUTTLE_ALPHA_R_BITS) + lo;
     }
 }
 
@@ -168,9 +204,14 @@ static int test_minimal(void) {
 static int test_random_rounds(void) {
   printf("Test 2: 10 random rounds\n");
 
-  size_t min_z0_len = (size_t)-1, max_z0_len = 0, sum_z0_len = 0;
-  size_t min_z1_len = (size_t)-1, max_z1_len = 0, sum_z1_len = 0;
-  size_t min_h_len  = (size_t)-1, max_h_len  = 0, sum_h_len  = 0;
+  size_t min_zhi  = (size_t)-1, max_zhi  = 0, sum_zhi  = 0;
+  size_t min_hint = (size_t)-1, max_hint = 0, sum_hint = 0;
+
+  /* On-the-wire offsets, mirroring packing.c::OFF_* constants. */
+  const size_t off_zhi_len  = SHUTTLE_CTILDEBYTES + SHUTTLE_IRS_SIGNBYTES;
+  const size_t off_hint_len = off_zhi_len + 2 + SHUTTLE_ZHI_RESERVED_BYTES
+                            + SHUTTLE_POLYZ0_LO_PACKEDBYTES
+                            + SHUTTLE_L * SHUTTLE_POLYZ1_LO_PACKEDBYTES;
 
   for (unsigned round = 0; round < 10; ++round) {
     uint8_t sig[SHUTTLE_BYTES];
@@ -180,13 +221,14 @@ static int test_random_rounds(void) {
     polyveck h, h_rec;
 
     for (unsigned i = 0; i < SHUTTLE_CTILDEBYTES; ++i) c_tilde[i] = (uint8_t)rand();
-    for (unsigned i = 0; i < SHUTTLE_TAU; ++i) irs[i] = (rand() & 1) ? (int8_t)1 : (int8_t)-1;
+    for (unsigned i = 0; i < SHUTTLE_TAU; ++i)
+      irs[i] = (rand() & 1) ? (int8_t)1 : (int8_t)-1;
 
     fill_z1(z_1);
-
     for (unsigned i = 0; i < SHUTTLE_M; ++i)
       for (unsigned j = 0; j < SHUTTLE_N; ++j)
-        h.vec[i].coeffs[j] = sample_hint_sym();
+        h.vec[i].coeffs[j] = sample_gaussian_hint(HINT_M_VOC);
+    (void)sample_from_table;  /* keep available for future tests */
 
     int rc = pack_sig(sig, c_tilde, irs, z_1, &h);
     if (rc != 0) FAIL("round %u: pack rc=%d", round, rc);
@@ -211,76 +253,37 @@ static int test_random_rounds(void) {
         if (h.vec[i].coeffs[j] != h_rec.vec[i].coeffs[j])
           FAIL("round %u: h[%u][%u]", round, i, j);
 
-    /* Peek at Z_0 + z1 + hint rANS length prefixes. */
-    size_t off_z0_len = SHUTTLE_CTILDEBYTES + SHUTTLE_IRS_SIGNBYTES;
-    size_t z0_len = (size_t)sig[off_z0_len] | ((size_t)sig[off_z0_len + 1] << 8);
-    size_t off_z1_len = off_z0_len + 2 + SHUTTLE_Z0_RANS_RESERVED_BYTES
-                      + SHUTTLE_L * SHUTTLE_POLYZ1_LO_PACKEDBYTES;
-    size_t z1_len = (size_t)sig[off_z1_len] | ((size_t)sig[off_z1_len + 1] << 8);
-    size_t off_h_len  = off_z1_len + 2 + SHUTTLE_Z1_RANS_RESERVED_BYTES;
-    size_t h_len  = (size_t)sig[off_h_len]  | ((size_t)sig[off_h_len  + 1] << 8);
+    size_t zhi_len  = (size_t)sig[off_zhi_len]  | ((size_t)sig[off_zhi_len  + 1] << 8);
+    size_t hint_len = (size_t)sig[off_hint_len] | ((size_t)sig[off_hint_len + 1] << 8);
 
-    if (z0_len < min_z0_len) min_z0_len = z0_len;
-    if (z0_len > max_z0_len) max_z0_len = z0_len;
-    sum_z0_len += z0_len;
-    if (z1_len < min_z1_len) min_z1_len = z1_len;
-    if (z1_len > max_z1_len) max_z1_len = z1_len;
-    sum_z1_len += z1_len;
-    if (h_len  < min_h_len)  min_h_len  = h_len;
-    if (h_len  > max_h_len)  max_h_len  = h_len;
-    sum_h_len  += h_len;
+    if (zhi_len  < min_zhi)  min_zhi  = zhi_len;
+    if (zhi_len  > max_zhi)  max_zhi  = zhi_len;
+    sum_zhi  += zhi_len;
+    if (hint_len < min_hint) min_hint = hint_len;
+    if (hint_len > max_hint) max_hint = hint_len;
+    sum_hint += hint_len;
   }
 
-  printf("    Z_0 rANS len: min=%zu max=%zu avg=%zu (reserved %d)\n",
-         min_z0_len, max_z0_len, sum_z0_len / 10,
-         SHUTTLE_Z0_RANS_RESERVED_BYTES);
-  printf("    z1 rANS len: min=%zu max=%zu avg=%zu (reserved %d)\n",
-         min_z1_len, max_z1_len, sum_z1_len / 10,
-         SHUTTLE_Z1_RANS_RESERVED_BYTES);
-  printf("    hint rANS len: min=%zu max=%zu avg=%zu (reserved %d)\n",
-         min_h_len, max_h_len, sum_h_len / 10,
-         SHUTTLE_HINT_RESERVED_BYTES);
-
-  PASS("10 round round-trips OK");
-  return 0;
-}
-
-/* ------------------------------------------------------------ */
-static int test_oov_z1(void) {
-  printf("Test 3: pack_sig rejects out-of-vocabulary z1 HighBit\n");
-
-  uint8_t sig[SHUTTLE_BYTES];
-  uint8_t c_tilde[SHUTTLE_CTILDEBYTES] = {0};
-  int8_t  irs[SHUTTLE_TAU];
-  for (unsigned i = 0; i < SHUTTLE_TAU; ++i) irs[i] = 1;
-  poly    z_1[1 + SHUTTLE_L];
-  for (unsigned i = 0; i < 1 + SHUTTLE_L; ++i) memset(&z_1[i], 0, sizeof(poly));
-  polyveck h = {0};
-
-  /* Force a HighBit well outside the z1 vocabulary. */
-  z_1[1].coeffs[0] = (int32_t)(Z1_SYM_MAX_ABS + 10) * SHUTTLE_ALPHA_H;
-
-  int rc = pack_sig(sig, c_tilde, irs, z_1, &h);
-  if (rc == 0) FAIL("expected pack to fail, got rc=0%s", "");
-  printf("    pack_sig returned rc=%d as expected\n", rc);
-  PASS("OOV z1 rejection");
+  printf("    z-hi  rANS len: min=%zu max=%zu avg=%zu (reserved %d)\n",
+         min_zhi, max_zhi, sum_zhi / 10, SHUTTLE_ZHI_RESERVED_BYTES);
+  printf("    hint  rANS len: min=%zu max=%zu avg=%zu (reserved %d)\n",
+         min_hint, max_hint, sum_hint / 10, SHUTTLE_HINT_RESERVED_BYTES);
+  PASS("10 random rounds OK");
   return 0;
 }
 
 /* ------------------------------------------------------------ */
 int main(void) {
   int ret = 0;
-  srand(0xC0DECAFE ^ SHUTTLE_MODE);
+  srand(0xC0DECAFEu ^ (unsigned)SHUTTLE_MODE);
 
   printf("=== test_sig (MODE=%d, SHUTTLE_BYTES=%d,\n"
-         "                 Z0_RANS_RESERVED=%d, Z1_RANS_RESERVED=%d, HINT_RESERVED=%d) ===\n",
+         "                 ZHI_RESERVED=%d, HINT_RESERVED=%d) ===\n",
          SHUTTLE_MODE, SHUTTLE_BYTES,
-         SHUTTLE_Z0_RANS_RESERVED_BYTES,
-         SHUTTLE_Z1_RANS_RESERVED_BYTES, SHUTTLE_HINT_RESERVED_BYTES);
+         SHUTTLE_ZHI_RESERVED_BYTES, SHUTTLE_HINT_RESERVED_BYTES);
 
   ret |= test_minimal();
   ret |= test_random_rounds();
-  ret |= test_oov_z1();
 
   if (ret == 0) printf("\n=== All sig tests PASSED ===\n");
   else          printf("\n=== Some sig tests FAILED ===\n");

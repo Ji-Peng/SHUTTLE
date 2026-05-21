@@ -3,86 +3,81 @@
  *                  compression.
  *
  * ============================================================
- * Design rationale
+ * Design rationale (see agent/rANS/SHUTTLE_rANS.tex for the full proof)
  * ============================================================
  *
- * A SHUTTLE signature carries three vectors whose coefficients follow
- * (approximately) discrete Gaussian distributions:
+ * SHUTTLE signatures carry two rANS-encoded blocks per signature:
  *
- *   Z_0   = CompressY(z^(0))           n coefficients, sigma ~ sigma/alpha_1
- *   hi_i  = HighBits_alpha_h(z^(i))    L*n coefficients, sigma ~ sigma/alpha_h
- *   h     = MakeHint output            M*n coefficients, sigma ~ 2*sigma/alpha_h
+ *   z-hi  : HighBits_{alpha_0'}(z^(0))  ⨁  HighBits_{alpha_r}(z^(1..lenS))
+ *           n*(lenS+1) coefficients sharing scale  sigma = r / alpha_r
+ *   hint  : MakeHint output, n*lenE coefficients at scale 2r/alpha_h
  *
- * Naive fixed-width packing wastes ~half the bits; Shannon says each slot
- * costs at most 0.5*log2(2*pi*e*sigma^2) bits, and rANS reaches this floor
- * with a sub-1% quantization overhead. That saving is what lets SHUTTLE
- * hit a ~1.3 KB / ~2.6 KB signature (see docs/NGCC_Sign/SHUTTLE_rANS_analysis.md).
+ * The two streams stay independent (each with its own length prefix and
+ * 4-byte flush) so the decoder layout is fully streaming. mode-128 shares
+ * a *single* frequency table between the two contexts (its alpha_h equals
+ * 2*alpha_r so the scales coincide); mode-256/512 keep two distinct tables.
  *
- * Why three tables, not one
- * -------------------------
- * The three vectors have *different* distributions (different sigma_eff and
- * different post-rounding shapes), so a single table would incur a large
- * cross-entropy penalty. Three pre-trained tables, each matching its vector,
- * keeps the per-coef overhead below ~0.02 bit.
+ * Why hi/lo splits, and why z^(0) gets a 2nd-order split
+ * ------------------------------------------------------
+ *   - For z^(i), i in {1..lenS}, splitting by alpha_r=64 yields a HighBits
+ *     vocabulary of ~37/55/75 symbols (mode-128/256/512), tiny relative
+ *     to the raw ~2000 coefficient range. The LowBits are uniform in
+ *     [-alpha_r/2, alpha_r/2) and bit-packed at log2(alpha_r)=6 bits/coef.
+ *   - z^(0) has already been compressed by alpha_1 inside CompressY, so a
+ *     direct full-symbol rANS over z^(0) used ~281 symbols (tex App. A,
+ *     method A). The current design (method B) splits z^(0) again by
+ *     alpha_0' := alpha_r/alpha_1 so HighBits_{alpha_0'}(z^(0)) lands at
+ *     the *same* effective scale r/alpha_r as the other z^(i). All hi
+ *     coefficients now share one frequency table and one rANS stream,
+ *     saving 6 B/sig of fixed overhead vs. method A.
  *
- * Why hi/lo split on z[1..L] but not on Z_0 or h
- * ----------------------------------------------
- * For z[1..L] the raw coef range is ~T_sigma*sigma + tau*eta (>1000 values);
- * a direct-rANS table would need a huge CDF. We instead split each z into
+ * Theoretical frequency tables ⇒ OOV-free
+ * ---------------------------------------
+ * Frequency tables come from the theoretical discrete Gaussian PMF
+ * (tools/gen_rans_tables.py), not from any empirical histogram. SampleY
+ * hard-truncates |y_k| <= 11*sigma, so the |Hi| <= M_voc tight bound
+ * holds with probability 1. The vocabulary is the full integer range
+ * [-M_voc, M_voc], hence every coefficient maps to a real frequency
+ * bucket — OOV failure is mathematically impossible.
  *
- *     z = alpha_h * hi + lo,     lo in [-alpha_h/2, alpha_h/2)
+ * Failure modes
+ * -------------
+ * Encoder return values are now binary:
+ *   0  on success
+ *  -2  if the compressed stream would exceed max_bytes (overflow)
+ * Overflow is the *only* rejection cause. With the per-stream reservation
+ * sized to p_ovf = 2^-21 (SHUTTLE_rANS.tex Tab 8) and union bound
+ * p_rans^* = 2^-20, the throughput impact is negligible.
  *
- * rANS-code `hi` (narrow vocabulary, ~9 symbols) and bit-pack `lo` uniformly
- * at log2(alpha_h) bits/coef. The split is entropy-lossless (prop. 2 of the
- * analysis doc) but collapses the rANS vocab by 2-3 orders of magnitude.
- *
- * Z_0 and h already have narrow vocabularies (~100 / ~15 symbols) so direct
- * rANS is fine -- the split would only add code complexity, not bytes.
- *
- * Failure modes and the IRS retry loop
- * ------------------------------------
- * Each encode call can fail in two ways:
- *   - OOV   : a coefficient falls outside the trained vocabulary => rc=-1
- *   - Overflow: the compressed stream exceeds the reserved budget => rc=-2
- * Both are per-signing-round rejections. sign.c:crypto_sign_signature
- * sees rc!=0 from pack_sig and restarts the IRS loop with fresh randomness.
- * This adds multiplicatively to the IRS rejection rate; we budget it to
- * stay negligible.
- *
- * Budget allocation (see params.h::SHUTTLE_*_RESERVED_BYTES)
- *   per-block p_ovf = p_OOV = 2^{-21}  =>  per-block fail = 2^{-20}
- *   per-sig total rANS fail ~ 3 * 2^{-20} = 2^{-18.4}
- * With p_IRS ~ 0.5, the throughput hit from rANS rejections is < 10^{-5} --
- * invisible in practice, but tight enough to shave ~140 B / ~190 B off the
- * signatures compared to a 2^{-100}-style overly-conservative budget.
- *
- * Calibration pipeline
- * --------------------
- * Per-block p_OOV target drives rANS vocab half-width M (via eq. 23 of
- * the analysis doc); per-block p_ovf target drives the reserved-byte size
- * (via eq. 20 with an empirical mu/sigma fit). Both are recomputed by
- *
- *     SHUTTLE/tools/sample_{hints,z0,z1}.py   (empirical histograms)
- *     SHUTTLE/tools/gen_rans_tables.py --p-oov ...   (vocab + freq table)
- *     SHUTTLE/tools/calibrate_rans.py   --p-ovf ...  (reserved bytes)
- *
- * Tables live in rans_tables.h; reservation budgets in params.h.
+ * Decoder return values:
+ *   0  on success
+ *  -1  on underflow OR on the final-state mismatch (x != L_ren)
+ * The final-state check is the standard rANS verification: encoding starts
+ * from x = L_ren, so a faithful round-trip *must* recover x = L_ren after
+ * the last symbol is decoded. Any byte-level corruption that does not
+ * trigger the underflow branch will overwhelmingly land here, so the
+ * check provides a cheap integrity test on top of the upper-layer
+ * signature verification.
  *
  * ============================================================
  * Engine conventions
  * ============================================================
  *
  * Byte-wise renormalization, 32-bit state, L = 2^23. Compatible with
- * Fabian Giesen's rANS_byte, which is also what HAETAE ships. The pure
- * Python reference is SHUTTLE/tools/rans.py.
+ * Fabian Giesen's rans_byte and HAETAE. Probability precision t = 10
+ * (each table sums to 2^10 = 1024). The pure-Python reference lives in
+ * SHUTTLE/tools/rans.py and is bit-exact.
+ *
+ * Final-state flush is written *little-endian* (matching ryg_rans and
+ * HAETAE). Earlier SHUTTLE drafts used big-endian for historical reasons;
+ * little-endian is the convention everywhere else in the ecosystem.
  *
  * Tables are sourced from rans_tables.h (auto-generated by
  * gen_rans_tables.py) and selected at compile time via SHUTTLE_MODE.
  *
- * Two API families (both use the same core engine):
- *   - shuttle_rans_encode / _decode      : hint h table
- *   - shuttle_rans_encode_z1 / _decode_z1: HighBits(z[1..L]) table
- *   - shuttle_rans_encode_z0 / _decode_z0: Z_0 = CompressY(z^(0)) table
+ * Two API pairs, both wrapping the same core engine:
+ *   - shuttle_rans_encode_zhi  / _decode_zhi   : z-hi context
+ *   - shuttle_rans_encode_hint / _decode_hint  : hint context
  */
 
 #ifndef SHUTTLE_RANS_H
@@ -94,45 +89,42 @@
 #include "params.h"
 
 /* Renorm threshold (shared across modes and tables). */
-#define SHUTTLE_RANS_L       (1u << 23)
+#define SHUTTLE_RANS_L          (1u << 23)
 #define SHUTTLE_RANS_BYTE_BITS  8
+#define SHUTTLE_RANS_PROB_BITS  10
+#define SHUTTLE_RANS_PROB_TOTAL (1u << SHUTTLE_RANS_PROB_BITS)
 
-/* Encode/decode contracts (shared across all three flavors)
+/* Encode/decode contracts
  *
  * Encoders write (*out_len) bytes on success; caller must supply at least
- * SHUTTLE_*_RESERVED_BYTES for each flavor (see params.h). Returns:
- *    0  on success
- *   -1  if any input symbol is outside the table's vocabulary (OOV)
- *   -2  if the compressed stream would exceed max_bytes (overflow)
- * Both failure returns must be handled by the caller as signing-round
- * rejections (restart IRS with fresh randomness).
+ * SHUTTLE_ZHI_RESERVED_BYTES / SHUTTLE_HINT_RESERVED_BYTES respectively.
+ *   0  : success
+ *  -2  : output would exceed max_bytes (caller treats as a signing-round
+ *        rejection and restarts IRS with fresh randomness)
  *
- * Decoders read exactly in_len bytes; return 0 on success, -1 on
- * underflow. Callers MUST validate signature authenticity before
- * trusting decoded values.
+ * Decoders read exactly in_len bytes (or fewer if the renorm loop drains
+ * the stream cleanly mid-way); return:
+ *   0  : success and x == L_ren at end-of-stream (state verified)
+ *  -1  : underflow or final-state mismatch (signature is malformed)
+ *
+ * Callers MUST still verify the cryptographic signature on the decoded
+ * values; the final-state check is a cheap consistency test, not a
+ * security guarantee.
  */
-#define shuttle_rans_encode SHUTTLE_NAMESPACE(shuttle_rans_encode)
-int shuttle_rans_encode(uint8_t *out, size_t *out_len, size_t max_bytes,
-                        const int32_t *syms, size_t n);
+#define shuttle_rans_encode_zhi SHUTTLE_NAMESPACE(shuttle_rans_encode_zhi)
+int shuttle_rans_encode_zhi(uint8_t *out, size_t *out_len, size_t max_bytes,
+                            const int32_t *syms, size_t n);
 
-#define shuttle_rans_decode SHUTTLE_NAMESPACE(shuttle_rans_decode)
-int shuttle_rans_decode(int32_t *syms, size_t n,
-                        const uint8_t *in, size_t in_len);
+#define shuttle_rans_decode_zhi SHUTTLE_NAMESPACE(shuttle_rans_decode_zhi)
+int shuttle_rans_decode_zhi(int32_t *syms, size_t n,
+                            const uint8_t *in, size_t in_len);
 
-#define shuttle_rans_encode_z1 SHUTTLE_NAMESPACE(shuttle_rans_encode_z1)
-int shuttle_rans_encode_z1(uint8_t *out, size_t *out_len, size_t max_bytes,
-                           const int32_t *syms, size_t n);
+#define shuttle_rans_encode_hint SHUTTLE_NAMESPACE(shuttle_rans_encode_hint)
+int shuttle_rans_encode_hint(uint8_t *out, size_t *out_len, size_t max_bytes,
+                             const int32_t *syms, size_t n);
 
-#define shuttle_rans_decode_z1 SHUTTLE_NAMESPACE(shuttle_rans_decode_z1)
-int shuttle_rans_decode_z1(int32_t *syms, size_t n,
-                           const uint8_t *in, size_t in_len);
-
-#define shuttle_rans_encode_z0 SHUTTLE_NAMESPACE(shuttle_rans_encode_z0)
-int shuttle_rans_encode_z0(uint8_t *out, size_t *out_len, size_t max_bytes,
-                           const int32_t *syms, size_t n);
-
-#define shuttle_rans_decode_z0 SHUTTLE_NAMESPACE(shuttle_rans_decode_z0)
-int shuttle_rans_decode_z0(int32_t *syms, size_t n,
-                           const uint8_t *in, size_t in_len);
+#define shuttle_rans_decode_hint SHUTTLE_NAMESPACE(shuttle_rans_decode_hint)
+int shuttle_rans_decode_hint(int32_t *syms, size_t n,
+                             const uint8_t *in, size_t in_len);
 
 #endif /* SHUTTLE_RANS_H */

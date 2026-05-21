@@ -75,24 +75,31 @@ void polyz0_unpack(poly *r, const uint8_t *a);
 void polyw1_pack(uint8_t *r, const poly *a);
 
 /* ============================================================
- * z[1..L] split / combine for Phase 6c rANS compression.
+ * z-hi split / combine helpers (rANS encoding path).
  *
- * Split a single z-polynomial (int32_t coefficients in [-Z_BOUND, Z_BOUND])
- * into a HighBits array `hi` and a LowBits array `lo`:
- *     hi[i] = round_half_up(a[i] / alpha_h)       (ties toward +infinity)
- *     lo[i] = a[i] - hi[i] * alpha_h              in [-alpha_h/2, alpha_h/2)
+ * The signature packer splits each z polynomial into HighBits + LowBits.
+ * HighBits feed the unified z-hi rANS context; LowBits are bit-packed
+ * uniformly. See agent/rANS/SHUTTLE_rANS.tex §2.5 (z^(0) special case)
+ * and §3.4 (z^(1..lenS) main case).
  *
- * Note the half-open interval for lo: ties like a[i] = -alpha_h/2 keep
- * lo = -alpha_h/2 (hi = 0) rather than flipping to the other endpoint.
- * This matches the convention used by rounding.c::highbits_mod_2q so all
- * of SHUTTLE's round-half-up rounding is consistent.
+ *   polyz1_split: step alpha_r = 64 (cross-mode constant). Used for
+ *                 z^(1..lenS). HighBits land at scale r/alpha_r,
+ *                 LowBits in [-alpha_r/2, alpha_r/2).
+ *   polyz0_split: step alpha_0' = alpha_r/alpha_1. Used for z^(0).
+ *                 The choice alpha_0' = alpha_r/alpha_1 makes
+ *                 HighBits_{alpha_0'}(z^(0)) share the same effective
+ *                 scale r/alpha_r as HighBits_{alpha_r}(z^(i)), so all
+ *                 hi coefficients can share one rANS frequency table.
  *
- * The high part is expected to land inside the mode's z1 rANS vocabulary
- * (empirically |hi| <= 4 for mode-128, <= 3 for mode-256); callers should
- * treat out-of-vocabulary highs as a rejection event.
+ * Round-half-up convention: ties at -step/2 keep lo = -step/2 (hi = 0).
+ * Matches rounding.c::highbits_mod_2q for consistency.
  *
- * Combine is the exact inverse: a[i] = hi[i] * alpha_h + lo[i].
- * Because alpha_h is a power of two the split is round-trip perfect.
+ * Combine routines are exact inverses (step is a power of two, so the
+ * split is round-trip perfect).
+ *
+ * No vocabulary check is needed here: with the 11*sigma SampleY
+ * truncation, HighBits stays inside the rANS vocabulary tight bound
+ * derived in SHUTTLE_rANS.tex §3.
  * ============================================================ */
 #define polyz1_split SHUTTLE_NAMESPACE(polyz1_split)
 void polyz1_split(int32_t *hi, int32_t *lo, const poly *a);
@@ -100,21 +107,36 @@ void polyz1_split(int32_t *hi, int32_t *lo, const poly *a);
 #define polyz1_combine SHUTTLE_NAMESPACE(polyz1_combine)
 void polyz1_combine(poly *a, const int32_t *hi, const int32_t *lo);
 
-/* Bit-pack / unpack the LowBits part.
+#define polyz0_split SHUTTLE_NAMESPACE(polyz0_split)
+void polyz0_split(int32_t *hi, int32_t *lo, const poly *a);
+
+#define polyz0_combine SHUTTLE_NAMESPACE(polyz0_combine)
+void polyz0_combine(poly *a, const int32_t *hi, const int32_t *lo);
+
+/* Bit-pack / unpack the LowBits parts.
  *
- * Packed low uses `ALPHA_H_BITS` bits per coefficient (7 for mode-128,
- * 8 for mode-256). The bijection [-alpha_h/2, alpha_h/2) -> [0, alpha_h-1]
- * is the low-`ALPHA_H_BITS`-bits mask: packed = lo & (alpha_h - 1). The
- * unpacker inverts it as  lo = (packed >= alpha_h/2) ? packed - alpha_h : packed.
+ *   polyz1_lo_pack / unpack: ALPHA_R_BITS = 6 bits/coef.
+ *   polyz0_lo_pack / unpack: ALPHA_0P_BITS = 3 (mode-128) or 2 bits/coef.
  *
- * Buffer size: SHUTTLE_POLYZ1_LO_PACKEDBYTES = N * ALPHA_H_BITS / 8.
- * (Macro lives in params.h so that SHUTTLE_BYTES can reference it.)
+ * The bijection [-step/2, step/2) -> [0, step-1] is the low-bits mask:
+ *   packed = lo & (step - 1)
+ * with the inverse
+ *   lo = (packed >= step/2) ? packed - step : packed.
+ *
+ * Buffer sizes: SHUTTLE_POLYZ1_LO_PACKEDBYTES / SHUTTLE_POLYZ0_LO_PACKEDBYTES
+ * are defined in params.h so that SHUTTLE_BYTES can reference them.
  */
 #define polyz1_lo_pack SHUTTLE_NAMESPACE(polyz1_lo_pack)
 void polyz1_lo_pack(uint8_t *r, const int32_t *lo);
 
 #define polyz1_lo_unpack SHUTTLE_NAMESPACE(polyz1_lo_unpack)
 void polyz1_lo_unpack(int32_t *lo, const uint8_t *r);
+
+#define polyz0_lo_pack SHUTTLE_NAMESPACE(polyz0_lo_pack)
+void polyz0_lo_pack(uint8_t *r, const int32_t *lo);
+
+#define polyz0_lo_unpack SHUTTLE_NAMESPACE(polyz0_lo_unpack)
+void polyz0_lo_unpack(int32_t *lo, const uint8_t *r);
 
 /* ============================================================
  * mod 2q helpers (Phase 6b-1)

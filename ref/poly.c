@@ -648,69 +648,129 @@ void polyz0_unpack(poly *r, const uint8_t *a) {
 /*************************************************
 * Name:        polyz1_split
 *
-* Description: Per-coefficient round-half-up split of a z[1..L] polynomial
-*              into HighBits and LowBits parts. The HighBits land in the
-*              mode's z1 rANS vocabulary; the LowBits fit in ALPHA_H_BITS
-*              bits using the (-alpha_h/2, alpha_h/2] -> [0, alpha_h-1]
-*              bijection implemented by polyz1_lo_pack.
+* Description: Per-coefficient round-half-up split of a z^(i) polynomial
+*              (i in {1..lenS}) into HighBits and LowBits using the rANS
+*              implementation step alpha_r = 64 (cross-mode constant, see
+*              SHUTTLE_rANS.tex §3.4):
+*                hi[i] = round_half_up(a[i] / alpha_r)
+*                lo[i] = a[i] - hi[i] * alpha_r  in [-alpha_r/2, alpha_r/2)
 *
-*              Uses arithmetic right shift (sign-preserving) on signed int32_t
-*              which all SHUTTLE reference targets satisfy (GCC, Clang).
-*              Matches the semantics used by rounding.c::highbits_mod_2q.
+*              HighBits feed the unified z-hi rANS stream; the tight
+*              bound |hi|_inf <= ceil((11*sigma + tau*eta)/alpha_r)
+*              (Thm 5) ensures they always lie inside the rANS vocab.
+*              LowBits are bit-packed at ALPHA_R_BITS = 6 bits/coef.
+*
+*              Uses arithmetic right shift (sign-preserving) on signed
+*              int32_t, which all SHUTTLE reference targets satisfy
+*              (GCC, Clang). Matches rounding.c::highbits_mod_2q.
 *
 * Arguments:   - int32_t *hi: output HighBits, length N
-*              - int32_t *lo: output LowBits (in (-alpha_h/2, alpha_h/2]), length N
+*              - int32_t *lo: output LowBits (in [-alpha_r/2, alpha_r/2)), length N
 *              - const poly *a: input polynomial, coeffs in [-Z_BOUND, Z_BOUND]
 **************************************************/
 void polyz1_split(int32_t *hi, int32_t *lo, const poly *a) {
   unsigned int i;
   for(i = 0; i < SHUTTLE_N; ++i) {
     int32_t z = a->coeffs[i];
-    int32_t h = (z + SHUTTLE_HALF_ALPHA_H) >> SHUTTLE_ALPHA_H_BITS;
+    int32_t h = (z + SHUTTLE_HALF_ALPHA_R) >> SHUTTLE_ALPHA_R_BITS;
     hi[i] = h;
-    lo[i] = z - (h << SHUTTLE_ALPHA_H_BITS);
+    lo[i] = z - (h << SHUTTLE_ALPHA_R_BITS);
   }
 }
 
 /*************************************************
 * Name:        polyz1_combine
 *
-* Description: Inverse of polyz1_split: a[i] = hi[i] * alpha_h + lo[i].
-*              Because alpha_h is a power of two, equivalent to a left shift.
+* Description: Inverse of polyz1_split: a[i] = hi[i] * alpha_r + lo[i].
+*              alpha_r is a power of two, so the recombination is a
+*              shift-and-add and is exact.
 **************************************************/
 void polyz1_combine(poly *a, const int32_t *hi, const int32_t *lo) {
   unsigned int i;
   for(i = 0; i < SHUTTLE_N; ++i)
-    a->coeffs[i] = (hi[i] << SHUTTLE_ALPHA_H_BITS) + lo[i];
+    a->coeffs[i] = (hi[i] << SHUTTLE_ALPHA_R_BITS) + lo[i];
+}
+
+/*************************************************
+* Name:        polyz0_split
+*
+* Description: Second-level split of z^(0) (already compressed by alpha_1
+*              inside CompressY) using step alpha_0' = alpha_r / alpha_1:
+*                hi[i] = round_half_up(z^(0)[i] / alpha_0')
+*                lo[i] = z^(0)[i] - hi[i] * alpha_0'
+*
+*              The choice alpha_0' = alpha_r/alpha_1 is what makes the
+*              z-hi stream uniform across z^(0) and z^(1..lenS): since
+*              floor(floor(y^(0)/alpha_1)/alpha_0') ~= floor(y^(0)/alpha_r),
+*              the resulting hi coefficients share scale r/alpha_r with
+*              HighBits_{alpha_r}(z^(i)). See SHUTTLE_rANS.tex §2.5.
+**************************************************/
+void polyz0_split(int32_t *hi, int32_t *lo, const poly *a) {
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_N; ++i) {
+    int32_t z = a->coeffs[i];
+    int32_t h = (z + SHUTTLE_HALF_ALPHA_0P) >> SHUTTLE_ALPHA_0P_BITS;
+    hi[i] = h;
+    lo[i] = z - (h << SHUTTLE_ALPHA_0P_BITS);
+  }
+}
+
+/*************************************************
+* Name:        polyz0_combine
+*
+* Description: Inverse of polyz0_split.
+**************************************************/
+void polyz0_combine(poly *a, const int32_t *hi, const int32_t *lo) {
+  unsigned int i;
+  for(i = 0; i < SHUTTLE_N; ++i)
+    a->coeffs[i] = (hi[i] << SHUTTLE_ALPHA_0P_BITS) + lo[i];
 }
 
 /*************************************************
 * Name:        polyz1_lo_pack / polyz1_lo_unpack
 *
-* Description: Bit-pack N low-coefficients at ALPHA_H_BITS bits each.
-*
-*              For mode-128 (ALPHA_H_BITS=7): 8 coef -> 7 bytes.
-*              For mode-256 (ALPHA_H_BITS=8): trivial byte copy.
-*
-*              Packed representation is `lo & (alpha_h - 1)` so the wrap
-*              around zero is lossless and the unpacker recovers lo by
-*              treating the high half of [0, alpha_h-1] as negative.
+* Description: Bit-pack N low-coefficients at ALPHA_R_BITS = 6 bits each.
+*              4 coef -> 3 bytes. Packed representation is
+*              `lo & (alpha_r - 1)`; the unpacker sends packed >= alpha_r/2
+*              back to packed - alpha_r.
 **************************************************/
-/* Generic ALPHA_H_BITS pack/unpack using the bitpack/bitunpack helpers.
- * lo[i] in (-alpha_h/2, alpha_h/2]  ->  packed = lo & (alpha_h - 1).
- * unpacker sends packed >= alpha_h/2 back to packed - alpha_h. */
 void polyz1_lo_pack(uint8_t *r, const int32_t *lo) {
   uint32_t t[SHUTTLE_N];
   for(unsigned int i = 0; i < SHUTTLE_N; ++i)
-    t[i] = (uint32_t)(lo[i] & (SHUTTLE_ALPHA_H - 1));
-  bitpack(r, t, SHUTTLE_N, SHUTTLE_ALPHA_H_BITS);
+    t[i] = (uint32_t)(lo[i] & (SHUTTLE_ALPHA_R - 1));
+  bitpack(r, t, SHUTTLE_N, SHUTTLE_ALPHA_R_BITS);
 }
 
 void polyz1_lo_unpack(int32_t *lo, const uint8_t *r) {
   uint32_t t[SHUTTLE_N];
-  const int32_t half = SHUTTLE_HALF_ALPHA_H;
-  const int32_t alpha = SHUTTLE_ALPHA_H;
-  bitunpack(t, r, SHUTTLE_N, SHUTTLE_ALPHA_H_BITS);
+  const int32_t half = SHUTTLE_HALF_ALPHA_R;
+  const int32_t alpha = SHUTTLE_ALPHA_R;
+  bitunpack(t, r, SHUTTLE_N, SHUTTLE_ALPHA_R_BITS);
+  for(unsigned int i = 0; i < SHUTTLE_N; ++i) {
+    int32_t v = (int32_t)t[i];
+    lo[i] = (v >= half) ? v - alpha : v;
+  }
+}
+
+/*************************************************
+* Name:        polyz0_lo_pack / polyz0_lo_unpack
+*
+* Description: Bit-pack N low-coefficients of z^(0) at ALPHA_0P_BITS bits
+*              each (3 for mode-128, 2 for mode-256/512). Same bijection
+*              [-alpha_0'/2, alpha_0'/2) -> [0, alpha_0'-1] as polyz1.
+**************************************************/
+void polyz0_lo_pack(uint8_t *r, const int32_t *lo) {
+  uint32_t t[SHUTTLE_N];
+  for(unsigned int i = 0; i < SHUTTLE_N; ++i)
+    t[i] = (uint32_t)(lo[i] & (SHUTTLE_ALPHA_0P - 1));
+  bitpack(r, t, SHUTTLE_N, SHUTTLE_ALPHA_0P_BITS);
+}
+
+void polyz0_lo_unpack(int32_t *lo, const uint8_t *r) {
+  uint32_t t[SHUTTLE_N];
+  const int32_t half = SHUTTLE_HALF_ALPHA_0P;
+  const int32_t alpha = SHUTTLE_ALPHA_0P;
+  bitunpack(t, r, SHUTTLE_N, SHUTTLE_ALPHA_0P_BITS);
   for(unsigned int i = 0; i < SHUTTLE_N; ++i) {
     int32_t v = (int32_t)t[i];
     lo[i] = (v >= half) ? v - alpha : v;

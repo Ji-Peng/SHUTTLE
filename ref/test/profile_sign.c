@@ -46,12 +46,11 @@
 /* Signature-layout offsets, identical to pack_sig's file-local defines. */
 #define OFF_C_TILDE     0
 #define OFF_IRS_SIGNS   (OFF_C_TILDE + SHUTTLE_CTILDEBYTES)
-#define OFF_Z0_LEN      (OFF_IRS_SIGNS + SHUTTLE_IRS_SIGNBYTES)
-#define OFF_Z0_DATA     (OFF_Z0_LEN + 2)
-#define OFF_Z1_LO       (OFF_Z0_DATA + SHUTTLE_Z0_RANS_RESERVED_BYTES)
-#define OFF_Z1_HI_LEN   (OFF_Z1_LO + SHUTTLE_L * SHUTTLE_POLYZ1_LO_PACKEDBYTES)
-#define OFF_Z1_HI_DATA  (OFF_Z1_HI_LEN + 2)
-#define OFF_HINT_LEN    (OFF_Z1_HI_DATA + SHUTTLE_Z1_RANS_RESERVED_BYTES)
+#define OFF_ZHI_LEN     (OFF_IRS_SIGNS + SHUTTLE_IRS_SIGNBYTES)
+#define OFF_ZHI_DATA    (OFF_ZHI_LEN + 2)
+#define OFF_Z0_LO       (OFF_ZHI_DATA + SHUTTLE_ZHI_RESERVED_BYTES)
+#define OFF_Z1_LO       (OFF_Z0_LO + SHUTTLE_POLYZ0_LO_PACKEDBYTES)
+#define OFF_HINT_LEN    (OFF_Z1_LO + SHUTTLE_L * SHUTTLE_POLYZ1_LO_PACKEDBYTES)
 #define OFF_HINT_DATA   (OFF_HINT_LEN + 2)
 
 /* ============================================================
@@ -184,14 +183,13 @@ static void print_legend(void)
   printf("  7. Pack plumbing (non-rANS parts of pack_sig)\n"
          "       seed_c memcpy into sig[OFF_C_TILDE]\n"
          "       irs_signs -> bit-packed bitmap\n"
-         "       z_1[0] -> int32 flat buffer\n"
+         "       z_1[0] polyz0_split + polyz0_lo_pack\n"
          "       z_1[1..L] polyz1_split + polyz1_lo_pack (L polys)\n"
          "       h -> int32 flat buffer\n"
-         "       3x length prefix + zero padding to reserved budget\n");
+         "       2x length prefix + zero padding to reserved budget\n");
   printf("  8. rANS encode (isolated)\n"
-         "       shuttle_rans_encode_z0 (Z_0 stream, 1 poly)\n"
-         "       shuttle_rans_encode_z1 (HighBits z[1..L], L*N syms)\n"
-         "       shuttle_rans_encode    (hint h,         M*N syms)\n\n");
+         "       shuttle_rans_encode_zhi  (z-hi stream, n*(lenS+1) syms)\n"
+         "       shuttle_rans_encode_hint (hint, M*N syms)\n\n");
 }
 
 /* ============================================================
@@ -212,9 +210,8 @@ int main(void)
          SHUTTLE_SIGMA, SHUTTLE_TAU);
   printf("PK=%d bytes, SK=%d bytes, SIG=%d bytes\n",
          SHUTTLE_PUBLICKEYBYTES, SHUTTLE_SECRETKEYBYTES, SHUTTLE_BYTES);
-  printf("rANS reserved budgets: Z_0=%d, z1_hi=%d, hint=%d\n",
-         SHUTTLE_Z0_RANS_RESERVED_BYTES,
-         SHUTTLE_Z1_RANS_RESERVED_BYTES,
+  printf("rANS reserved budgets: z-hi=%d, hint=%d\n",
+         SHUTTLE_ZHI_RESERVED_BYTES,
          SHUTTLE_HINT_RESERVED_BYTES);
   printf("Runs: %d\n\n", NRUNS);
 
@@ -392,68 +389,58 @@ int main(void)
         if(irs_signs[i] > 0)
           sig[OFF_IRS_SIGNS + (i >> 3)] |= (uint8_t)(1u << (i & 7));
       }
-      /* 7b. Z_0 flat buffer */
-      int32_t z0_flat[SHUTTLE_N];
-      for(i = 0; i < SHUTTLE_N; ++i) z0_flat[i] = z_1[0].coeffs[i];
-      c_plumb_hdr = cpucycles();
-      run_plumb += c_plumb_hdr - plumb0;
-
-      /* 8a. Z_0 rANS */
-      size_t z0_rans_len = 0;
-      int rc = shuttle_rans_encode_z0(&sig[OFF_Z0_DATA], &z0_rans_len,
-                                       SHUTTLE_Z0_RANS_RESERVED_BYTES,
-                                       z0_flat, SHUTTLE_N);
-      c_rans_z0_end = cpucycles();
-      run_rans_z0 = c_rans_z0_end - c_plumb_hdr;
-      if(rc != 0) continue;
-
-      /* 7c. Z_0 length prefix + pad, then z_1[1..L] split + lo pack */
-      sig[OFF_Z0_LEN + 0] = (uint8_t)(z0_rans_len & 0xFF);
-      sig[OFF_Z0_LEN + 1] = (uint8_t)((z0_rans_len >> 8) & 0xFF);
-      if(z0_rans_len < SHUTTLE_Z0_RANS_RESERVED_BYTES)
-        memset(&sig[OFF_Z0_DATA + z0_rans_len], 0,
-               SHUTTLE_Z0_RANS_RESERVED_BYTES - z0_rans_len);
-
-      int32_t z1_hi_flat[SHUTTLE_L * SHUTTLE_N];
+      /* 7b. Split z^(0) and z^(1..lenS) into the concatenated z-hi buffer
+       *     and per-poly bit-packed lo arrays. */
+      int32_t z_hi_flat[(SHUTTLE_L + 1) * SHUTTLE_N];
       {
         int32_t lo_scratch[SHUTTLE_N];
+        polyz0_split(&z_hi_flat[0], lo_scratch, &z_1[0]);
+        polyz0_lo_pack(&sig[OFF_Z0_LO], lo_scratch);
         for(i = 0; i < SHUTTLE_L; ++i) {
-          polyz1_split(&z1_hi_flat[i * SHUTTLE_N], lo_scratch, &z_1[1 + i]);
+          polyz1_split(&z_hi_flat[(i + 1) * SHUTTLE_N], lo_scratch, &z_1[1 + i]);
           polyz1_lo_pack(&sig[OFF_Z1_LO + i * SHUTTLE_POLYZ1_LO_PACKEDBYTES],
                           lo_scratch);
         }
       }
-      c_plumb_lo = cpucycles();
-      run_plumb += c_plumb_lo - c_rans_z0_end;
+      c_plumb_hdr = cpucycles();
+      run_plumb += c_plumb_hdr - plumb0;
 
-      /* 8b. z1 hi rANS */
-      size_t z1_rans_len = 0;
-      rc = shuttle_rans_encode_z1(&sig[OFF_Z1_HI_DATA], &z1_rans_len,
-                                   SHUTTLE_Z1_RANS_RESERVED_BYTES,
-                                   z1_hi_flat, SHUTTLE_L * SHUTTLE_N);
-      c_rans_z1_end = cpucycles();
-      run_rans_z1 = c_rans_z1_end - c_plumb_lo;
+      /* 8a. z-hi rANS (single unified stream covering n*(lenS+1) coefs) */
+      size_t zhi_rans_len = 0;
+      int rc = shuttle_rans_encode_zhi(&sig[OFF_ZHI_DATA], &zhi_rans_len,
+                                       SHUTTLE_ZHI_RESERVED_BYTES,
+                                       z_hi_flat, (SHUTTLE_L + 1) * SHUTTLE_N);
+      c_rans_z0_end = cpucycles();
+      run_rans_z0 = c_rans_z0_end - c_plumb_hdr;
       if(rc != 0) continue;
 
-      /* 7d. z1 hi length prefix + pad, then h flat buffer */
-      sig[OFF_Z1_HI_LEN + 0] = (uint8_t)(z1_rans_len & 0xFF);
-      sig[OFF_Z1_HI_LEN + 1] = (uint8_t)((z1_rans_len >> 8) & 0xFF);
-      if(z1_rans_len < SHUTTLE_Z1_RANS_RESERVED_BYTES)
-        memset(&sig[OFF_Z1_HI_DATA + z1_rans_len], 0,
-               SHUTTLE_Z1_RANS_RESERVED_BYTES - z1_rans_len);
+      /* 7c. z-hi length prefix + pad. */
+      sig[OFF_ZHI_LEN + 0] = (uint8_t)(zhi_rans_len & 0xFF);
+      sig[OFF_ZHI_LEN + 1] = (uint8_t)((zhi_rans_len >> 8) & 0xFF);
+      if(zhi_rans_len < SHUTTLE_ZHI_RESERVED_BYTES)
+        memset(&sig[OFF_ZHI_DATA + zhi_rans_len], 0,
+               SHUTTLE_ZHI_RESERVED_BYTES - zhi_rans_len);
 
+      /* 7d. hint flat buffer */
       int32_t h_flat[SHUTTLE_M * SHUTTLE_N];
       for(i = 0; i < SHUTTLE_M; ++i)
         for(j = 0; j < SHUTTLE_N; ++j)
           h_flat[i * SHUTTLE_N + j] = h.vec[i].coeffs[j];
-      c_plumb_hflat = cpucycles();
-      run_plumb += c_plumb_hflat - c_rans_z1_end;
+      c_plumb_lo = cpucycles();
+      run_plumb += c_plumb_lo - c_rans_z0_end;
 
-      /* 8c. hint rANS */
+      /* z1 cycles bucket is now empty; reserved for the unused alpha_r
+       * lo-pack cost (already accounted in plumbing). Zero it explicitly
+       * so the report doesn't show stale data. */
+      c_rans_z1_end = c_plumb_lo;
+      run_rans_z1 = 0;
+      c_plumb_hflat = c_plumb_lo;
+
+      /* 8b. hint rANS */
       size_t hint_rans_len = 0;
-      rc = shuttle_rans_encode(&sig[OFF_HINT_DATA], &hint_rans_len,
-                                SHUTTLE_HINT_RESERVED_BYTES,
-                                h_flat, SHUTTLE_M * SHUTTLE_N);
+      rc = shuttle_rans_encode_hint(&sig[OFF_HINT_DATA], &hint_rans_len,
+                                    SHUTTLE_HINT_RESERVED_BYTES,
+                                    h_flat, SHUTTLE_M * SHUTTLE_N);
       c_rans_hint_end = cpucycles();
       run_rans_hint = c_rans_hint_end - c_plumb_hflat;
       if(rc != 0) continue;
@@ -543,15 +530,13 @@ int main(void)
   printf("8. rANS encode (total)             %9lu  %9lu   %5.1f%%\n",
          (unsigned long)m_rto, (unsigned long)a_rto,
          100.0 * (double)m_rto / denom);
-  printf("     Z_0  (shuttle_rans_encode_z0) %9lu  %9lu   (%4.1f%% of rANS)\n",
+  printf("     z-hi (shuttle_rans_encode_zhi) %9lu  %9lu  (%4.1f%% of rANS)\n",
          (unsigned long)m_rz0, (unsigned long)a_rz0,
          100.0 * (double)m_rz0 / rans_denom);
-  printf("     z1_hi(shuttle_rans_encode_z1) %9lu  %9lu   (%4.1f%% of rANS)\n",
-         (unsigned long)m_rz1, (unsigned long)a_rz1,
-         100.0 * (double)m_rz1 / rans_denom);
-  printf("     hint (shuttle_rans_encode)    %9lu  %9lu   (%4.1f%% of rANS)\n",
+  printf("     hint (shuttle_rans_encode_hint)%9lu  %9lu  (%4.1f%% of rANS)\n",
          (unsigned long)m_rhn, (unsigned long)a_rhn,
          100.0 * (double)m_rhn / rans_denom);
+  (void)m_rz1; (void)a_rz1;  /* legacy z1 bucket retired in the 2-stream design */
   printf("-------------------------------------------------------------------\n");
   printf("Sum of components                  %9lu  %9lu\n",
          (unsigned long)sum_med,

@@ -1,15 +1,16 @@
 /*
- * test_poly_z1.c - unit tests for Phase 6c z[1..L] split / combine / pack.
+ * test_poly_z1.c - unit tests for polyz1_split (alpha_r) and polyz0_split
+ *                  (alpha_0' = alpha_r/alpha_1).
  *
  * Covers:
- *   1. polyz1_split + polyz1_combine: bijective round-trip across a random
- *      poly with coefficients drawn uniformly from [-Z_BOUND, Z_BOUND].
- *   2. polyz1_lo_pack + polyz1_lo_unpack: byte-round-trip for the LowBits
- *      part produced by polyz1_split.
- *   3. Full pipeline: split -> rANS encode (highs) + lo_pack (lows) ->
- *      rANS decode + lo_unpack -> combine. Output poly equals input.
- *      Runs on a Gaussian-like signed distribution that matches the
- *      training corpus of the z1 rANS table.
+ *   1. polyz1_split + polyz1_combine: bijective round-trip.
+ *   2. polyz1_lo_pack + polyz1_lo_unpack: byte-round-trip across the
+ *      full [-alpha_r/2, alpha_r/2) range.
+ *   3. polyz0_split + polyz0_combine: bijective round-trip.
+ *   4. polyz0_lo_pack + polyz0_lo_unpack: byte-round-trip.
+ *   5. Full z-hi pipeline (z^(0) + z^(1..lenS)): split -> rANS encode +
+ *      bit-pack -> rANS decode + bit-unpack -> combine recovers all
+ *      polynomials. Exercises the unified z-hi rANS stream.
  */
 
 #include <stdio.h>
@@ -21,63 +22,60 @@
 #include "../poly.h"
 #include "../shuttle_rans.h"
 #include "../rans_tables.h"
-#include "../randombytes.h"
 
 #define PASS(msg) do { printf("  [PASS] " msg "\n"); } while (0)
 #define FAIL(msg, ...) do { printf("  [FAIL] " msg "\n", __VA_ARGS__); return 1; } while (0)
 
+#if SHUTTLE_MODE == 128
+#  define ZHI_SYM_MAX_ABS  SHUTTLE128_RANS_ZHI_SYM_MAX
+#elif SHUTTLE_MODE == 256
+#  define ZHI_SYM_MAX_ABS  SHUTTLE256_RANS_ZHI_SYM_MAX
+#else
+#  define ZHI_SYM_MAX_ABS  SHUTTLE512_RANS_ZHI_SYM_MAX
+#endif
+
 /* Deterministic PRNG so the test is reproducible. */
-static uint32_t rng_state = 0xC001C0DE;
+static uint32_t rng_state = 0xC001C0DEu;
 static uint32_t next_u32(void) {
   rng_state = rng_state * 1664525u + 1013904223u;
   return rng_state;
 }
-
 static int32_t rand_range(int32_t lo, int32_t hi) {
   int32_t span = hi - lo + 1;
   return lo + (int32_t)(next_u32() % (uint32_t)span);
 }
 
-/* Draw a coefficient matching the z1 empirical distribution more closely:
- *   sum of three triangular draws, scaled to fit [-Z_BOUND, Z_BOUND].
- * For the Phase 6c table-vocabulary range test we just want |high| <=
- * Z1_SYM_MAX * alpha_h/2 coefficients; a uniform draw over [-small, small]
- * would land on the largest high bucket too rarely. So clamp to roughly
- * |z| <= Z1_SYM_MAX * alpha_h so the full vocabulary is exercised. */
+/* Draw a z^(i) coefficient: sum of three uniforms in [-alpha_r, alpha_r]
+ * yields a triangular-ish bounded distribution that exercises the
+ * z-hi vocabulary without straying past it (|hi| stays inside +/-3). */
+static int32_t sample_zi_coef(void) {
+  int32_t H = SHUTTLE_ALPHA_R;
+  return rand_range(-H, H) + rand_range(-H, H) + rand_range(-H, H);
+}
 
-#if SHUTTLE_MODE == 128
-#  define Z1_SYM_MAX_ABS   SHUTTLE128_RANS_Z1_SYM_MAX
-#else
-#  define Z1_SYM_MAX_ABS   SHUTTLE256_RANS_Z1_SYM_MAX
-#endif
-
-static int32_t sample_z_coef(void) {
-  /* Sum of three uniforms in [-H, H] where H = alpha_h. Gives a
-   * triangular-ish distribution bounded by 3*alpha_h so highs land
-   * roughly in [-3, 3]. Good enough to hit the vocabulary without
-   * going out of range. */
-  int32_t H = SHUTTLE_ALPHA_H;
-  int32_t s = rand_range(-H, H) + rand_range(-H, H) + rand_range(-H, H);
-  return s;
+/* Draw a z^(0) coefficient: smaller magnitude after CompressY's alpha_1
+ * compression. Sum-of-three with H = alpha_0' gives |hi| in low range. */
+static int32_t sample_z0_coef(void) {
+  int32_t H = SHUTTLE_ALPHA_0P;
+  return rand_range(-H, H) + rand_range(-H, H) + rand_range(-H, H);
 }
 
 /* ------------------------------------------------------------ */
-static int test_split_combine_roundtrip(void) {
+static int test_z1_split_combine(void) {
   printf("Test 1: polyz1_split + polyz1_combine round-trip\n");
 
   poly a, a_back;
   int32_t hi[SHUTTLE_N], lo[SHUTTLE_N];
 
   for (unsigned i = 0; i < SHUTTLE_N; ++i)
-    a.coeffs[i] = sample_z_coef();
+    a.coeffs[i] = sample_zi_coef();
 
   polyz1_split(hi, lo, &a);
 
-  /* Validate ranges: lo in [-alpha_h/2, alpha_h/2) by round-half-up convention. */
   for (unsigned i = 0; i < SHUTTLE_N; ++i) {
-    if (lo[i] < -(int32_t)SHUTTLE_HALF_ALPHA_H
-        || lo[i] >= (int32_t)SHUTTLE_HALF_ALPHA_H)
-      FAIL("lo[%u]=%d out of [-alpha_h/2, alpha_h/2)", i, lo[i]);
+    if (lo[i] < -(int32_t)SHUTTLE_HALF_ALPHA_R
+        || lo[i] >= (int32_t)SHUTTLE_HALF_ALPHA_R)
+      FAIL("lo[%u]=%d out of [-alpha_r/2, alpha_r/2)", i, lo[i]);
   }
 
   polyz1_combine(&a_back, hi, lo);
@@ -85,90 +83,167 @@ static int test_split_combine_roundtrip(void) {
     if (a_back.coeffs[i] != a.coeffs[i])
       FAIL("combine mismatch at %u: a=%d back=%d", i, a.coeffs[i], a_back.coeffs[i]);
 
-  PASS("split/combine round-trip OK");
+  PASS("z1 split/combine round-trip OK");
   return 0;
 }
 
 /* ------------------------------------------------------------ */
-static int test_lo_pack_roundtrip(void) {
+static int test_z1_lo_pack(void) {
   printf("Test 2: polyz1_lo_pack + polyz1_lo_unpack round-trip\n");
-
   int32_t lo[SHUTTLE_N], lo_back[SHUTTLE_N];
   uint8_t buf[SHUTTLE_POLYZ1_LO_PACKEDBYTES];
 
-  /* Exhaustively cover the valid range of lo [-alpha_h/2, alpha_h/2).
-   * Since SHUTTLE_N = 256 or 512 and alpha_h = 128 or 256, we cycle. */
-  int32_t v = -((int32_t)SHUTTLE_HALF_ALPHA_H);
+  int32_t v = -((int32_t)SHUTTLE_HALF_ALPHA_R);
   for (unsigned i = 0; i < SHUTTLE_N; ++i) {
     lo[i] = v;
     ++v;
-    if (v >= (int32_t)SHUTTLE_HALF_ALPHA_H)
-      v = -((int32_t)SHUTTLE_HALF_ALPHA_H);
+    if (v >= (int32_t)SHUTTLE_HALF_ALPHA_R)
+      v = -((int32_t)SHUTTLE_HALF_ALPHA_R);
   }
 
   polyz1_lo_pack(buf, lo);
   polyz1_lo_unpack(lo_back, buf);
-
   for (unsigned i = 0; i < SHUTTLE_N; ++i)
     if (lo[i] != lo_back[i])
-      FAIL("lo roundtrip fail at %u: orig=%d unpacked=%d", i, lo[i], lo_back[i]);
+      FAIL("z1 lo roundtrip fail at %u: orig=%d unpacked=%d",
+           i, lo[i], lo_back[i]);
 
-  PASS("lo pack/unpack round-trip OK");
+  PASS("z1 lo pack/unpack round-trip OK");
   return 0;
 }
 
 /* ------------------------------------------------------------ */
-static int test_full_pipeline_roundtrip(void) {
-  printf("Test 3: split -> rANS+lo_pack -> decode -> combine\n");
+static int test_z0_split_combine(void) {
+  printf("Test 3: polyz0_split + polyz0_combine round-trip\n");
 
   poly a, a_back;
   int32_t hi[SHUTTLE_N], lo[SHUTTLE_N];
-  int32_t hi_back[SHUTTLE_N], lo_back[SHUTTLE_N];
-  uint8_t lo_buf[SHUTTLE_POLYZ1_LO_PACKEDBYTES];
-  uint8_t rans_buf[SHUTTLE_N];       /* 1 byte/coef is always enough */
 
-  /* Use a Gaussian-like triangular sum so high buckets are exercised. */
   for (unsigned i = 0; i < SHUTTLE_N; ++i)
-    a.coeffs[i] = sample_z_coef();
+    a.coeffs[i] = sample_z0_coef();
 
-  polyz1_split(hi, lo, &a);
+  polyz0_split(hi, lo, &a);
 
-  /* Enforce vocabulary: if any |hi[i]| > Z1_SYM_MAX_ABS, clip it to the
-   * bound for the purpose of this test (real signer would reject the
-   * round). */
-  unsigned clipped = 0;
   for (unsigned i = 0; i < SHUTTLE_N; ++i) {
-    if (hi[i] >  Z1_SYM_MAX_ABS) { hi[i] =  Z1_SYM_MAX_ABS; ++clipped; }
-    if (hi[i] < -Z1_SYM_MAX_ABS) { hi[i] = -Z1_SYM_MAX_ABS; ++clipped; }
+    if (lo[i] < -(int32_t)SHUTTLE_HALF_ALPHA_0P
+        || lo[i] >= (int32_t)SHUTTLE_HALF_ALPHA_0P)
+      FAIL("z0 lo[%u]=%d out of [-alpha_0p/2, alpha_0p/2)", i, lo[i]);
   }
-  /* Recombine to a valid "test input" that lives inside the vocabulary. */
-  polyz1_combine(&a, hi, lo);
-  polyz1_split(hi, lo, &a);
 
-  size_t rans_len;
-  int rc = shuttle_rans_encode_z1(rans_buf, &rans_len, sizeof rans_buf,
-                                  hi, SHUTTLE_N);
-  if (rc != 0) FAIL("rANS encode failed (rc=%d, clipped=%u)", rc, clipped);
-  polyz1_lo_pack(lo_buf, lo);
-
-  rc = shuttle_rans_decode_z1(hi_back, SHUTTLE_N, rans_buf, rans_len);
-  if (rc != 0) FAIL("rANS decode failed (rc=%d)", rc);
-  polyz1_lo_unpack(lo_back, lo_buf);
-
-  polyz1_combine(&a_back, hi_back, lo_back);
+  polyz0_combine(&a_back, hi, lo);
   for (unsigned i = 0; i < SHUTTLE_N; ++i)
     if (a_back.coeffs[i] != a.coeffs[i])
-      FAIL("pipeline mismatch at %u: a=%d back=%d", i, a.coeffs[i], a_back.coeffs[i]);
+      FAIL("z0 combine mismatch at %u: a=%d back=%d",
+           i, a.coeffs[i], a_back.coeffs[i]);
 
-  double rans_bits_per_coef = 8.0 * rans_len / SHUTTLE_N;
-  double lo_bits_per_coef   = 8.0 * sizeof lo_buf / SHUTTLE_N;
-  printf("    rANS high part: %zu bytes (%.3f bit/coef)\n", rans_len, rans_bits_per_coef);
-  printf("    packed low part: %zu bytes (%.3f bit/coef)\n",
-         sizeof lo_buf, lo_bits_per_coef);
-  printf("    total per poly: %.1f B vs 14-bit baseline %.1f B\n",
-         (double)rans_len + sizeof lo_buf,
-         SHUTTLE_N * 14.0 / 8.0);
-  PASS("full split/encode/decode/combine pipeline OK");
+  PASS("z0 split/combine round-trip OK");
+  return 0;
+}
+
+/* ------------------------------------------------------------ */
+static int test_z0_lo_pack(void) {
+  printf("Test 4: polyz0_lo_pack + polyz0_lo_unpack round-trip\n");
+  int32_t lo[SHUTTLE_N], lo_back[SHUTTLE_N];
+  uint8_t buf[SHUTTLE_POLYZ0_LO_PACKEDBYTES];
+
+  int32_t v = -((int32_t)SHUTTLE_HALF_ALPHA_0P);
+  for (unsigned i = 0; i < SHUTTLE_N; ++i) {
+    lo[i] = v;
+    ++v;
+    if (v >= (int32_t)SHUTTLE_HALF_ALPHA_0P)
+      v = -((int32_t)SHUTTLE_HALF_ALPHA_0P);
+  }
+
+  polyz0_lo_pack(buf, lo);
+  polyz0_lo_unpack(lo_back, buf);
+  for (unsigned i = 0; i < SHUTTLE_N; ++i)
+    if (lo[i] != lo_back[i])
+      FAIL("z0 lo roundtrip fail at %u: orig=%d unpacked=%d",
+           i, lo[i], lo_back[i]);
+
+  PASS("z0 lo pack/unpack round-trip OK");
+  return 0;
+}
+
+/* ------------------------------------------------------------ */
+static int test_zhi_pipeline(void) {
+  printf("Test 5: full z-hi pipeline (z^(0) + z^(1..lenS) unified stream)\n");
+
+  poly z[SHUTTLE_L + 1], z_back[SHUTTLE_L + 1];
+  int32_t hi[(SHUTTLE_L + 1) * SHUTTLE_N];
+  int32_t hi_back[(SHUTTLE_L + 1) * SHUTTLE_N];
+  int32_t lo_scratch[SHUTTLE_N], lo_back[SHUTTLE_N];
+  uint8_t z0_lo_buf[SHUTTLE_POLYZ0_LO_PACKEDBYTES];
+  uint8_t z1_lo_bufs[SHUTTLE_L][SHUTTLE_POLYZ1_LO_PACKEDBYTES];
+  uint8_t rans_buf[SHUTTLE_ZHI_RESERVED_BYTES];
+
+  /* Populate z^(0) and z^(1..lenS) with controlled samples, then split. */
+  for (unsigned i = 0; i < SHUTTLE_N; ++i)
+    z[0].coeffs[i] = sample_z0_coef();
+  for (unsigned k = 1; k <= SHUTTLE_L; ++k)
+    for (unsigned i = 0; i < SHUTTLE_N; ++i)
+      z[k].coeffs[i] = sample_zi_coef();
+
+  /* Encoder side: split each poly, accumulate hi into one flat array,
+   * bit-pack lo per poly. */
+  polyz0_split(&hi[0], lo_scratch, &z[0]);
+  polyz0_lo_pack(z0_lo_buf, lo_scratch);
+  for (unsigned k = 0; k < SHUTTLE_L; ++k) {
+    polyz1_split(&hi[(k + 1) * SHUTTLE_N], lo_scratch, &z[1 + k]);
+    polyz1_lo_pack(z1_lo_bufs[k], lo_scratch);
+  }
+
+  /* Sanity: every hi value must already lie in the vocabulary by the
+   * 11-sigma tight bound. Our triangular sampler may sometimes overshoot,
+   * so we clamp + recombine + re-split as the real signer would not. */
+  unsigned clipped = 0;
+  for (unsigned i = 0; i < (SHUTTLE_L + 1) * SHUTTLE_N; ++i) {
+    if (hi[i] >  ZHI_SYM_MAX_ABS) { hi[i] =  ZHI_SYM_MAX_ABS; ++clipped; }
+    if (hi[i] < -ZHI_SYM_MAX_ABS) { hi[i] = -ZHI_SYM_MAX_ABS; ++clipped; }
+  }
+  if (clipped > 0) {
+    /* Recombine the test input from clipped hi + original lo so we end up
+     * comparing against the right reference (the signer rejection path
+     * is irrelevant to this unit test). */
+    polyz0_lo_unpack(lo_scratch, z0_lo_buf);
+    polyz0_combine(&z[0], &hi[0], lo_scratch);
+    for (unsigned k = 0; k < SHUTTLE_L; ++k) {
+      polyz1_lo_unpack(lo_scratch, z1_lo_bufs[k]);
+      polyz1_combine(&z[1 + k], &hi[(k + 1) * SHUTTLE_N], lo_scratch);
+    }
+  }
+
+  size_t rans_len;
+  int rc = shuttle_rans_encode_zhi(rans_buf, &rans_len, sizeof rans_buf,
+                                   hi, (SHUTTLE_L + 1) * SHUTTLE_N);
+  if (rc != 0)
+    FAIL("rANS encode failed (rc=%d, clipped=%u)", rc, clipped);
+
+  rc = shuttle_rans_decode_zhi(hi_back, (SHUTTLE_L + 1) * SHUTTLE_N,
+                               rans_buf, rans_len);
+  if (rc != 0) FAIL("rANS decode failed (rc=%d)", rc);
+
+  /* Decoder side: unpack lo, recombine, compare. */
+  polyz0_lo_unpack(lo_back, z0_lo_buf);
+  polyz0_combine(&z_back[0], &hi_back[0], lo_back);
+  for (unsigned k = 0; k < SHUTTLE_L; ++k) {
+    polyz1_lo_unpack(lo_back, z1_lo_bufs[k]);
+    polyz1_combine(&z_back[1 + k], &hi_back[(k + 1) * SHUTTLE_N], lo_back);
+  }
+
+  for (unsigned k = 0; k <= SHUTTLE_L; ++k)
+    for (unsigned i = 0; i < SHUTTLE_N; ++i)
+      if (z_back[k].coeffs[i] != z[k].coeffs[i])
+        FAIL("pipeline mismatch at z[%u].coeffs[%u]: orig=%d back=%d",
+             k, i, z[k].coeffs[i], z_back[k].coeffs[i]);
+
+  printf("    z-hi rANS: %zu bytes for %u coefs (%.3f bit/coef)\n",
+         rans_len, (SHUTTLE_L + 1) * SHUTTLE_N,
+         8.0 * rans_len / ((SHUTTLE_L + 1) * SHUTTLE_N));
+  printf("    z0 lo pack: %zu bytes, z1 lo pack: %zu bytes/poly\n",
+         (size_t)SHUTTLE_POLYZ0_LO_PACKEDBYTES,
+         (size_t)SHUTTLE_POLYZ1_LO_PACKEDBYTES);
+  PASS("unified z-hi pipeline OK");
   return 0;
 }
 
@@ -176,12 +251,14 @@ static int test_full_pipeline_roundtrip(void) {
 int main(void) {
   int ret = 0;
 
-  printf("=== test_poly_z1 (MODE=%d, N=%d, alpha_h=%d, alpha_h_bits=%d) ===\n",
-         SHUTTLE_MODE, SHUTTLE_N, SHUTTLE_ALPHA_H, SHUTTLE_ALPHA_H_BITS);
+  printf("=== test_poly_z1 (MODE=%d, N=%d, alpha_r=%d, alpha_0'=%d) ===\n",
+         SHUTTLE_MODE, SHUTTLE_N, SHUTTLE_ALPHA_R, SHUTTLE_ALPHA_0P);
 
-  ret |= test_split_combine_roundtrip();
-  ret |= test_lo_pack_roundtrip();
-  ret |= test_full_pipeline_roundtrip();
+  ret |= test_z1_split_combine();
+  ret |= test_z1_lo_pack();
+  ret |= test_z0_split_combine();
+  ret |= test_z0_lo_pack();
+  ret |= test_zhi_pipeline();
 
   if (ret == 0) printf("\n=== All polyz1 tests PASSED ===\n");
   else          printf("\n=== Some polyz1 tests FAILED ===\n");

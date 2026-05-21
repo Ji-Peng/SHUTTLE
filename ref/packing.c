@@ -7,32 +7,40 @@
  * Secret key format:
  *   rho || tr || key || polyeta_pack(s[0..L-1]) || polyeta_pack(e[0..M-1])
  *
- * Signature format (NGCC-Signature Alg 2 compressed form):
+ * Signature format (NGCC-Signature Alg 2 compressed form,
+ *                   two-stream rANS layout per SHUTTLE_rANS.tex §3.3):
  *
  *   seedC || irs_signs
- *     || uint16 z0_rans_len || rANS(Z_0)             + pad to Z0_RESERVED
- *     || L * polyz1_lo_pack(lo(z[1..L]))
- *     || uint16 z1_rans_len || rANS(hi(z[1..L]))     + pad to Z1_RESERVED
- *     || uint16 hint_rans_len || rANS(h)             + pad to HINT_RESERVED
+ *     || uint16 zhi_rans_len  || rANS(z-hi)      + pad to ZHI_RESERVED
+ *     || polyz0_lo_pack(lo(z^(0)))
+ *     || L * polyz1_lo_pack(lo(z^(1..lenS)))
+ *     || uint16 hint_rans_len || rANS(hint)      + pad to HINT_RESERVED
+ *
+ * The z-hi rANS block carries n*(lenS+1) coefficients in concatenation
+ * order [ HighBits(z^(0)), HighBits(z^(1)), ..., HighBits(z^(lenS)) ].
+ * All share scale r/alpha_r so a single frequency table fits them all
+ * (mode-128 also shares the table with the hint context — see
+ * shuttle_rans.{c,h}).
  *
  * Each rANS block is a fixed-size slot (length prefix + encoded stream +
  * zero padding). The fixed slot is what lets the signature have a single
- * on-the-wire length; the tradeoff (wasting a few bytes vs. variable-length
- * encoding) is analysed in docs/NGCC_Sign/SHUTTLE_rANS_analysis.md and the
- * resulting budgets live in params.h (SHUTTLE_*_RESERVED_BYTES).
+ * on-the-wire length. Reservation budgets live in params.h
+ * (SHUTTLE_ZHI_RESERVED_BYTES / SHUTTLE_HINT_RESERVED_BYTES); the
+ * derivation is in SHUTTLE_rANS.tex Tab 8 (p_rans^* = 2^-20).
  *
- * Three rANS streams: Z_0 is encoded directly, z[1..L] is split into
- * (hi, lo) with only hi going through rANS (see shuttle_rans.h for the
- * hi/lo design rationale), h is encoded directly.
+ * Two rANS streams (saves 6 B/sig of fixed overhead vs. the historical
+ * three-stream design that packed z^(0) on its own stream):
+ *   - stream 1 (z-hi): z^(0) hi  ⨁  z^(1..lenS) hi (single shared table)
+ *   - stream 2 (hint): MakeHint output
  *
  * IRS sign bits: TAU bits packed into IRS_SIGNBYTES bytes. Bit i is 1 if
  * irs_signs[i] == +1, 0 if irs_signs[i] == -1. Combined with the challenge
  * c (from c_tilde), these bits define c_eff = sum_i irs_sign_i * x^{j_i}.
  *
- * Encoder-side OOV / overflow return values propagate back to
- * sign.c::crypto_sign_signature, which treats them as a signing-round
- * rejection. Budgets are tuned so the combined rANS rejection rate is
- * far below the IRS rejection rate.
+ * Encoder-side overflow returns rc = -2 from pack_sig; OOV is impossible
+ * by construction (theoretical vocabulary covers the 11*sigma tight bound).
+ * sign.c::crypto_sign_signature treats rc != 0 as a signing-round
+ * rejection. With p_rans^* = 2^-20 the throughput hit is invisible.
  */
 
 #include <string.h>
@@ -136,17 +144,16 @@ void unpack_sk(uint8_t rho[SHUTTLE_SEEDBYTES],
 }
 
 /* ============================================================
- * Signature packing (compressed form, rANS for Z_0 + z1 highs + hint h).
+ * Signature packing (compressed form: two rANS streams + z bit-packs).
  * ============================================================ */
 
 #define OFF_C_TILDE     0
 #define OFF_IRS_SIGNS   (OFF_C_TILDE + SHUTTLE_CTILDEBYTES)
-#define OFF_Z0_LEN      (OFF_IRS_SIGNS + SHUTTLE_IRS_SIGNBYTES)
-#define OFF_Z0_DATA     (OFF_Z0_LEN + 2)
-#define OFF_Z1_LO       (OFF_Z0_DATA + SHUTTLE_Z0_RANS_RESERVED_BYTES)
-#define OFF_Z1_HI_LEN   (OFF_Z1_LO + SHUTTLE_L * SHUTTLE_POLYZ1_LO_PACKEDBYTES)
-#define OFF_Z1_HI_DATA  (OFF_Z1_HI_LEN + 2)
-#define OFF_HINT_LEN    (OFF_Z1_HI_DATA + SHUTTLE_Z1_RANS_RESERVED_BYTES)
+#define OFF_ZHI_LEN     (OFF_IRS_SIGNS + SHUTTLE_IRS_SIGNBYTES)
+#define OFF_ZHI_DATA    (OFF_ZHI_LEN + 2)
+#define OFF_Z0_LO       (OFF_ZHI_DATA + SHUTTLE_ZHI_RESERVED_BYTES)
+#define OFF_Z1_LO       (OFF_Z0_LO + SHUTTLE_POLYZ0_LO_PACKEDBYTES)
+#define OFF_HINT_LEN    (OFF_Z1_LO + SHUTTLE_L * SHUTTLE_POLYZ1_LO_PACKEDBYTES)
 #define OFF_HINT_DATA   (OFF_HINT_LEN + 2)
 
 int pack_sig(uint8_t sig[SHUTTLE_BYTES],
@@ -168,57 +175,48 @@ int pack_sig(uint8_t sig[SHUTTLE_BYTES],
       sig[OFF_IRS_SIGNS + (i >> 3)] |= (uint8_t)(1u << (i & 7));
   }
 
-  /* 3. Z_0 rANS. */
-  int32_t z0_flat[SHUTTLE_N];
-  for(i = 0; i < SHUTTLE_N; ++i)
-    z0_flat[i] = z_1[0].coeffs[i];
-
-  size_t z0_rans_len = 0;
-  rc = shuttle_rans_encode_z0(&sig[OFF_Z0_DATA], &z0_rans_len,
-                              SHUTTLE_Z0_RANS_RESERVED_BYTES,
-                              z0_flat, SHUTTLE_N);
-  if(rc != 0)
-    return rc;
-
-  sig[OFF_Z0_LEN + 0] = (uint8_t)(z0_rans_len & 0xFF);
-  sig[OFF_Z0_LEN + 1] = (uint8_t)((z0_rans_len >> 8) & 0xFF);
-  if(z0_rans_len < SHUTTLE_Z0_RANS_RESERVED_BYTES)
-    memset(&sig[OFF_Z0_DATA + z0_rans_len], 0,
-           SHUTTLE_Z0_RANS_RESERVED_BYTES - z0_rans_len);
-
-  /* 4. z_1[1..L]: split each poly, write lo parts, accumulate hi parts. */
-  int32_t z1_hi_flat[SHUTTLE_L * SHUTTLE_N];
+  /* 3. Split z^(0) and z^(1..lenS) into hi (rANS) + lo (bit-pack).
+   *    All hi arrays are concatenated into one buffer that feeds the
+   *    unified z-hi rANS stream. Layout:
+   *      z_hi_flat[0 .. n-1]                = HighBits_{alpha_0'}(z^(0))
+   *      z_hi_flat[k*n .. (k+1)*n - 1]      = HighBits_{alpha_r}(z^(k))
+   *                                           for k in {1..lenS}. */
+  int32_t z_hi_flat[(SHUTTLE_L + 1) * SHUTTLE_N];
   int32_t lo_scratch[SHUTTLE_N];
+
+  polyz0_split(&z_hi_flat[0], lo_scratch, &z_1[0]);
+  polyz0_lo_pack(&sig[OFF_Z0_LO], lo_scratch);
+
   for(i = 0; i < SHUTTLE_L; ++i) {
-    polyz1_split(&z1_hi_flat[i * SHUTTLE_N], lo_scratch, &z_1[1 + i]);
+    polyz1_split(&z_hi_flat[(i + 1) * SHUTTLE_N], lo_scratch, &z_1[1 + i]);
     polyz1_lo_pack(&sig[OFF_Z1_LO + i * SHUTTLE_POLYZ1_LO_PACKEDBYTES],
                    lo_scratch);
   }
 
-  /* 5. rANS-encode the L*N high values into the z1 reservation. */
-  size_t z1_rans_len = 0;
-  rc = shuttle_rans_encode_z1(&sig[OFF_Z1_HI_DATA], &z1_rans_len,
-                              SHUTTLE_Z1_RANS_RESERVED_BYTES,
-                              z1_hi_flat, SHUTTLE_L * SHUTTLE_N);
+  /* 4. rANS-encode the concatenated z-hi stream (n*(lenS+1) coefs). */
+  size_t zhi_rans_len = 0;
+  rc = shuttle_rans_encode_zhi(&sig[OFF_ZHI_DATA], &zhi_rans_len,
+                               SHUTTLE_ZHI_RESERVED_BYTES,
+                               z_hi_flat, (SHUTTLE_L + 1) * SHUTTLE_N);
   if(rc != 0)
     return rc;
 
-  sig[OFF_Z1_HI_LEN + 0] = (uint8_t)(z1_rans_len & 0xFF);
-  sig[OFF_Z1_HI_LEN + 1] = (uint8_t)((z1_rans_len >> 8) & 0xFF);
-  if(z1_rans_len < SHUTTLE_Z1_RANS_RESERVED_BYTES)
-    memset(&sig[OFF_Z1_HI_DATA + z1_rans_len], 0,
-           SHUTTLE_Z1_RANS_RESERVED_BYTES - z1_rans_len);
+  sig[OFF_ZHI_LEN + 0] = (uint8_t)(zhi_rans_len & 0xFF);
+  sig[OFF_ZHI_LEN + 1] = (uint8_t)((zhi_rans_len >> 8) & 0xFF);
+  if(zhi_rans_len < SHUTTLE_ZHI_RESERVED_BYTES)
+    memset(&sig[OFF_ZHI_DATA + zhi_rans_len], 0,
+           SHUTTLE_ZHI_RESERVED_BYTES - zhi_rans_len);
 
-  /* 6. rANS-encode hint h. */
+  /* 5. rANS-encode hint h. */
   int32_t h_flat[SHUTTLE_M * SHUTTLE_N];
   for(i = 0; i < SHUTTLE_M; ++i)
     for(j = 0; j < SHUTTLE_N; ++j)
       h_flat[i * SHUTTLE_N + j] = h->vec[i].coeffs[j];
 
   size_t hint_rans_len = 0;
-  rc = shuttle_rans_encode(&sig[OFF_HINT_DATA], &hint_rans_len,
-                           SHUTTLE_HINT_RESERVED_BYTES,
-                           h_flat, SHUTTLE_M * SHUTTLE_N);
+  rc = shuttle_rans_encode_hint(&sig[OFF_HINT_DATA], &hint_rans_len,
+                                SHUTTLE_HINT_RESERVED_BYTES,
+                                h_flat, SHUTTLE_M * SHUTTLE_N);
   if(rc != 0)
     return rc;
 
@@ -251,38 +249,30 @@ int unpack_sig(uint8_t c_tilde[SHUTTLE_CTILDEBYTES],
       irs_signs[i] = (int8_t)-1;
   }
 
-  /* 3. Z_0 rANS decode. */
-  size_t z0_rans_len = (size_t)sig[OFF_Z0_LEN + 0]
-                     | ((size_t)sig[OFF_Z0_LEN + 1] << 8);
-  if(z0_rans_len == 0 || z0_rans_len > SHUTTLE_Z0_RANS_RESERVED_BYTES)
+  /* 3. z-hi rANS decode. */
+  size_t zhi_rans_len = (size_t)sig[OFF_ZHI_LEN + 0]
+                      | ((size_t)sig[OFF_ZHI_LEN + 1] << 8);
+  if(zhi_rans_len == 0 || zhi_rans_len > SHUTTLE_ZHI_RESERVED_BYTES)
     return -1;
 
-  int32_t z0_flat[SHUTTLE_N];
-  rc = shuttle_rans_decode_z0(z0_flat, SHUTTLE_N,
-                              &sig[OFF_Z0_DATA], z0_rans_len);
-  if(rc != 0)
-    return rc;
-  for(i = 0; i < SHUTTLE_N; ++i)
-    z_1[0].coeffs[i] = z0_flat[i];
-
-  /* 4. z1 rANS high stream. */
-  size_t z1_rans_len = (size_t)sig[OFF_Z1_HI_LEN + 0]
-                     | ((size_t)sig[OFF_Z1_HI_LEN + 1] << 8);
-  if(z1_rans_len == 0 || z1_rans_len > SHUTTLE_Z1_RANS_RESERVED_BYTES)
-    return -1;
-
-  int32_t z1_hi_flat[SHUTTLE_L * SHUTTLE_N];
-  rc = shuttle_rans_decode_z1(z1_hi_flat, SHUTTLE_L * SHUTTLE_N,
-                              &sig[OFF_Z1_HI_DATA], z1_rans_len);
+  int32_t z_hi_flat[(SHUTTLE_L + 1) * SHUTTLE_N];
+  rc = shuttle_rans_decode_zhi(z_hi_flat, (SHUTTLE_L + 1) * SHUTTLE_N,
+                               &sig[OFF_ZHI_DATA], zhi_rans_len);
   if(rc != 0)
     return rc;
 
-  /* 5. z1 low parts: unpack and combine with the decoded high parts. */
+  /* 4. z^(0): combine hi (from z-hi stream) + lo (bit-packed). */
   int32_t lo_scratch[SHUTTLE_N];
+  polyz0_lo_unpack(lo_scratch, &sig[OFF_Z0_LO]);
+  polyz0_combine(&z_1[0], &z_hi_flat[0], lo_scratch);
+
+  /* 5. z^(1..lenS): combine hi + lo. */
   for(i = 0; i < SHUTTLE_L; ++i) {
     polyz1_lo_unpack(lo_scratch,
                      &sig[OFF_Z1_LO + i * SHUTTLE_POLYZ1_LO_PACKEDBYTES]);
-    polyz1_combine(&z_1[1 + i], &z1_hi_flat[i * SHUTTLE_N], lo_scratch);
+    polyz1_combine(&z_1[1 + i],
+                   &z_hi_flat[(i + 1) * SHUTTLE_N],
+                   lo_scratch);
   }
 
   /* 6. hint rANS. */
@@ -292,8 +282,8 @@ int unpack_sig(uint8_t c_tilde[SHUTTLE_CTILDEBYTES],
     return -1;
 
   int32_t h_flat[SHUTTLE_M * SHUTTLE_N];
-  rc = shuttle_rans_decode(h_flat, SHUTTLE_M * SHUTTLE_N,
-                           &sig[OFF_HINT_DATA], hint_rans_len);
+  rc = shuttle_rans_decode_hint(h_flat, SHUTTLE_M * SHUTTLE_N,
+                                &sig[OFF_HINT_DATA], hint_rans_len);
   if(rc != 0)
     return rc;
 
