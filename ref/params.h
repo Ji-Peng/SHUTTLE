@@ -1,13 +1,16 @@
 /*
  * params.h - Parameters for SHUTTLE signature scheme.
  *
- * Ring: R_q = Z_q[x]/(x^n + 1), n and q selected per SHUTTLE_MODE.
- * Module: secret key [alpha_1, s, e] with s in R^l, e in R^m.
+ * Three parameter sets, aligned to SHUTTLE-Spec/sections/Description.tex Table 2:
  *
- * Three parameter sets are supported (see NGCC-Signature Table 2):
- *   SHUTTLE_MODE=128 : n=256, q=13313, sigma=101
- *   SHUTTLE_MODE=256 : n=512, q=13313, sigma=149
- *   SHUTTLE_MODE=512 : parameters unspecified; #error in this file
+ *   SHUTTLE_MODE=128 : n=256,  q=13313, sigma=101, full NTT (base_deg=1)
+ *   SHUTTLE_MODE=256 : n=512,  q=32257, sigma=149, incomplete NTT (base_deg=2)
+ *   SHUTTLE_MODE=512 : n=1024, q=64513, sigma=202, incomplete NTT (base_deg=2)
+ *
+ * For SHUTTLE-256 and SHUTTLE-512, q does not satisfy q == 1 (mod 2n), so
+ * a "Kyber-style" incomplete NTT is used: log2(n)-1 butterfly layers leave
+ * the polynomial in n/2 deg-2 basecase rings Z_q[X]/(X^2 - psi_k), and
+ * pointwise multiplication is replaced by basemul (see ntt.c).
  *
  * SHUTTLE_MODE is selected via config.h.
  */
@@ -21,19 +24,6 @@
 /* ============================================================
  * Shared constants (hash / seed sizes, common across all modes)
  * ============================================================ */
-#define SHUTTLE_Q            13313   /* Prime modulus, shared across all modes. q = 13 * 1024 + 1 */
-#define SHUTTLE_QBITS        14      /* ceil(log2(q)) = 14 */
-
-/* Seed / hash byte lengths. Currently fixed at the 32-byte "seedBytes"
- * baseline used by the NGCC-Signature draft: pending spec confirmation of
- * whether these should later scale with lambda.
- *
- * ExpandSeeds in KeyGen (Alg, line 115) takes xi || I2B(lenE, 1) and
- * produces 4 * seedBytes bytes, split as
- *   seedA      : seedBytes            (SHUTTLE_SEEDBYTES    = 32)
- *   seedsk     : 2 * seedBytes        (SHUTTLE_SKSEEDBYTES  = 64)
- *   masterSeed : seedBytes            (SHUTTLE_SEEDBYTES    = 32)
- */
 #define SHUTTLE_SEEDBYTES    32
 #define SHUTTLE_SKSEEDBYTES  64
 #define SHUTTLE_CRHBYTES     64
@@ -42,78 +32,131 @@
 #define SHUTTLE_CTILDEBYTES  32
 
 /* ============================================================
- * Mode-specific parameters (Table 2 of NGCC-Signature)
+ * Mode-specific parameters (Spec Table 2)
  * ============================================================ */
 #if SHUTTLE_MODE == 128
 
-#define SHUTTLE_N          256   /* Ring dimension */
-#define SHUTTLE_L          3     /* # components in s */
-#define SHUTTLE_M          2     /* # components in e */
-#define SHUTTLE_ETA        1     /* CBD parameter for s and e */
-#define SHUTTLE_TAU        30    /* Hamming weight of challenge c */
-#define SHUTTLE_ALPHA_H    128   /* Hint compression parameter */
-#define SHUTTLE_ALPHA_1    8     /* Compression parameter for first response slot */
-#define SHUTTLE_W1_BITS    6     /* bits/coeff for high-part packing (floor((q-1)/(2*alpha_h)) = 52 fits in 6) */
+#define SHUTTLE_N          256
+#define SHUTTLE_Q          13313
+#define SHUTTLE_QBITS      14            /* ceil(log2(13313)) = 14 */
+#define SHUTTLE_BASE_DEG   1             /* full NTT */
+#define SHUTTLE_L          3
+#define SHUTTLE_M          2
+#define SHUTTLE_ETA        1
+#define SHUTTLE_TAU        30
+#define SHUTTLE_ALPHA_H    128
+#define SHUTTLE_ALPHA_1    8
 
-/* Norm bounds. Spec: B_k = 25.79, B_s = 3893.66, B_v = 4663.0.
- * Stored as integer squares (floor) for cheap comparisons. */
-#define SHUTTLE_BK         26            /* ceil(B_k) */
-#define SHUTTLE_BK_LOW     0
-#define SHUTTLE_BS_SQ      15160508UL    /* floor(3893.66^2) */
-#define SHUTTLE_BV_SQ      21743569UL    /* floor(4663.0^2) */
+/* Fixed-point bounds (Q2 = original * 100, then squared).
+ *   B_k = 25.79  -> B_k * 100 = 2579,   (B_k*100)^2 = 6651241
+ *   B_s = 3893.66 -> B_s*100 = 389366,  (B_s*100)^2 = 151605881956
+ *   B_v = 4663.0 -> B_v*100 = 466300,   (B_v*100)^2 = 217435690000   */
+#define SHUTTLE_BK_Q2          2579L
+#define SHUTTLE_BS_Q2          389366L
+#define SHUTTLE_BV_Q2          466300L
+#define SHUTTLE_BK_LOW_Q2      0L
 
 #elif SHUTTLE_MODE == 256
 
 #define SHUTTLE_N          512
+#define SHUTTLE_Q          32257
+#define SHUTTLE_QBITS      15            /* ceil(log2(32257)) = 15 */
+#define SHUTTLE_BASE_DEG   2             /* incomplete NTT, basecase deg 2 */
 #define SHUTTLE_L          3
 #define SHUTTLE_M          2
 #define SHUTTLE_ETA        1
 #define SHUTTLE_TAU        58
-#define SHUTTLE_ALPHA_H    256
+#define SHUTTLE_ALPHA_H    1024
 #define SHUTTLE_ALPHA_1    16
-#define SHUTTLE_W1_BITS    5   /* floor((q-1)/(2*alpha_h)) = 26 fits in 5 */
 
-#define SHUTTLE_BK         37           /* ceil(36.26) */
-#define SHUTTLE_BK_LOW     0
-#define SHUTTLE_BS_SQ      82628100UL   /* 9090^2 */
-#define SHUTTLE_BV_SQ      125484804UL  /* 11202^2 */
+/*   B_k = 36.26   -> 3626,   3626^2 = 13147876
+ *   B_s = 8391    -> 839100, 839100^2 = 704088810000
+ *   B_v = 16647   -> 1664700, 1664700^2 = 2771226090000 */
+#define SHUTTLE_BK_Q2          3626L
+#define SHUTTLE_BS_Q2          839100L
+#define SHUTTLE_BV_Q2          1664700L
+#define SHUTTLE_BK_LOW_Q2      0L
 
 #elif SHUTTLE_MODE == 512
 
-#error "SHUTTLE-512 parameters not yet specified; see NGCC-Signature Table 2"
+#define SHUTTLE_N          1024
+#define SHUTTLE_Q          64513
+#define SHUTTLE_QBITS      16            /* ceil(log2(64513)) = 16 */
+#define SHUTTLE_BASE_DEG   2             /* incomplete NTT */
+#define SHUTTLE_L          3
+#define SHUTTLE_M          2
+#define SHUTTLE_ETA        1
+#define SHUTTLE_TAU        115
+#define SHUTTLE_ALPHA_H    2048
+#define SHUTTLE_ALPHA_1    16
 
+/*   B_k = 51.08   -> 5108,    5108^2 = 26091664
+ *   B_s = 31639   -> 3163900, 3163900^2 = 10010264410000
+ *   B_v = 54900   -> 5490000, 5490000^2 = 30140100000000 */
+#define SHUTTLE_BK_Q2          5108L
+#define SHUTTLE_BS_Q2          3163900L
+#define SHUTTLE_BV_Q2          5490000L
+#define SHUTTLE_BK_LOW_Q2      0L
+
+#else
+#  error "Unsupported SHUTTLE_MODE (expected 128, 256, or 512)"
 #endif
+
+/* Pull in MONT / QINV / BARRETT_V / INVNTT_F / zetas table per mode. */
+#include "ntt_constants.h"
+
+/* ============================================================
+ * Fixed-point bound scale.
+ *
+ * Bounds B_k, B_s, B_v in the spec are decimals (e.g. B_k = 25.79).
+ * We store them as integers in Q2 (multiplied by 100) and compare a
+ * regular int64 norm_sq against the squared Q2 value by scaling norm_sq
+ * by SHUTTLE_BOUND_SCALE_SQ:
+ *
+ *   accept iff  SHUTTLE_BOUND_SCALE_SQ * norm_sq < SHUTTLE_*_Q2 * SHUTTLE_*_Q2
+ *
+ * For the worst-case mode (SHUTTLE-512):
+ *   norm_sq <= B_v^2 ~ 3.0e9
+ *   * 10000 = 3.0e13   (fits in int64, max ~9.2e18).
+ * ============================================================ */
+#define SHUTTLE_BOUND_SCALE    100L
+#define SHUTTLE_BOUND_SCALE_SQ (SHUTTLE_BOUND_SCALE * SHUTTLE_BOUND_SCALE)
+
+#define SHUTTLE_BK_SQ_FX   ((int64_t)SHUTTLE_BK_Q2 * (int64_t)SHUTTLE_BK_Q2)
+#define SHUTTLE_BS_SQ_FX   ((int64_t)SHUTTLE_BS_Q2 * (int64_t)SHUTTLE_BS_Q2)
+#define SHUTTLE_BV_SQ_FX   ((int64_t)SHUTTLE_BV_Q2 * (int64_t)SHUTTLE_BV_Q2)
+#define SHUTTLE_BK_LOW_SQ_FX ((int64_t)SHUTTLE_BK_LOW_Q2 * (int64_t)SHUTTLE_BK_LOW_Q2)
+
+/* Test a non-negative integer norm_sq against a fixed-point squared bound.
+ * Returns 1 iff norm_sq * scale_sq < bound_sq_fx. */
+#define SHUTTLE_NORM_LT_FX(norm_sq, bound_sq_fx) \
+    ((int64_t)(norm_sq) * SHUTTLE_BOUND_SCALE_SQ < (bound_sq_fx))
+
+#define SHUTTLE_NORM_GE_FX(norm_sq, bound_sq_fx) \
+    ((int64_t)(norm_sq) * SHUTTLE_BOUND_SCALE_SQ >= (bound_sq_fx))
+
+#define SHUTTLE_NORM_GT_FX(norm_sq, bound_sq_fx) \
+    ((int64_t)(norm_sq) * SHUTTLE_BOUND_SCALE_SQ > (bound_sq_fx))
 
 /* Full sk vector length = [alpha_1, s, e] */
 #define SHUTTLE_VECLEN     (1 + SHUTTLE_L + SHUTTLE_M)
 
 /* Decompose helpers.
- *   2 * alpha_h is a power of two across all modes (256 or 512), so
- *   division by it compiles to a shift.
- *   W1_MAX = floor((q-1) / (2*alpha_h)) is the highest valid high-bit value;
- *   valid bucket count is W1_MAX + 1.
- *   For q=13313:  mode-128 -> W1_MAX=52 (53 buckets, 6 bits);
- *                 mode-256 -> W1_MAX=26 (27 buckets, 5 bits). */
+ *   The number of valid HighBits buckets is W1_MAX+1; W1_BITS is
+ *   ceil(log2(W1_MAX+1)). Since 2*alpha_h is a power of 2 the divisor
+ *   becomes a shift. */
 #define SHUTTLE_W1_MAX     ((SHUTTLE_Q - 1) / (2 * SHUTTLE_ALPHA_H))
+
+#if SHUTTLE_MODE == 128
+#  define SHUTTLE_W1_BITS  6        /* W1_MAX = 52, fits in 6 bits */
+#elif SHUTTLE_MODE == 256
+#  define SHUTTLE_W1_BITS  5        /* W1_MAX = 15 (with rounding edge 16), 5 bits */
+#elif SHUTTLE_MODE == 512
+#  define SHUTTLE_W1_BITS  5        /* W1_MAX = 15 (with rounding edge 16), 5 bits */
+#endif
 
 /* ============================================================
  * mod 2q infrastructure (Phase 6b)
- * ------------------------------------------------------------
- * For the NGCC-Signature compressed-signature form (Alg 2), the commitment
- * lives in Z_{2q} instead of Z_q. The constants below drive the mod 2q
- * helpers in reduce.c / rounding.c / polyvec.c.
- *
- *   DQ                = 2 * q.
- *   HALF_ALPHA_H      = alpha_h / 2, used for round-half-up HighBits.
- *   ALPHA_H_BITS      = log2(alpha_h) — alpha_h is a power of two in
- *                       every mode (128 = 2^7, 256 = 2^8).
- *   HINT_MOD          = 2 * (q - 1), the modulus used by MakeHint/UseHint
- *                       for the hint-difference as per spec Alg 9 / 10.
- *   HINT_MAX          = 2 * (q - 1) / alpha_h, the HighBits-index upper
- *                       exclusive bound. Valid indices live in [0, HINT_MAX).
- *                       Indices reaching HINT_MAX wrap to 0 (edge-case).
- *
- * For q = 13313:  mode-128 -> HINT_MAX = 208; mode-256 -> HINT_MAX = 104.
  * ============================================================ */
 #define SHUTTLE_DQ          (2 * SHUTTLE_Q)
 #define SHUTTLE_HALF_ALPHA_H (SHUTTLE_ALPHA_H / 2)
@@ -124,13 +167,14 @@
 #  define SHUTTLE_ALPHA_H_BITS 7
 #elif SHUTTLE_ALPHA_H == 256
 #  define SHUTTLE_ALPHA_H_BITS 8
+#elif SHUTTLE_ALPHA_H == 1024
+#  define SHUTTLE_ALPHA_H_BITS 10
+#elif SHUTTLE_ALPHA_H == 2048
+#  define SHUTTLE_ALPHA_H_BITS 11
 #else
-#  error "Unsupported SHUTTLE_ALPHA_H (expected 128 or 256)"
+#  error "Unsupported SHUTTLE_ALPHA_H"
 #endif
 
-/* log2(alpha_1). alpha_1 is also a power of two across modes:
- *   mode-128 -> alpha_1 = 8  = 2^3
- *   mode-256 -> alpha_1 = 16 = 2^4 */
 #if SHUTTLE_ALPHA_1 == 8
 #  define SHUTTLE_ALPHA_1_BITS 3
 #elif SHUTTLE_ALPHA_1 == 16
@@ -145,70 +189,76 @@
 /* eta=1: coefficients in {-1,0,1}, encode as 2 bits/coeff */
 #define SHUTTLE_POLYETA_PACKEDBYTES   (SHUTTLE_N * 2 / 8)
 
-/* Public key b: 14 bits/coeff (unsigned range [0, q-1]) */
-#define SHUTTLE_POLYPK_PACKEDBYTES    (SHUTTLE_N * SHUTTLE_QBITS / 8)
+/* Public key b: QBITS bits/coeff (unsigned range [0, q-1]) */
+#define SHUTTLE_POLYPK_PACKEDBYTES    ((SHUTTLE_N * SHUTTLE_QBITS) / 8)
 
-/* z[0] after CompressY: coefficients in [-q/(2*alpha_1), q/(2*alpha_1)],
- * packed as signed integers at Z0_BITS bits/coeff.
- * For alpha_1=8, q/(2*8) ~ 832, so 11 signed bits.
- * For alpha_1=16, q/(2*16) ~ 416, so 10 signed bits.
- * Fixed at 11 across modes to keep the pack routine simple. */
-#define SHUTTLE_Z0_BITS               11
-#define SHUTTLE_POLYZ0_PACKEDBYTES    (SHUTTLE_N * SHUTTLE_Z0_BITS / 8)
+/* z[0] after CompressY: coefficients in [-q/(2*alpha_1), q/(2*alpha_1)].
+ * For each mode:
+ *   mode-128:  q/(2*8)  = 832,  11 signed bits
+ *   mode-256:  q/(2*16) = 1008, 11 signed bits
+ *   mode-512:  q/(2*16) = 2016, 12 signed bits */
+#if SHUTTLE_MODE == 512
+#  define SHUTTLE_Z0_BITS  12
+#else
+#  define SHUTTLE_Z0_BITS  11
+#endif
+#define SHUTTLE_POLYZ0_PACKEDBYTES    ((SHUTTLE_N * SHUTTLE_Z0_BITS + 7) / 8)
 
-/* z[1..L]: full-range signed coefficients, 14 bits/coeff */
-#define SHUTTLE_POLYZ_PACKEDBYTES     (SHUTTLE_N * SHUTTLE_QBITS / 8)
+/* z[1..L]: full-range signed coefficients. Z_BOUND <= 11*sigma + alpha_1*tau.
+ *   mode-128:  1351, 2*Z = 2702 -> 12 bits
+ *   mode-256:  2567, 2*Z = 5134 -> 13 bits
+ *   mode-512:  4062, 2*Z = 8124 -> 14 bits
+ * Use 14 bits for all modes to keep one code path. */
+#define SHUTTLE_POLYZ_BITS  14
+#define SHUTTLE_POLYZ_PACKEDBYTES     ((SHUTTLE_N * SHUTTLE_POLYZ_BITS) / 8)
 
-/* High-bits (w1) packing, 5 or 6 bits/coeff per mode */
-#define SHUTTLE_POLYW1_PACKEDBYTES    (SHUTTLE_N * SHUTTLE_W1_BITS / 8)
+/* High-bits (w1) packing */
+#define SHUTTLE_POLYW1_PACKEDBYTES    ((SHUTTLE_N * SHUTTLE_W1_BITS + 7) / 8)
 
-/* Hint encoding (sparse-index list). M polys; up to ~OMEGA=alpha_h/2 hint bits
- * per poly plus M index-offset counters. Exact bound depends on MakeHint analysis.
- * Conservative upper bound reserved here; final size must be asserted at
- * compile time by packing.c once hint encoding is implemented. */
+/* Hint encoding (sparse-index list) -- placeholder; see polyveck_hint_pack_basic */
 #define SHUTTLE_POLYVECH_PACKEDBYTES  (SHUTTLE_M * (SHUTTLE_N / 8 + 1))
 
-/* IRS sign bits: ceil(TAU/8) */
+/* IRS sign bits */
 #define SHUTTLE_IRS_SIGNBYTES         ((SHUTTLE_TAU + 7) / 8)
 
 /* ============================================================
  * rANS reservation budgets (consumed by packing.c).
  *
- * Target: per-block total failure p_block = 2^{-20} (overflow + OOV).
- *   p_ovf per block = 2^{-21} drives these reserved byte sizes.
- *   p_OOV per block = 2^{-21} drives the rANS vocabulary half-widths
- *                     baked into rans_tables.h.
- * Combined per-signature rANS failure ~ 3 * 2^{-20} = 2^{-18.4}, which
- * is << p_irs ~ 0.5 and therefore invisible on throughput.
- *
- * Auto-calibrated by SHUTTLE/tools/calibrate_rans.py (5000 / 2500 trials
- * for mode-128 / mode-256). Per-block R >= max(empirical max length,
- * ceil(mu + Phi^{-1}(1 - 2^{-21}) * sigma) + 4 B rANS-flush margin),
- * then rounded up to a 2-byte boundary. Each block also carries a
- * 2-byte LE length prefix for the true encoded stream length.
- *
- * See docs/NGCC_Sign/SHUTTLE_rANS_analysis.md for the full trade-off
- * derivation.
+ * Calibrated empirically by SHUTTLE/tools/calibrate_rans.py for the
+ * (q, n, sigma, alpha_h, tau) tuple of each mode. The values for
+ * SHUTTLE-128 are the historical 13313-tuned numbers; for SHUTTLE-256
+ * and SHUTTLE-512 the values are conservative initial estimates that
+ * MUST be recalibrated for the spec's new q values before final
+ * submission. Recalibration target: per-block overflow probability
+ * <= 2^{-21}.
  * ============================================================ */
 #if SHUTTLE_MODE == 128
 #  define SHUTTLE_HINT_RESERVED_BYTES    200
 #  define SHUTTLE_Z1_RANS_RESERVED_BYTES 198
 #  define SHUTTLE_Z0_RANS_RESERVED_BYTES 202
 #elif SHUTTLE_MODE == 256
-#  define SHUTTLE_HINT_RESERVED_BYTES    330
-#  define SHUTTLE_Z1_RANS_RESERVED_BYTES 306
-#  define SHUTTLE_Z0_RANS_RESERVED_BYTES 360
+/* TODO: recalibrate for q=32257 + alpha_h=1024 (was 256). Bumped up
+ * conservatively until calibration tools rerun. */
+#  define SHUTTLE_HINT_RESERVED_BYTES    420
+#  define SHUTTLE_Z1_RANS_RESERVED_BYTES 420
+#  define SHUTTLE_Z0_RANS_RESERVED_BYTES 460
+#elif SHUTTLE_MODE == 512
+/* TODO: recalibrate. Mode-512 estimates are 2x mode-256. */
+#  define SHUTTLE_HINT_RESERVED_BYTES    840
+#  define SHUTTLE_Z1_RANS_RESERVED_BYTES 840
+#  define SHUTTLE_Z0_RANS_RESERVED_BYTES 920
 #endif
 
 #define SHUTTLE_HINT_BLOCK_BYTES    (2 + SHUTTLE_HINT_RESERVED_BYTES)
 #define SHUTTLE_Z1_RANS_BLOCK_BYTES (2 + SHUTTLE_Z1_RANS_RESERVED_BYTES)
 #define SHUTTLE_Z0_RANS_BLOCK_BYTES (2 + SHUTTLE_Z0_RANS_RESERVED_BYTES)
 
-/* Packed size of the LowBits part of z[1..L] (see poly.h::polyz1_lo_pack).
- * Kept in params.h so SHUTTLE_BYTES can reference it without dragging poly.h. */
-#define SHUTTLE_POLYZ1_LO_PACKEDBYTES (SHUTTLE_N * SHUTTLE_ALPHA_H_BITS / 8)
+/* Packed size of the LowBits part of z[1..L] -- ALPHA_H_BITS per coef. */
+#define SHUTTLE_POLYZ1_LO_PACKEDBYTES ((SHUTTLE_N * SHUTTLE_ALPHA_H_BITS + 7) / 8)
 
-/* Public / secret key sizes */
+/* ============================================================
+ * Public / secret key + signature sizes
+ * ============================================================ */
 #define SHUTTLE_PUBLICKEYBYTES  (SHUTTLE_SEEDBYTES \
                                    + SHUTTLE_M * SHUTTLE_POLYPK_PACKEDBYTES)
 
@@ -218,17 +268,6 @@
                                    + SHUTTLE_L * SHUTTLE_POLYETA_PACKEDBYTES \
                                    + SHUTTLE_M * SHUTTLE_POLYETA_PACKEDBYTES)
 
-/* Signature layout (NGCC-Signature Alg 2 compressed form with full
- * rANS entropy coding; see packing.h for the byte-slot diagram):
- *
- *   seedC (32 B) || irs_signs (ceil(TAU/8)) B
- *   || uint16 z0_rans_len || rANS(Z_0) + pad
- *   || L * polyz1_lo_pack(lo(z[1..L]))
- *   || uint16 z1_rans_len || rANS(hi(z[1..L])) + pad
- *   || uint16 hint_rans_len || rANS(h) + pad
- *
- * mode-128: 1450 B, mode-256: 2772 B. See docs/NGCC_Sign/SHUTTLE_draft.md
- * section "byte layout" for the full derivation. */
 #define SHUTTLE_BYTES  ( SHUTTLE_CTILDEBYTES \
                        + SHUTTLE_IRS_SIGNBYTES \
                        + SHUTTLE_Z0_RANS_BLOCK_BYTES \
@@ -239,49 +278,66 @@
 /* ============================================================
  * Gaussian sampler parameters (driven by SHUTTLE_SIGMA, set in config.h)
  *
- *   sigma | small sigma | RCDT | 2*sigma^2 |   Renyi (1025)  | parameter set
- *   ------+------------+------+-----------+-----------------+---------------
- *    128  |    2.0000  |  22  |  32768    | 1 + 2^-93.85    | legacy / reference (not tied to any mode)
- *    101  |    1.5781  |  17  |  20402    | 1 + 2^-93.40    | SHUTTLE-128
- *    149  |    2.3281  |  26  |  44402    | 1 + 2^-93.75    | SHUTTLE-256
+ *   sigma | small sigma | k=sigma/small | RCDT bits | RCDT entries
+ *   ------+------------+---------------+-----------+--------------
+ *    128  |   2.0000    |  64           |   93      |   22
+ *    101  |   1.5781    |  64           |   93      |   17  (SHUTTLE-128)
+ *    149  |   2.3281    |  64           |   93      |   26  (SHUTTLE-256)
+ *    202  |   1.5781    | 128           |   96      |   18  (SHUTTLE-512)
  *
- * All three modes share k = 64 and truncation = 11*sigma.
+ * SHUTTLE-512 doubles k from 64 to 128 and uses 96-bit RCDT (3x32-bit
+ * limbs) instead of 93-bit (3x31-bit limbs), per tools/BaseSampler.ipynb.
  * ============================================================ */
 
 #if SHUTTLE_SIGMA == 128
 #  define RCDT_ENTRIES 22
+#  define SHUTTLE_RCDT_LIMB_BITS 31
+#  define SHUTTLE_RCDT_BITS 93
 #elif SHUTTLE_SIGMA == 101
 #  define RCDT_ENTRIES 17
+#  define SHUTTLE_RCDT_LIMB_BITS 31
+#  define SHUTTLE_RCDT_BITS 93
 #elif SHUTTLE_SIGMA == 149
 #  define RCDT_ENTRIES 26
+#  define SHUTTLE_RCDT_LIMB_BITS 31
+#  define SHUTTLE_RCDT_BITS 93
+#elif SHUTTLE_SIGMA == 202
+#  define RCDT_ENTRIES 18
+#  define SHUTTLE_RCDT_LIMB_BITS 32
+#  define SHUTTLE_RCDT_BITS 96
 #else
-#  error "Unsupported SHUTTLE_SIGMA (expected 128, 101, or 149)"
+#  error "Unsupported SHUTTLE_SIGMA (expected 101, 149, 202, or legacy 128)"
 #endif
 
-#define SHUTTLE_GAUSS_K      64
-#define SHUTTLE_K_BITS       6
-#define SHUTTLE_Y_BITS       6
-#define SHUTTLE_TWO_K_BITS   7
+#if SHUTTLE_SIGMA == 202
+#  define SHUTTLE_GAUSS_K      128
+#  define SHUTTLE_K_BITS       7
+#  define SHUTTLE_Y_BITS       7
+#  define SHUTTLE_TWO_K_BITS   8
+#else
+#  define SHUTTLE_GAUSS_K      64
+#  define SHUTTLE_K_BITS       6
+#  define SHUTTLE_Y_BITS       6
+#  define SHUTTLE_TWO_K_BITS   7
+#endif
+
 #define SHUTTLE_TRUNC        11
 #define SHUTTLE_BOUND        (SHUTTLE_TRUNC * SHUTTLE_SIGMA)
 
-/* Packing bound for z coefficients after the alpha_1 stretch.
- *   z[i] = y[i] + c_eff * sk_full[i]
- * with sk_full[0] = alpha_1 (constant poly), so |z[0]|_inf <= 11*sigma + alpha_1*tau.
- * For i >= 1, sk_full[i] has eta-bounded coefficients so |z[i]|_inf <= 11*sigma + tau.
- * Use the larger of the two as a uniform bound so polyz_pack/unpack stays
- * a single code path over all six slots.
- * Both modes satisfy 2 * SHUTTLE_Z_BOUND < 2^14 so 14-bit packing still fits. */
+/* Packing bound for z coefficients (post alpha_1 stretch).
+ *   |z[0]|_inf <= 11*sigma + alpha_1*tau
+ *   |z[i]|_inf <= 11*sigma + tau    for i>=1
+ * Use the larger of the two as a uniform bound. */
 #define SHUTTLE_Z_BOUND      (SHUTTLE_BOUND + SHUTTLE_ALPHA_1 * SHUTTLE_TAU)
 
-/* Reciprocal of 2*sigma^2 in Q64. See rejsample.c. */
-#define SHUTTLE_INV_2SIGMA2_Q64 \
-    ((uint64_t)(-1ULL / (2ULL * (uint64_t)SHUTTLE_SIGMA * (uint64_t)SHUTTLE_SIGMA)))
+/* Q64 reciprocal of 2*sigma^2 was previously used by sampler.c to build
+ * the approx_exp input a_q60 via mulh64(num<<44, INV_Q64). That path's
+ * error chain bottomed out at 2^-46 and dominated the total budget; it
+ * has been replaced by the Q80 reciprocal (APPROX_EXP_I_HI/_LO in
+ * approx_exp_constants.h) coupled with a 128-bit multiply, which drops
+ * the chain to 2^-59. The legacy macro is intentionally not kept here. */
 
-/* Reciprocal of sigma^2 in Q62: floor(2^62 / sigma^2), fits uint64_t. Used
- * by rejsample.c to convert an integer inner-product into the Q62 quantity
- *   u_q62 = (inner / sigma^2) * 2^62 ~= inner * SHUTTLE_INV_SIGMA2_Q62
- * without assuming sigma^2 is a power of two. */
+/* Reciprocal of sigma^2 in Q62 (used by rejsample.c). */
 #define SHUTTLE_INV_SIGMA2_Q62 \
     ((uint64_t)(((uint64_t)1 << 62) / ((uint64_t)SHUTTLE_SIGMA * (uint64_t)SHUTTLE_SIGMA)))
 

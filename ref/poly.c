@@ -98,19 +98,31 @@ void poly_invntt_tomont(poly *a) {
 /*************************************************
 * Name:        poly_pointwise_montgomery
 *
-* Description: Pointwise multiplication of polynomials in NTT domain
-*              representation and multiplication of resulting polynomial
-*              by 2^{-32}.
+* Description: NTT-domain multiplication of two polynomials with the
+*              standard Montgomery /R factor.
+*
+*              For full NTT (base_deg=1) this is plain coefficient-wise
+*              multiplication.
+*
+*              For incomplete NTT (base_deg=2) the polynomial is in N/2
+*              basecase form: pairs (a[2k], a[2k+1]) live in
+*              Z_q[X]/(X^2 - psi_k). Pointwise multiplication is replaced
+*              by basemul implemented in ntt.c.
 *
 * Arguments:   - poly *c: pointer to output polynomial
 *              - const poly *a: pointer to first input polynomial
 *              - const poly *b: pointer to second input polynomial
 **************************************************/
 void poly_pointwise_montgomery(poly *c, const poly *a, const poly *b) {
+#if SHUTTLE_BASE_DEG == 1
   unsigned int i;
-
   for(i = 0; i < SHUTTLE_N; ++i)
     c->coeffs[i] = montgomery_reduce((int64_t)a->coeffs[i] * b->coeffs[i]);
+#elif SHUTTLE_BASE_DEG == 2
+  poly_basemul_montgomery_native(c->coeffs, a->coeffs, b->coeffs);
+#else
+#  error "Unsupported SHUTTLE_BASE_DEG (expected 1 or 2)"
+#endif
 }
 
 /*************************************************
@@ -188,12 +200,13 @@ static unsigned int rej_uniform(int32_t *a,
 {
   unsigned int ctr, pos;
   uint32_t t;
+  const uint32_t qmask = ((uint32_t)1 << SHUTTLE_QBITS) - 1U;
 
   ctr = pos = 0;
   while(ctr < len && pos + 2 <= buflen) {
     t  = buf[pos++];
     t |= (uint32_t)buf[pos++] << 8;
-    t &= 0x3FFF; /* mask to 14 bits */
+    t &= qmask;
 
     if(t < SHUTTLE_Q)
       a[ctr++] = t;
@@ -264,7 +277,14 @@ void poly_uniform_eta(poly *a,
                       const uint8_t seed[SHUTTLE_CRHBYTES],
                       uint16_t nonce)
 {
-  uint8_t buf[SHAKE256_RATE]; /* 136 bytes, >= 64 needed */
+  /* CBD(eta=1) needs 2 bits per coefficient. For SHUTTLE_N coefficients we
+   * pull (SHUTTLE_N + 3) / 4 bytes, rounded up to a SHAKE256 block. */
+  enum {
+    UNIFORM_ETA_NEEDED = (SHUTTLE_N + 3) / 4,
+    UNIFORM_ETA_NBLOCKS = (UNIFORM_ETA_NEEDED + SHAKE256_RATE - 1) / SHAKE256_RATE,
+    UNIFORM_ETA_BUFSZ = UNIFORM_ETA_NBLOCKS * SHAKE256_RATE,
+  };
+  uint8_t buf[UNIFORM_ETA_BUFSZ];
   keccak_state state;
   unsigned int i;
 
@@ -275,7 +295,7 @@ void poly_uniform_eta(poly *a,
   inbuf[SHUTTLE_CRHBYTES + 1] = (uint8_t)(nonce >> 8);
 
   shake256_absorb_once(&state, inbuf, SHUTTLE_CRHBYTES + 2);
-  shake256_squeezeblocks(buf, 1, &state);
+  shake256_squeezeblocks(buf, UNIFORM_ETA_NBLOCKS, &state);
 
   /* CBD(eta=1): 2 bits per coefficient, 4 coefficients per byte */
   for(i = 0; i < SHUTTLE_N / 4; ++i) {
@@ -461,58 +481,80 @@ void polyeta_unpack(poly *r, const uint8_t *a) {
   }
 }
 
-/*************************************************
-* Name:        polypk_pack
-*
-* Description: Bit-pack polynomial with 14-bit unsigned coefficients [0, Q-1].
-*              7 bytes per 4 coefficients (14 * 4 = 56 bits = 7 bytes).
-*
-* Arguments:   - uint8_t *r: pointer to output byte array with at least
-*                            SHUTTLE_POLYPK_PACKEDBYTES bytes
-*              - const poly *a: pointer to input polynomial
-**************************************************/
-void polypk_pack(uint8_t *r, const poly *a) {
-  unsigned int i;
+/* ============================================================
+ * Generic little-endian bit-level pack / unpack.
+ *
+ * Used by polypk_*, polyz_*, polyz0_*, polyw1_*, polyz1_lo_* below.
+ * The bit width can be anything in [1, 31] and need not be byte-aligned.
+ * Packed buffer size: ceil(n * bits / 8) bytes.
+ *
+ * For pack/unpack of signed coefficients, callers convert to/from
+ * unsigned offset-binary first (e.g. t = bound - coeff in [0, 2*bound]).
+ * ============================================================ */
+static void bitpack(uint8_t *r, const uint32_t *t, unsigned int n, unsigned int bits) {
+  uint64_t acc = 0;
+  unsigned int acc_bits = 0;
+  unsigned int byte_idx = 0;
+  const uint64_t mask = (bits >= 32) ? UINT32_MAX : ((1ULL << bits) - 1);
+  unsigned int total = n * bits;
 
-  for(i = 0; i < SHUTTLE_N / 4; ++i) {
-    uint32_t c0 = (uint32_t)a->coeffs[4 * i + 0];
-    uint32_t c1 = (uint32_t)a->coeffs[4 * i + 1];
-    uint32_t c2 = (uint32_t)a->coeffs[4 * i + 2];
-    uint32_t c3 = (uint32_t)a->coeffs[4 * i + 3];
+  for(unsigned int i = 0; i < n; ++i) {
+    acc |= ((uint64_t)t[i] & mask) << acc_bits;
+    acc_bits += bits;
+    while(acc_bits >= 8) {
+      r[byte_idx++] = (uint8_t)(acc & 0xFF);
+      acc >>= 8;
+      acc_bits -= 8;
+    }
+  }
+  if(acc_bits > 0) {
+    r[byte_idx++] = (uint8_t)(acc & 0xFF);
+  }
+  (void)total;
+}
 
-    r[7 * i + 0] = (uint8_t)(c0);
-    r[7 * i + 1] = (uint8_t)(c0 >> 8) | (uint8_t)(c1 << 6);
-    r[7 * i + 2] = (uint8_t)(c1 >> 2);
-    r[7 * i + 3] = (uint8_t)(c1 >> 10) | (uint8_t)(c2 << 4);
-    r[7 * i + 4] = (uint8_t)(c2 >> 4);
-    r[7 * i + 5] = (uint8_t)(c2 >> 12) | (uint8_t)(c3 << 2);
-    r[7 * i + 6] = (uint8_t)(c3 >> 6);
+static void bitunpack(uint32_t *t, const uint8_t *r, unsigned int n, unsigned int bits) {
+  uint64_t acc = 0;
+  unsigned int acc_bits = 0;
+  unsigned int byte_idx = 0;
+  const uint64_t mask = (1ULL << bits) - 1;
+
+  for(unsigned int i = 0; i < n; ++i) {
+    while(acc_bits < bits) {
+      acc |= ((uint64_t)r[byte_idx++]) << acc_bits;
+      acc_bits += 8;
+    }
+    t[i] = (uint32_t)(acc & mask);
+    acc >>= bits;
+    acc_bits -= bits;
   }
 }
 
 /*************************************************
+* Name:        polypk_pack
+*
+* Description: Bit-pack polynomial with QBITS-bit unsigned coefficients
+*              in [0, Q-1]. QBITS is 14, 15, or 16 depending on mode.
+*
+* Arguments:   - uint8_t *r: pointer to output byte array of at least
+*                            SHUTTLE_POLYPK_PACKEDBYTES bytes
+*              - const poly *a: pointer to input polynomial
+**************************************************/
+void polypk_pack(uint8_t *r, const poly *a) {
+  uint32_t t[SHUTTLE_N];
+  for(unsigned int i = 0; i < SHUTTLE_N; ++i)
+    t[i] = (uint32_t)a->coeffs[i];
+  bitpack(r, t, SHUTTLE_N, SHUTTLE_QBITS);
+}
+
+/*************************************************
 * Name:        polypk_unpack
-*
-* Description: Unpack polynomial with 14-bit unsigned coefficients.
-*
-* Arguments:   - poly *r: pointer to output polynomial
-*              - const uint8_t *a: byte array with bit-packed polynomial
 **************************************************/
 void polypk_unpack(poly *r, const uint8_t *a) {
-  unsigned int i;
-
-  for(i = 0; i < SHUTTLE_N / 4; ++i) {
-    r->coeffs[4 * i + 0] = ((uint32_t)a[7 * i + 0]
-                           | ((uint32_t)a[7 * i + 1] << 8)) & 0x3FFF;
-    r->coeffs[4 * i + 1] = (((uint32_t)a[7 * i + 1] >> 6)
-                           | ((uint32_t)a[7 * i + 2] << 2)
-                           | ((uint32_t)a[7 * i + 3] << 10)) & 0x3FFF;
-    r->coeffs[4 * i + 2] = (((uint32_t)a[7 * i + 3] >> 4)
-                           | ((uint32_t)a[7 * i + 4] << 4)
-                           | ((uint32_t)a[7 * i + 5] << 12)) & 0x3FFF;
-    r->coeffs[4 * i + 3] = (((uint32_t)a[7 * i + 5] >> 2)
-                           | ((uint32_t)a[7 * i + 6] << 6)) & 0x3FFF;
-  }
+  uint32_t t[SHUTTLE_N];
+  bitunpack(t, a, SHUTTLE_N, SHUTTLE_QBITS);
+  for(unsigned int i = 0; i < SHUTTLE_N; ++i)
+    r->coeffs[i] = (int32_t)t[i];
 }
 
 /*************************************************
@@ -530,58 +572,20 @@ void polypk_unpack(poly *r, const uint8_t *a) {
 *              - const poly *a: pointer to input polynomial
 **************************************************/
 void polyz_pack(uint8_t *r, const poly *a) {
-  unsigned int i;
-  uint32_t t[4];
-
-  for(i = 0; i < SHUTTLE_N / 4; ++i) {
-    /* Map from [-Z_BOUND, Z_BOUND] to [0, 2*Z_BOUND] */
-    t[0] = (uint32_t)(SHUTTLE_Z_BOUND - a->coeffs[4 * i + 0]);
-    t[1] = (uint32_t)(SHUTTLE_Z_BOUND - a->coeffs[4 * i + 1]);
-    t[2] = (uint32_t)(SHUTTLE_Z_BOUND - a->coeffs[4 * i + 2]);
-    t[3] = (uint32_t)(SHUTTLE_Z_BOUND - a->coeffs[4 * i + 3]);
-
-    r[7 * i + 0] = (uint8_t)(t[0]);
-    r[7 * i + 1] = (uint8_t)(t[0] >> 8) | (uint8_t)(t[1] << 6);
-    r[7 * i + 2] = (uint8_t)(t[1] >> 2);
-    r[7 * i + 3] = (uint8_t)(t[1] >> 10) | (uint8_t)(t[2] << 4);
-    r[7 * i + 4] = (uint8_t)(t[2] >> 4);
-    r[7 * i + 5] = (uint8_t)(t[2] >> 12) | (uint8_t)(t[3] << 2);
-    r[7 * i + 6] = (uint8_t)(t[3] >> 6);
-  }
+  uint32_t t[SHUTTLE_N];
+  for(unsigned int i = 0; i < SHUTTLE_N; ++i)
+    t[i] = (uint32_t)(SHUTTLE_Z_BOUND - a->coeffs[i]);
+  bitpack(r, t, SHUTTLE_N, SHUTTLE_POLYZ_BITS);
 }
 
 /*************************************************
 * Name:        polyz_unpack
-*
-* Description: Unpack polynomial with signed coefficients from packed
-*              14-bit representation.
-*
-* Arguments:   - poly *r: pointer to output polynomial
-*              - const uint8_t *a: byte array with bit-packed polynomial
 **************************************************/
 void polyz_unpack(poly *r, const uint8_t *a) {
-  unsigned int i;
-
-  for(i = 0; i < SHUTTLE_N / 4; ++i) {
-    uint32_t t0, t1, t2, t3;
-
-    t0 = ((uint32_t)a[7 * i + 0]
-        | ((uint32_t)a[7 * i + 1] << 8)) & 0x3FFF;
-    t1 = (((uint32_t)a[7 * i + 1] >> 6)
-        | ((uint32_t)a[7 * i + 2] << 2)
-        | ((uint32_t)a[7 * i + 3] << 10)) & 0x3FFF;
-    t2 = (((uint32_t)a[7 * i + 3] >> 4)
-        | ((uint32_t)a[7 * i + 4] << 4)
-        | ((uint32_t)a[7 * i + 5] << 12)) & 0x3FFF;
-    t3 = (((uint32_t)a[7 * i + 5] >> 2)
-        | ((uint32_t)a[7 * i + 6] << 6)) & 0x3FFF;
-
-    /* Map back from [0, 2*Z_BOUND] to [-Z_BOUND, Z_BOUND] */
-    r->coeffs[4 * i + 0] = SHUTTLE_Z_BOUND - (int32_t)t0;
-    r->coeffs[4 * i + 1] = SHUTTLE_Z_BOUND - (int32_t)t1;
-    r->coeffs[4 * i + 2] = SHUTTLE_Z_BOUND - (int32_t)t2;
-    r->coeffs[4 * i + 3] = SHUTTLE_Z_BOUND - (int32_t)t3;
-  }
+  uint32_t t[SHUTTLE_N];
+  bitunpack(t, a, SHUTTLE_N, SHUTTLE_POLYZ_BITS);
+  for(unsigned int i = 0; i < SHUTTLE_N; ++i)
+    r->coeffs[i] = SHUTTLE_Z_BOUND - (int32_t)t[i];
 }
 
 /*************************************************
@@ -599,36 +603,10 @@ void polyz_unpack(poly *r, const uint8_t *a) {
 *              - const poly *a: pointer to input polynomial
 **************************************************/
 void polyw1_pack(uint8_t *r, const poly *a) {
-  unsigned int i;
-
-#if SHUTTLE_W1_BITS == 6
-  for(i = 0; i < SHUTTLE_N / 4; ++i) {
-    r[3 * i + 0] = (uint8_t)(a->coeffs[4 * i + 0])
-                 | (uint8_t)(a->coeffs[4 * i + 1] << 6);
-    r[3 * i + 1] = (uint8_t)(a->coeffs[4 * i + 1] >> 2)
-                 | (uint8_t)(a->coeffs[4 * i + 2] << 4);
-    r[3 * i + 2] = (uint8_t)(a->coeffs[4 * i + 2] >> 4)
-                 | (uint8_t)(a->coeffs[4 * i + 3] << 2);
-  }
-#elif SHUTTLE_W1_BITS == 5
-  for(i = 0; i < SHUTTLE_N / 8; ++i) {
-    const int32_t *c = &a->coeffs[8 * i];
-    r[5 * i + 0] = (uint8_t)(c[0])
-                 | (uint8_t)(c[1] << 5);
-    r[5 * i + 1] = (uint8_t)(c[1] >> 3)
-                 | (uint8_t)(c[2] << 2)
-                 | (uint8_t)(c[3] << 7);
-    r[5 * i + 2] = (uint8_t)(c[3] >> 1)
-                 | (uint8_t)(c[4] << 4);
-    r[5 * i + 3] = (uint8_t)(c[4] >> 4)
-                 | (uint8_t)(c[5] << 1)
-                 | (uint8_t)(c[6] << 6);
-    r[5 * i + 4] = (uint8_t)(c[6] >> 2)
-                 | (uint8_t)(c[7] << 3);
-  }
-#else
-#  error "Unsupported SHUTTLE_W1_BITS (expected 5 or 6)"
-#endif
+  uint32_t t[SHUTTLE_N];
+  for(unsigned int i = 0; i < SHUTTLE_N; ++i)
+    t[i] = (uint32_t)a->coeffs[i];
+  bitpack(r, t, SHUTTLE_N, SHUTTLE_W1_BITS);
 }
 
 /*************************************************
@@ -645,68 +623,22 @@ void polyw1_pack(uint8_t *r, const poly *a) {
 *              - const poly *a: pointer to input polynomial
 **************************************************/
 void polyz0_pack(uint8_t *r, const poly *a) {
-  unsigned int i;
-  uint32_t t[8];
   const int32_t center = 1 << (SHUTTLE_Z0_BITS - 1);
-
-  for(i = 0; i < SHUTTLE_N / 8; ++i) {
-    unsigned int j;
-    for(j = 0; j < 8; ++j)
-      t[j] = (uint32_t)(center - a->coeffs[8 * i + j]);
-
-    /* 11 bits/coeff, 88 bits / 8 bytes per 8 coefficients -> 11 bytes */
-    r[11 * i +  0] = (uint8_t)(t[0]);
-    r[11 * i +  1] = (uint8_t)(t[0] >> 8) | (uint8_t)(t[1] << 3);
-    r[11 * i +  2] = (uint8_t)(t[1] >> 5) | (uint8_t)(t[2] << 6);
-    r[11 * i +  3] = (uint8_t)(t[2] >> 2);
-    r[11 * i +  4] = (uint8_t)(t[2] >> 10) | (uint8_t)(t[3] << 1);
-    r[11 * i +  5] = (uint8_t)(t[3] >> 7) | (uint8_t)(t[4] << 4);
-    r[11 * i +  6] = (uint8_t)(t[4] >> 4) | (uint8_t)(t[5] << 7);
-    r[11 * i +  7] = (uint8_t)(t[5] >> 1);
-    r[11 * i +  8] = (uint8_t)(t[5] >> 9) | (uint8_t)(t[6] << 2);
-    r[11 * i +  9] = (uint8_t)(t[6] >> 6) | (uint8_t)(t[7] << 5);
-    r[11 * i + 10] = (uint8_t)(t[7] >> 3);
-  }
+  uint32_t t[SHUTTLE_N];
+  for(unsigned int i = 0; i < SHUTTLE_N; ++i)
+    t[i] = (uint32_t)(center - a->coeffs[i]);
+  bitpack(r, t, SHUTTLE_N, SHUTTLE_Z0_BITS);
 }
 
 /*************************************************
 * Name:        polyz0_unpack
-*
-* Description: Inverse of polyz0_pack.
-*
-* Arguments:   - poly *r: pointer to output polynomial
-*              - const uint8_t *a: byte array with bit-packed polynomial
 **************************************************/
 void polyz0_unpack(poly *r, const uint8_t *a) {
-  unsigned int i;
   const int32_t center = 1 << (SHUTTLE_Z0_BITS - 1);
-  const uint32_t mask = ((uint32_t)1 << SHUTTLE_Z0_BITS) - 1;
-
-  for(i = 0; i < SHUTTLE_N / 8; ++i) {
-    uint32_t t[8];
-
-    t[0] = ((uint32_t)a[11 * i + 0]
-          | ((uint32_t)a[11 * i + 1] << 8)) & mask;
-    t[1] = (((uint32_t)a[11 * i + 1] >> 3)
-          | ((uint32_t)a[11 * i + 2] << 5)) & mask;
-    t[2] = (((uint32_t)a[11 * i + 2] >> 6)
-          | ((uint32_t)a[11 * i + 3] << 2)
-          | ((uint32_t)a[11 * i + 4] << 10)) & mask;
-    t[3] = (((uint32_t)a[11 * i + 4] >> 1)
-          | ((uint32_t)a[11 * i + 5] << 7)) & mask;
-    t[4] = (((uint32_t)a[11 * i + 5] >> 4)
-          | ((uint32_t)a[11 * i + 6] << 4)) & mask;
-    t[5] = (((uint32_t)a[11 * i + 6] >> 7)
-          | ((uint32_t)a[11 * i + 7] << 1)
-          | ((uint32_t)a[11 * i + 8] << 9)) & mask;
-    t[6] = (((uint32_t)a[11 * i + 8] >> 2)
-          | ((uint32_t)a[11 * i + 9] << 6)) & mask;
-    t[7] = (((uint32_t)a[11 * i + 9] >> 5)
-          | ((uint32_t)a[11 * i + 10] << 3)) & mask;
-
-    for(unsigned int j = 0; j < 8; ++j)
-      r->coeffs[8 * i + j] = center - (int32_t)t[j];
-  }
+  uint32_t t[SHUTTLE_N];
+  bitunpack(t, a, SHUTTLE_N, SHUTTLE_Z0_BITS);
+  for(unsigned int i = 0; i < SHUTTLE_N; ++i)
+    r->coeffs[i] = center - (int32_t)t[i];
 }
 
 /**************************************************************/
@@ -764,65 +696,26 @@ void polyz1_combine(poly *a, const int32_t *hi, const int32_t *lo) {
 *              around zero is lossless and the unpacker recovers lo by
 *              treating the high half of [0, alpha_h-1] as negative.
 **************************************************/
-#if SHUTTLE_ALPHA_H_BITS == 7
+/* Generic ALPHA_H_BITS pack/unpack using the bitpack/bitunpack helpers.
+ * lo[i] in (-alpha_h/2, alpha_h/2]  ->  packed = lo & (alpha_h - 1).
+ * unpacker sends packed >= alpha_h/2 back to packed - alpha_h. */
 void polyz1_lo_pack(uint8_t *r, const int32_t *lo) {
-  unsigned int i;
-  uint32_t c[8];
-  for(i = 0; i < SHUTTLE_N / 8; ++i) {
-    unsigned int j;
-    for(j = 0; j < 8; ++j)
-      c[j] = (uint32_t)(lo[8 * i + j] & (SHUTTLE_ALPHA_H - 1));
-
-    r[7 * i + 0] = (uint8_t)(c[0]      | (c[1] << 7));
-    r[7 * i + 1] = (uint8_t)((c[1] >> 1) | (c[2] << 6));
-    r[7 * i + 2] = (uint8_t)((c[2] >> 2) | (c[3] << 5));
-    r[7 * i + 3] = (uint8_t)((c[3] >> 3) | (c[4] << 4));
-    r[7 * i + 4] = (uint8_t)((c[4] >> 4) | (c[5] << 3));
-    r[7 * i + 5] = (uint8_t)((c[5] >> 5) | (c[6] << 2));
-    r[7 * i + 6] = (uint8_t)((c[6] >> 6) | (c[7] << 1));
-  }
+  uint32_t t[SHUTTLE_N];
+  for(unsigned int i = 0; i < SHUTTLE_N; ++i)
+    t[i] = (uint32_t)(lo[i] & (SHUTTLE_ALPHA_H - 1));
+  bitpack(r, t, SHUTTLE_N, SHUTTLE_ALPHA_H_BITS);
 }
 
 void polyz1_lo_unpack(int32_t *lo, const uint8_t *r) {
-  unsigned int i;
-  uint32_t c[8];
+  uint32_t t[SHUTTLE_N];
   const int32_t half = SHUTTLE_HALF_ALPHA_H;
   const int32_t alpha = SHUTTLE_ALPHA_H;
-  for(i = 0; i < SHUTTLE_N / 8; ++i) {
-    unsigned int j;
-    c[0] = ((uint32_t)r[7 * i + 0])                                 & 0x7F;
-    c[1] = (((uint32_t)r[7 * i + 0] >> 7) | ((uint32_t)r[7 * i + 1] << 1)) & 0x7F;
-    c[2] = (((uint32_t)r[7 * i + 1] >> 6) | ((uint32_t)r[7 * i + 2] << 2)) & 0x7F;
-    c[3] = (((uint32_t)r[7 * i + 2] >> 5) | ((uint32_t)r[7 * i + 3] << 3)) & 0x7F;
-    c[4] = (((uint32_t)r[7 * i + 3] >> 4) | ((uint32_t)r[7 * i + 4] << 4)) & 0x7F;
-    c[5] = (((uint32_t)r[7 * i + 4] >> 3) | ((uint32_t)r[7 * i + 5] << 5)) & 0x7F;
-    c[6] = (((uint32_t)r[7 * i + 5] >> 2) | ((uint32_t)r[7 * i + 6] << 6)) & 0x7F;
-    c[7] = ( (uint32_t)r[7 * i + 6] >> 1)                                  & 0x7F;
-    for(j = 0; j < 8; ++j) {
-      int32_t v = (int32_t)c[j];
-      lo[8 * i + j] = (v >= half) ? v - alpha : v;
-    }
-  }
-}
-#elif SHUTTLE_ALPHA_H_BITS == 8
-void polyz1_lo_pack(uint8_t *r, const int32_t *lo) {
-  unsigned int i;
-  for(i = 0; i < SHUTTLE_N; ++i)
-    r[i] = (uint8_t)(lo[i] & 0xFF);
-}
-
-void polyz1_lo_unpack(int32_t *lo, const uint8_t *r) {
-  unsigned int i;
-  const int32_t half = SHUTTLE_HALF_ALPHA_H;
-  const int32_t alpha = SHUTTLE_ALPHA_H;
-  for(i = 0; i < SHUTTLE_N; ++i) {
-    int32_t v = (int32_t)r[i];
+  bitunpack(t, r, SHUTTLE_N, SHUTTLE_ALPHA_H_BITS);
+  for(unsigned int i = 0; i < SHUTTLE_N; ++i) {
+    int32_t v = (int32_t)t[i];
     lo[i] = (v >= half) ? v - alpha : v;
   }
 }
-#else
-#  error "polyz1_lo_pack/unpack unsupported ALPHA_H_BITS"
-#endif
 
 /**************************************************************/
 /*********** mod 2q helpers (Phase 6b-1) **********************/

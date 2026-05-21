@@ -365,7 +365,7 @@ int main(void)
         z.vec[0] = z0_comp;
       }
       norm_sq = polyvec_sq_norm(&z);
-      if(norm_sq >= (int64_t)SHUTTLE_BS_SQ) continue;
+      if(SHUTTLE_NORM_GE_FX(norm_sq, SHUTTLE_BS_SQ_FX)) continue;
 
       poly z_1[1 + SHUTTLE_L];
       for(i = 0; i < 1 + SHUTTLE_L; ++i) z_1[i] = z.vec[i];

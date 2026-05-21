@@ -1,31 +1,69 @@
 #!/usr/bin/env python3
 """Offline generator for SHUTTLE NTT zeta tables and Montgomery constants.
 
-Produces drop-in constants for reduce.h and ntt.c, parameterized by (q, N).
-The layout follows the Dilithium-style forward-NTT (full-N zetas, int32_t
-coefficients, R = 2^32 Montgomery base).
+Produces ntt_constants.h, included by params.h / reduce.h / ntt.c.
+
+Supports three parameter sets (see SHUTTLE-Spec/sections/Description.tex Table 2):
+
+  SHUTTLE-128 : (q=13313,  n=256,  base_deg=1)  full NTT,        rho is 2N-th root
+  SHUTTLE-256 : (q=32257,  n=512,  base_deg=2)  incomplete NTT,  rho is N-th root
+  SHUTTLE-512 : (q=64513,  n=1024, base_deg=2)  incomplete NTT,  rho is N-th root
+
+For base_deg=2 (Kyber-style incomplete NTT), q is chosen such that q-1 is
+divisible by N but NOT by 2N, so the polynomial X^n+1 splits into N/2
+quadratic factors X^2 - psi_i. The forward NTT performs log2(N)-1 layers of
+Cooley-Tukey butterflies, leaving N/2 basecase polys of degree 1 (= deg 2
+modulus). The "basemul" step replaces pointwise multiplication and uses
+the second half of the zetas table.
+
+Layout follows Dilithium / Kyber:
+  - int32_t coefficients, R = 2^32 Montgomery base.
+  - zetas[i] = MONT * rho^{bitrev(i, log2(zetas_size))} mod q, centered to
+    (-q/2, q/2].
+  - zetas table size: N for full NTT, N/2 for incomplete NTT.
 
 Run:  python3 gen_zetas.py
-
-For the shipping configuration (q = 13313) this prints MONT, QINV, and two
-zeta tables (N = 256 for SHUTTLE-128 and N = 512 for SHUTTLE-256), as well
-as the final invntt scale factor f = MONT^2 / N mod q for each.
 """
+
+import math
+import sys
+import os
+
+# ============================================================
+# Math utilities
+# ============================================================
+
+def factorize(n):
+    """Return list of distinct prime factors of n (sorted ascending)."""
+    factors = []
+    d = 2
+    while d * d <= n:
+        if n % d == 0:
+            factors.append(d)
+            while n % d == 0:
+                n //= d
+        d += 1
+    if n > 1:
+        factors.append(n)
+    return factors
+
 
 def mod_order(g, q):
     """Multiplicative order of g mod prime q."""
     n = q - 1
-    # q - 1 = 2^10 * 13 for q=13313
-    for p in [2, 13]:
+    for p in factorize(n):
         while n % p == 0 and pow(g, n // p, q) == 1:
             n //= p
     return n
 
+
 def primitive_root(q, order_want):
+    """Smallest g in [2, q) of multiplicative order exactly order_want mod q."""
     for g in range(2, q):
         if mod_order(g, q) == order_want:
             return g
     raise ValueError(f"No element of order {order_want} mod {q}")
+
 
 def bitrev(x, bits):
     r = 0
@@ -33,47 +71,192 @@ def bitrev(x, bits):
         r = (r << 1) | ((x >> i) & 1)
     return r
 
+
 def signed(x, q):
     x %= q
     if x > q // 2:
         x -= q
     return x
 
-def gen(q, N):
-    # Montgomery constants
+
+def v2(n):
+    """2-adic valuation: largest k s.t. 2^k | n."""
+    k = 0
+    while n % 2 == 0 and n > 0:
+        n //= 2
+        k += 1
+    return k
+
+
+# ============================================================
+# Per-mode generator
+# ============================================================
+
+def gen(q, N, base_deg):
+    """Generate NTT constants for ring Z_q[X]/(X^N+1) with given base degree.
+
+    base_deg=1: full NTT (q must satisfy q == 1 mod 2N).
+    base_deg=2: incomplete NTT (q must satisfy q == 1 mod N).
+    """
+    assert base_deg in (1, 2)
+
+    # Montgomery / Barrett constants
     MONT = pow(2, 32, q)
     QINV = pow(q, -1, 1 << 32)
-    # Primitive 2N-th root of unity
-    rho = primitive_root(q, 2 * N)
-    # Full-N zetas, bit-reversed
-    bits = N.bit_length() - 1
-    zetas = [signed((MONT * pow(rho, bitrev(i, bits), q)) % q, q) for i in range(N)]
-    # Invntt final scale
-    f = signed((MONT * MONT * pow(N, -1, q)) % q, q)
-    # Barrett V for reduce32
     V = round((1 << 32) / q)
-    return MONT, QINV, V, rho, zetas, f
 
-def fmt_table(name, zs):
-    out = [f"static const int32_t {name}[{len(zs)}] = {{"]
-    for i in range(0, len(zs), 8):
-        out.append("    " + ", ".join(f"{v:8d}" for v in zs[i:i+8]) + ",")
-    out.append("};")
+    if base_deg == 1:
+        rho_order = 2 * N
+        zetas_size = N
+    else:
+        rho_order = N
+        zetas_size = N // 2
+
+    # Sanity: q-1 must be divisible by rho_order
+    if (q - 1) % rho_order != 0:
+        raise ValueError(
+            f"q={q} does not support primitive {rho_order}-th root "
+            f"(q-1 = {q-1} is not divisible by {rho_order}). "
+            f"v2(q-1) = {v2(q-1)}, need >= log2({rho_order}) = {rho_order.bit_length()-1}."
+        )
+
+    rho = primitive_root(q, rho_order)
+
+    # bitrev bit-count: log2(zetas_size)
+    bits = zetas_size.bit_length() - 1
+
+    zetas = [signed((MONT * pow(rho, bitrev(i, bits), q)) % q, q)
+             for i in range(zetas_size)]
+
+    # Inverse-NTT final scale: f = MONT^2 / zetas_size mod q
+    #   (zetas_size = N for full NTT, N/2 for incomplete -- each butterfly
+    #   layer of invntt is a 1/2 factor, total factor = 1/2^layers,
+    #   and layers = log2(zetas_size).)
+    f = signed((MONT * MONT * pow(zetas_size, -1, q)) % q, q)
+
+    return {
+        "q": q,
+        "N": N,
+        "base_deg": base_deg,
+        "MONT": MONT,
+        "QINV": QINV,
+        "BARRETT_V": V,
+        "rho": rho,
+        "rho_order": rho_order,
+        "zetas": zetas,
+        "zetas_size": zetas_size,
+        "invntt_f": f,
+    }
+
+
+def fmt_zetas_table(zetas, indent="    "):
+    out = []
+    for i in range(0, len(zetas), 8):
+        out.append(indent + ", ".join(f"{v:8d}" for v in zetas[i:i+8]) + ",")
     return "\n".join(out)
 
+
+HEADER_TEMPLATE = '''\
+/*
+ * ntt_constants.h - per-mode NTT / Montgomery constants for SHUTTLE.
+ *
+ * AUTO-GENERATED by gen_zetas.py. DO NOT EDIT BY HAND.
+ *
+ * Three parameter sets (SHUTTLE-Spec Table 2):
+{mode_summary}
+ *
+ * For incomplete NTT (modes 256, 512) the zetas table has N/2 entries:
+ *   zetas[1..N/2-1]      - twiddles for log2(N)-1 butterfly layers
+ *   zetas[N/4..N/2-1]    - basemul twiddles (paired with their negation)
+ *
+ * MONT  = 2^32 mod q.
+ * QINV  = q^{{-1}} mod 2^32.
+ * BARRETT_V = round(2^32 / q).
+ * INVNTT_F = MONT^2 / (zetas_size) mod q  --  final invntt scale.
+ */
+
+#ifndef SHUTTLE_NTT_CONSTANTS_H
+#define SHUTTLE_NTT_CONSTANTS_H
+
+#include <stdint.h>
+#include "config.h"
+
+{mode_blocks}
+
+#endif /* SHUTTLE_NTT_CONSTANTS_H */
+'''
+
+
+MODE_BLOCK_TEMPLATE = '''\
+/* ============================================================
+ * SHUTTLE-{security} : q = {q}, n = {N}, base_deg = {base_deg}
+ *   primitive {rho_order}-th root of unity: rho = {rho}
+ * ============================================================ */
+#if SHUTTLE_MODE == {security}
+
+#define SHUTTLE_MONT          {MONT}U
+#define SHUTTLE_QINV          {QINV}U
+#define SHUTTLE_BARRETT_V     {BARRETT_V}
+#define SHUTTLE_INVNTT_F      ({invntt_f})
+#define SHUTTLE_NTT_ZETAS_SIZE {zetas_size}
+
+static const int32_t zetas[SHUTTLE_NTT_ZETAS_SIZE] = {{
+{zetas_table}
+}};
+
+#endif /* SHUTTLE_MODE == {security} */
+'''
+
+
 def main():
-    q = 13313
-    print(f"q = {q}")
-    for N in (256, 512):
-        MONT, QINV, V, rho, zetas, f = gen(q, N)
-        print(f"\n=== N = {N} ===")
-        print(f"  MONT = {MONT}U")
-        print(f"  QINV = {QINV}U")
-        print(f"  Barrett V = {V}")
-        print(f"  primitive 2N-th root = {rho}")
-        print(f"  invntt scale f = {f}")
-        print()
-        print(fmt_table("zetas", zetas))
+    modes = [
+        ("128", 13313, 256, 1),
+        ("256", 32257, 512, 2),
+        ("512", 64513, 1024, 2),
+    ]
+
+    results = []
+    summary_lines = []
+    blocks = []
+    for security, q, N, base_deg in modes:
+        r = gen(q, N, base_deg)
+        results.append((security, r))
+        kind = "full NTT" if base_deg == 1 else "incomplete NTT (basecase deg 2)"
+        summary_lines.append(
+            f" *   SHUTTLE-{security} : q={r['q']}, n={r['N']}, "
+            f"rho={r['rho']} (order {r['rho_order']}), {kind}"
+        )
+        blocks.append(MODE_BLOCK_TEMPLATE.format(
+            security=security,
+            q=r["q"],
+            N=r["N"],
+            base_deg=r["base_deg"],
+            rho=r["rho"],
+            rho_order=r["rho_order"],
+            MONT=r["MONT"],
+            QINV=r["QINV"],
+            BARRETT_V=r["BARRETT_V"],
+            invntt_f=r["invntt_f"],
+            zetas_size=r["zetas_size"],
+            zetas_table=fmt_zetas_table(r["zetas"]),
+        ))
+
+    header = HEADER_TEMPLATE.format(
+        mode_summary="\n".join(summary_lines),
+        mode_blocks="\n".join(blocks),
+    )
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    out_path = os.path.join(here, "ntt_constants.h")
+    with open(out_path, "w") as f:
+        f.write(header)
+
+    print(f"Wrote {out_path}")
+    for security, r in results:
+        print(f"  SHUTTLE-{security}: q={r['q']}, N={r['N']}, base_deg={r['base_deg']}, "
+              f"rho={r['rho']}, MONT={r['MONT']}, INVNTT_F={r['invntt_f']}, "
+              f"zetas_size={r['zetas_size']}")
+
 
 if __name__ == "__main__":
     main()

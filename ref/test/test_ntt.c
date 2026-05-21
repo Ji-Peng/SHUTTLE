@@ -91,9 +91,14 @@ static int test_ntt_convolution(void) {
   ntt(a_ntt);
   ntt(b_ntt);
 
-  /* Pointwise multiply (in Montgomery domain) */
+#if SHUTTLE_BASE_DEG == 1
+  /* Full NTT: raw pointwise in Montgomery domain. */
   for (int i = 0; i < N; i++)
     c_ntt[i] = montgomery_reduce((int64_t)a_ntt[i] * b_ntt[i]);
+#else
+  /* Incomplete NTT: deg-2 basecase multiplication. */
+  poly_basemul_montgomery_native(c_ntt, a_ntt, b_ntt);
+#endif
 
   /* Inverse NTT */
   invntt_tomont(c_ntt);

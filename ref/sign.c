@@ -132,8 +132,8 @@ int crypto_sign_keypair(uint8_t *pk, uint8_t *sk)
     norm_sq += polyvecl_sq_norm(&s);
     norm_sq += polyveck_sq_norm(&e);
 
-    if(norm_sq < (int64_t)SHUTTLE_BK * SHUTTLE_BK
-       && norm_sq > (int64_t)SHUTTLE_BK_LOW * SHUTTLE_BK_LOW)
+    if(SHUTTLE_NORM_LT_FX(norm_sq, SHUTTLE_BK_SQ_FX)
+       && SHUTTLE_NORM_GT_FX(norm_sq, SHUTTLE_BK_LOW_SQ_FX))
       break;
   }
 
@@ -275,7 +275,7 @@ int crypto_sign_signature(uint8_t *sig, size_t *siglen,
     z.vec[0] = z0_comp;
 
     norm_sq = polyvec_sq_norm(&z);
-    if(norm_sq >= (int64_t)SHUTTLE_BS_SQ)
+    if(SHUTTLE_NORM_GE_FX(norm_sq, SHUTTLE_BS_SQ_FX))
       continue;
 
     poly z_1[1 + SHUTTLE_L];
@@ -367,7 +367,7 @@ int crypto_sign_verify(const uint8_t *sig, size_t siglen,
   for(i = 0; i < SHUTTLE_M; ++i)
     norm_sq += poly_sq_norm(&z_2_recov.vec[i]);
 
-  if(norm_sq > (int64_t)SHUTTLE_BV_SQ)
+  if(SHUTTLE_NORM_GT_FX(norm_sq, SHUTTLE_BV_SQ_FX))
     return -3;
 
   return 0;

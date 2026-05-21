@@ -1,18 +1,22 @@
 /*
- * approx_exp.h - ApproxExp module for SHUTTLE discrete Gaussian sampler.
+ * approx_exp.h - Fixed-point exp(-a) primitive for the SHUTTLE rejection
+ *                sampler.
  *
- * Computes exp(-x) in Q63 fixed-point using the exp(+) approach (V2 variant):
- *   1) Transform: u = N*ln2 - x, so exp(-x) = exp(u) * 2^{-N}
- *   2) Decompose: u = nh*ln2 + rh*(ln2/2) + rl
- *   3) Precomputed table: 2^{+rh/2} for rh in {0,1}
- *   4) Degree-9 polynomial: exp(+rl) for rl in [0, ln2/2)
- *   5) Combine: exp(-x) = 2^{nh-N} * 2^{rh/2} * exp(rl)
+ * Public interface to the implementation in approx_exp.c, which realises
+ * Algorithm 1 of agent/ApproxExp/ApproxExp.tex. The function approx_exp()
+ * computes round(exp(-a) * 2^63) given a in Q60 fixed-point.
  *
- * V2 variant: [0, ln2/2) interval, degree 9, 2-entry table.
- * Precision: ~55.9 bits.
+ * Caller responsibility: the input must satisfy 0 <= a < 11 * ln(2) ~
+ * 7.624. Every SHUTTLE parameter set's worst-case a_max stays below this
+ * bound (SHUTTLE-128: 6.914, SHUTTLE-256: 4.812, SHUTTLE-512: 7.369).
  *
- * Input range: x in [0, N_SHIFT * ln2) = [0, ~7.62).
- * Sufficient for all SHUTTLE sampler modes (max ~6.914 at sigma=101).
+ * Output precision: 53-bit relative (a-independent terms ~ 2^-58 plus
+ * an output-quantisation term 2^-64 / exp(-a) that dominates near
+ * a = a_max). See approx_exp.c and ApproxExp.tex Section 4 for the full
+ * error budget.
+ *
+ * Side-channel: no data-dependent control flow; the B-entry table is
+ * always scanned end-to-end with bit masks.
  */
 
 #ifndef SHUTTLE_APPROX_EXP_H
@@ -21,9 +25,15 @@
 #include <stdint.h>
 
 /* ============================================================
- * 64-bit multiply-high primitives (platform-specific)
+ * 64-bit multiply-high primitive (mulh64).
+ *
+ * Returns the upper 64 bits of the unsigned 128-bit product a*b.
+ * Used pervasively inside approx_exp (Horner chain, range reduction,
+ * Q57 reciprocal) and inside the sampler's a_q60 computation.
+ *
+ * On x86-64 GCC / Clang the unsigned __int128 form compiles to a
+ * single `mulq` instruction (~3 cycles).
  * ============================================================ */
-
 #if defined(__GNUC__) || defined(__clang__)
 
 __extension__ typedef unsigned __int128 wide_uint128;
@@ -50,36 +60,19 @@ static inline int64_t smulh64(int64_t a, int64_t b) {
 }
 
 #else
-#error "Unsupported compiler: need 128-bit multiply or intrinsics for 64-bit mulh"
+#  error "Unsupported compiler: need 128-bit multiply or intrinsics for 64-bit mulh"
 #endif
 
-/*
- * N_SHIFT: the integer offset for the exp(+) transformation.
- * exp(-x) = exp(N_SHIFT*ln2 - x) * 2^{-N_SHIFT}
- * Supports x in [0, N_SHIFT * ln2) = [0, ~7.62).
+/* ============================================================
+ * approx_exp -- core primitive.
  *
- * Sized for the largest worst-case rejection exponent across all three
- * SHUTTLE modes:
- *   sigma=128: max 63*(63+128*22)/32768 ~ 5.535   (fits in N=9)
- *   sigma=149: max 63*(63+128*26)/44402 ~ 4.812   (fits in N=9)
- *   sigma=101: max 63*(63+128*17)/20402 ~ 6.914   (needs N>=10; we pick 11)
+ *   Input:  a_q60 = round(a * 2^60), with a in [0, 11 * ln 2).
+ *   Output: round(exp(-a) * 2^63) as uint64_t, in [0, 2^63].
  *
- * Bumping N from 9 to 11 is mathematically invariant for any previously
- * supported input: nh = floor((N*ln2 - x)/ln2) shifts by exactly +2 when N
- * increases by +2, so shift = N - nh is unchanged and so is the returned
- * value. Existing KATs are therefore preserved.
- */
-#define APPROX_EXP_N_SHIFT 11
-
-/*
- * Compute exp(-x) in Q63 fixed-point (V2: degree 9, table 2).
- *
- * Input:  x_q60 = round(x * 2^60), where x in [0, N_SHIFT * ln2).
- * Output: round(exp(-x) * 2^63) as uint64_t.
- *         Returns 0 if exp(-x) underflows to 0.
- *
- * All operations are constant-time (no data-dependent branches/loops).
- */
-uint64_t approx_exp(uint64_t x_q60);
+ * Constant-time with respect to a_q60 and the implied internal index
+ * j = m mod B (table is scanned in full with masks). All operations are
+ * 64- or 128-bit unsigned integer arithmetic; no division, no branches.
+ * ============================================================ */
+uint64_t approx_exp(uint64_t a_q60);
 
 #endif /* SHUTTLE_APPROX_EXP_H */

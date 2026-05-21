@@ -71,6 +71,27 @@
 #  define SRANS_Z0_SYM_MAX      SHUTTLE256_RANS_Z0_SYM_MAX
 #  define srans_z0_syms         shuttle256_rans_z0_syms
 #  define srans_z0_freqs        shuttle256_rans_z0_freqs
+#elif SHUTTLE_MODE == 512
+#  define SRANS_HINT_PROB_BITS  SHUTTLE512_RANS_PROB_BITS
+#  define SRANS_HINT_NUM_SYMS   SHUTTLE512_RANS_NUM_SYMS
+#  define SRANS_HINT_SYM_MIN    SHUTTLE512_RANS_SYM_MIN
+#  define SRANS_HINT_SYM_MAX    SHUTTLE512_RANS_SYM_MAX
+#  define srans_hint_syms       shuttle512_rans_syms
+#  define srans_hint_freqs      shuttle512_rans_freqs
+
+#  define SRANS_Z1_PROB_BITS    SHUTTLE512_RANS_Z1_PROB_BITS
+#  define SRANS_Z1_NUM_SYMS     SHUTTLE512_RANS_Z1_NUM_SYMS
+#  define SRANS_Z1_SYM_MIN      SHUTTLE512_RANS_Z1_SYM_MIN
+#  define SRANS_Z1_SYM_MAX      SHUTTLE512_RANS_Z1_SYM_MAX
+#  define srans_z1_syms         shuttle512_rans_z1_syms
+#  define srans_z1_freqs        shuttle512_rans_z1_freqs
+
+#  define SRANS_Z0_PROB_BITS    SHUTTLE512_RANS_Z0_PROB_BITS
+#  define SRANS_Z0_NUM_SYMS     SHUTTLE512_RANS_Z0_NUM_SYMS
+#  define SRANS_Z0_SYM_MIN      SHUTTLE512_RANS_Z0_SYM_MIN
+#  define SRANS_Z0_SYM_MAX      SHUTTLE512_RANS_Z0_SYM_MAX
+#  define srans_z0_syms         shuttle512_rans_z0_syms
+#  define srans_z0_freqs        shuttle512_rans_z0_freqs
 #else
 #  error "Unsupported SHUTTLE_MODE for rANS tables"
 #endif

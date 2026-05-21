@@ -102,9 +102,14 @@ static inline uint32_t load_le32(const uint8_t *p) {
          | ((uint32_t)p[3] << 24);
 }
 
-/* Branchless unsigned less-than: returns 1 if a < b */
+/* Branchless unsigned less-than: returns 1 if a < b.
+ *
+ * The naive form `(a - b) >> 31` is only correct when both a < 2^31 and
+ * b < 2^31 (the legacy 3x31-bit RCDT layout). For 3x32-bit limbs
+ * (SHUTTLE-512) we need the full uint32 range, so we widen the
+ * subtraction to 64 bits and read the borrow out of bit 32. */
 static inline uint32_t ct_lt_u32(uint32_t a, uint32_t b) {
-    return (a - b) >> 31;
+    return (uint32_t)(((uint64_t)a - (uint64_t)b) >> 32) & 1U;
 }
 
 /* ============================================================

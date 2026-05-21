@@ -30,18 +30,11 @@ OUTDIR = test/out
 
 # ============================================================
 # Multi-mode matrix
-#   SHUTTLE_MODE in {128, 256}:
-#     default `all` target builds both
-#   SHUTTLE_MODE = 512:
-#     guarded behind SHUTTLE_BUILD_512 (expected to #error at compile
-#     time until the SHUTTLE-512 parameters are filled in)
+#
+# All three modes (128, 256, 512) are built by default. Override with
+# MODES="128" or MODES="128 256" to limit scope during development.
 # ============================================================
-SHUTTLE_BUILD_512 ?= 0
-ifeq ($(SHUTTLE_BUILD_512),1)
-MODES = 128 256 512
-else
-MODES = 128 256
-endif
+MODES ?= 128 256 512
 
 # Per-mode compile flag.
 CFLAGS_MODE = -DSHUTTLE_MODE=$(1)
