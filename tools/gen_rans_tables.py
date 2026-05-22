@@ -2,25 +2,33 @@
 """Generate static rANS frequency tables from the *theoretical* discrete
 Gaussian PMF — no empirical histogram required.
 
-Background (see agent/rANS/SHUTTLE_rANS.tex §2.3 and §3):
+Background (see agent/rANS/SHUTTLE_rANS.tex §2.3, §3, and the hint
+errata in §4.5):
 
   SHUTTLE has at most two rANS contexts per mode:
 
-    z-hi  : sigma = r/alpha_r,   M_voc = ceil((11*r + tau*eta)/alpha_r)
-    hint  : sigma = 2r/alpha_h,  M_voc = floor(2*(11*r + tau*eta)/alpha_h) + 1
+    z-hi  : "smooth" discrete Gaussian sigma_zhi = r/alpha_r,
+            M_voc = ceil((11*r + tau*eta)/alpha_r)
+    hint  : output of MakeHint = round(w/alpha_h) - round((w-2z)/alpha_h),
+            *not* a discrete Gaussian. See `hint_pmf_correct` below for
+            the actual distribution.
+            M_voc = floor(2*(11*r + tau*eta)/alpha_h) + 1
 
   SampleY hard-truncates |y_k| <= 11*sigma_y, so the bounds above hold
   with *probability 1*. The vocabulary covers [-M_voc, M_voc] in full,
   hence OOV is mathematically impossible.
 
-  For mode-128 the coincidence alpha_h = 2*alpha_r gives sigma_hint =
-  sigma_zhi, so a single table doubles as both z-hi and hint context.
-  For mode-256/512 the two scales differ; two tables are emitted.
+  For mode-128 we cannot share a single table any more (z-hi and hint
+  have different shapes even when their scales coincide — hint is wider
+  due to the bucket-crossing effect described in the errata). Each mode
+  emits two distinct tables: ZHI and HINT.
 
-Quantization procedure:
+Quantization procedure (same for both contexts):
 
-  1. PMF eval: p_tilde(s) = exp(-s^2 / (2 sigma^2)), s in [-M_voc, M_voc].
-     Normalize to a probability mass function over the finite alphabet.
+  1. PMF eval:
+       z-hi: p(s) ~ exp(-s^2 / (2 sigma^2))  on [-M_voc, M_voc].
+       hint: bucket-crossing PMF over the same domain (see
+             hint_pmf_correct).
   2. Round: g(s) = max(1, round(p(s) * 2^t)) with t = 10. Every alphabet
      symbol receives at least one slot.
   3. Slack: adjust the largest bucket so sum(g) = 2^t exactly. The PMF
@@ -55,11 +63,71 @@ PROB_BITS = 10       # quantization bits (tex §2.2)
 
 
 def theoretical_pmf(sigma: float, M_voc: int) -> Dict[int, float]:
-    """Discrete Gaussian PMF on the finite alphabet [-M_voc, M_voc]."""
+    """Discrete Gaussian PMF on the finite alphabet [-M_voc, M_voc].
+
+    Used for the z-hi context (which IS approximately discrete Gaussian).
+    """
     weights = {k: math.exp(-k * k / (2 * sigma * sigma))
                for k in range(-M_voc, M_voc + 1)}
     Z = sum(weights.values())
     return {k: w / Z for k, w in weights.items()}
+
+
+def hint_pmf_correct(r: float, alpha_h: int, M_voc: int,
+                     T_sigma: float = 11.0) -> Dict[int, float]:
+    """Exact MakeHint output PMF, derived from the bucket-crossing model.
+
+    Derivation (SHUTTLE_rANS.tex §4.5, eq:hint-bernoulli):
+
+      hint_k = round(comY_k / alpha_h) - round((comY_k - 2*z_2,k) / alpha_h)
+             = round(u) - round(u - delta)        with  u = comY_k/alpha_h,
+                                                       delta = 2*z_2,k/alpha_h.
+
+      For comY_k uniform in [0, 2q) (NTT-mixed commitment), u mod 1 is
+      uniform in [0,1) and independent of delta. Decompose
+      delta = k + f with k = round_half_up(delta), f in [-1/2, 1/2).
+      For u ~ Uniform[0,1):
+
+          P(hint = k | delta)              = 1 - |f|
+          P(hint = k + sign(f) | delta)    = |f|
+
+      Averaging over z_2,k ~ D_{Z, r} truncated to |z| <= T_sigma * r
+      (the SampleY truncation propagates to z_2 via the IRS).
+
+    This is the CORRECT model. The previous documentation's "hint ~
+    discrete Gaussian D_{Z, 2r/alpha_h}" model severely under-predicts
+    the nonzero rate in narrow-sigma modes (mode-256/512). See the
+    errata in SHUTTLE_rANS.tex §4.5.
+    """
+    M_z = int(T_sigma * r)
+    # Truncated discrete Gaussian on z.
+    z_weights = {z: math.exp(-z * z / (2 * r * r))
+                 for z in range(-M_z, M_z + 1)}
+    Z = sum(z_weights.values())
+    z_pmf = {z: w / Z for z, w in z_weights.items()}
+
+    pmf: Dict[int, float] = {h: 0.0 for h in range(-M_voc, M_voc + 1)}
+    for z, pz in z_pmf.items():
+        delta = 2.0 * z / alpha_h
+        # round-half-up nearest integer (matches our highbits_mod_2q convention).
+        k = int(math.floor(delta + 0.5))
+        f = delta - k
+        # Clamp to vocabulary; the bound from Thm 7 guarantees this is safe.
+        def add(h: int, mass: float) -> None:
+            if -M_voc <= h <= M_voc:
+                pmf[h] += mass
+            else:
+                # Should be unreachable for |z| <= T_sigma*r and the
+                # M_voc from Thm 7; flag if it happens.
+                raise ValueError(f"hint value {h} out of vocab [-{M_voc}, {M_voc}]")
+        add(k, pz * (1.0 - abs(f)))
+        if abs(f) > 1e-15:
+            sign = 1 if f > 0 else -1
+            add(k + sign, pz * abs(f))
+
+    # Numerical hygiene: re-normalize (rounding errors aside).
+    total = sum(pmf.values())
+    return {h: p / total for h, p in pmf.items()}
 
 
 def quantize(pmf: Dict[int, float], prob_bits: int) -> Tuple[List[int], List[int]]:
@@ -102,20 +170,21 @@ def zhi_table(params: dict) -> Tuple[List[int], List[int], float, int]:
 
 
 def hint_table(params: dict) -> Tuple[List[int], List[int], float, int]:
-    """hint context: sigma = 2r/alpha_h, M_voc per Thm 7."""
+    """hint context: bucket-crossing PMF per SHUTTLE_rANS.tex §4.5.
+
+    Returns (syms, freqs, sigma_nominal, M_voc). The "sigma_nominal" is
+    the legacy 2r/alpha_h value reported for compatibility; it is NOT the
+    sigma of the actual PMF (which isn't a discrete Gaussian).
+    """
     r = params["r"]
     alpha_h = params["alpha_h"]
     tau, eta = params["tau"], params["eta"]
-    sigma = 2 * r / alpha_h
+    sigma_nominal = 2 * r / alpha_h
     M_voc = (2 * (T_SIGMA * r + tau * eta)) // alpha_h + 1
     M_voc = max(M_voc, 1)
-    syms, freqs = quantize(theoretical_pmf(sigma, M_voc), PROB_BITS)
-    return syms, freqs, sigma, M_voc
-
-
-def shares_table(params: dict) -> bool:
-    """True iff sigma_hint == sigma_zhi (mode-128 coincidence)."""
-    return params["alpha_h"] == 2 * ALPHA_R
+    pmf = hint_pmf_correct(r, alpha_h, M_voc)
+    syms, freqs = quantize(pmf, PROB_BITS)
+    return syms, freqs, sigma_nominal, M_voc
 
 
 def emit_table_block(mode: int, infix_upper: str, infix_lower: str,
@@ -171,12 +240,15 @@ def emit_header(modes: List[int], file) -> None:
     print(" * / Thm 7 of SHUTTLE_rANS.tex), so no signature coefficient can fall", file=file)
     print(" * outside the vocabulary; OOV is mathematically impossible.", file=file)
     print(" *", file=file)
-    print(" * Two contexts per mode in general:", file=file)
+    print(" * Two contexts per mode (always two distinct tables):", file=file)
     print(" *   z-hi  : carries HighBits_{alpha_0'}(z^(0)) and HighBits_{alpha_r}(z^(1..lenS))", file=file)
-    print(" *   hint  : carries the MakeHint output", file=file)
-    print(" * For mode-128 alpha_h == 2*alpha_r, so sigma_hint == sigma_zhi and a", file=file)
-    print(" * single shared table is emitted (named *_unified) as well as redirect", file=file)
-    print(" * macros that point the {zhi,hint} names at the same data.", file=file)
+    print(" *           Distribution: discrete Gaussian D_{Z, r/alpha_r}.", file=file)
+    print(" *   hint  : carries MakeHint output.", file=file)
+    print(" *           Distribution: bucket-crossing PMF (SHUTTLE_rANS.tex §4.5),", file=file)
+    print(" *           NOT a discrete Gaussian. The earlier 'mode-128 hint shares", file=file)
+    print(" *           the z-hi table' alias has been removed: even though the", file=file)
+    print(" *           nominal sigma_h coincides with sigma_zhi for mode-128, the", file=file)
+    print(" *           shapes differ (hint is wider).", file=file)
     print(" *", file=file)
     print(" * Do not edit by hand — regenerate with:", file=file)
     print(" *   python3 SHUTTLE/tools/gen_rans_tables.py --out SHUTTLE/ref/rans_tables.h", file=file)
@@ -191,35 +263,14 @@ def emit_footer(file) -> None:
     print("#endif /* SHUTTLE_RANS_TABLES_H */", file=file)
 
 
-def emit_unified_aliases(mode: int, file) -> None:
-    """For mode-128: alias ZHI and HINT macros to UNIFIED."""
-    print(f"/* mode-{mode} coincidence: sigma_hint == sigma_zhi, both contexts", file=file)
-    print(f" * share the unified table above. */", file=file)
-    for sub in ("PROB_BITS", "SYM_MIN", "SYM_MAX", "NUM_SYMS"):
-        print(f"#define SHUTTLE{mode}_RANS_ZHI_{sub}  SHUTTLE{mode}_RANS_UNIFIED_{sub}",
-              file=file)
-    for sub in ("PROB_BITS", "SYM_MIN", "SYM_MAX", "NUM_SYMS"):
-        print(f"#define SHUTTLE{mode}_RANS_HINT_{sub} SHUTTLE{mode}_RANS_UNIFIED_{sub}",
-              file=file)
-    print(f"#define shuttle{mode}_rans_zhi_syms   shuttle{mode}_rans_unified_syms",
-          file=file)
-    print(f"#define shuttle{mode}_rans_zhi_freqs  shuttle{mode}_rans_unified_freqs",
-          file=file)
-    print(f"#define shuttle{mode}_rans_hint_syms  shuttle{mode}_rans_unified_syms",
-          file=file)
-    print(f"#define shuttle{mode}_rans_hint_freqs shuttle{mode}_rans_unified_freqs",
-          file=file)
-    print("", file=file)
-
-
 def text_summary(mode: int, params: dict) -> None:
     print(f"=== SHUTTLE-{mode} ===")
     z_syms, z_freqs, z_sigma, z_M = zhi_table(params)
     h_syms, h_freqs, h_sigma, h_M = hint_table(params)
     print(f"z-hi : sigma = {z_sigma:.4f}, M_voc = {z_M}, alphabet size = {len(z_syms)}")
-    print(f"hint : sigma = {h_sigma:.4f}, M_voc = {h_M}, alphabet size = {len(h_syms)}")
-    if shares_table(params):
-        print("(mode-128: hint table aliased to z-hi table — sigmas coincide)")
+    print(f"hint : sigma_nominal = {h_sigma:.4f}, M_voc = {h_M}, "
+          f"alphabet size = {len(h_syms)}")
+    print(f"       (hint PMF is bucket-crossing, NOT discrete Gaussian)")
     print(f"z-hi top buckets:")
     for s, f in sorted(zip(z_syms, z_freqs), key=lambda t: -t[1])[:8]:
         print(f"  s={s:+4d} g={f:5d} p={f/1024:.4f}")
@@ -248,19 +299,12 @@ def main() -> None:
     emit_header(modes, outf)
     for m in modes:
         params = MODE_PARAMS[m]
-        if shares_table(params):
-            # mode-128: emit unified table + aliases for ZHI/HINT.
-            syms, freqs, sigma, _ = zhi_table(params)
-            emit_table_block(m, "UNIFIED", "unified", syms, freqs,
-                             PROB_BITS, sigma, outf)
-            emit_unified_aliases(m, outf)
-        else:
-            z_syms, z_freqs, z_sigma, _ = zhi_table(params)
-            h_syms, h_freqs, h_sigma, _ = hint_table(params)
-            emit_table_block(m, "ZHI", "zhi", z_syms, z_freqs,
-                             PROB_BITS, z_sigma, outf)
-            emit_table_block(m, "HINT", "hint", h_syms, h_freqs,
-                             PROB_BITS, h_sigma, outf)
+        z_syms, z_freqs, z_sigma, _ = zhi_table(params)
+        h_syms, h_freqs, h_sigma, _ = hint_table(params)
+        emit_table_block(m, "ZHI", "zhi", z_syms, z_freqs,
+                         PROB_BITS, z_sigma, outf)
+        emit_table_block(m, "HINT", "hint", h_syms, h_freqs,
+                         PROB_BITS, h_sigma, outf)
     emit_footer(outf)
     if outf is not sys.stdout:
         outf.close()

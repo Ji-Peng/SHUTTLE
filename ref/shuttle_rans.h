@@ -13,9 +13,11 @@
  *   hint  : MakeHint output, n*lenE coefficients at scale 2r/alpha_h
  *
  * The two streams stay independent (each with its own length prefix and
- * 4-byte flush) so the decoder layout is fully streaming. mode-128 shares
- * a *single* frequency table between the two contexts (its alpha_h equals
- * 2*alpha_r so the scales coincide); mode-256/512 keep two distinct tables.
+ * 4-byte flush) so the decoder layout is fully streaming. All three modes
+ * use two distinct frequency tables (ZHI + HINT); the earlier "mode-128
+ * shares one unified table" idea was retired once the hint PMF was
+ * recognized to be the bucket-crossing distribution (wider than the
+ * discrete Gaussian D_{Z, 2r/alpha_h}) — see SHUTTLE_rANS.tex §4.5 errata.
  *
  * Why hi/lo splits, and why z^(0) gets a 2nd-order split
  * ------------------------------------------------------

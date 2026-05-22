@@ -256,30 +256,37 @@
 /* ============================================================
  * rANS reservation budgets (consumed by packing.c).
  *
- * Analytically derived from agent/rANS/SHUTTLE_rANS.tex Tab 8
- * (tab:reserve-2stream): per-stream overflow probability p_k = 2^-21,
- * total p_rans^* = 2^-20 by union bound. z-hi stream uses Gauss CLT;
- * hint stream uses Gauss CLT for mode-128 (lambda >> 30) and the
- * Poisson model for mode-256/512 (narrow sigma).
+ * Analytically derived from tools/SigSize.py: per-stream overflow
+ * probability p_k = 2^-21, total p_rans^* = 2^-20 by union bound.
+ * Both streams use the Gauss CLT model (\eqref{eq:Rk}); the Poisson
+ * fallback in SHUTTLE_rANS.tex §4.4 is NOT used in the corrected
+ * analysis (see §4.5 errata: hint lambda is always >> 30, so Gauss
+ * CLT always applies).
  *
  * Regenerate with: python3 tools/SigSize.py
+ *
+ * IMPORTANT (\Cref{subsec:hint-errata} of SHUTTLE_rANS.tex): the hint
+ * distribution is NOT a discrete Gaussian D_{Z, 2r/alpha_h}. It is the
+ * bucket-crossing PMF derived from MakeHint's "round - round" structure
+ * (eq:hint-bernoulli). The empirical nonzero rate p = 2r sqrt(2/pi)/alpha_h
+ * is 0.75 / 0.232 / 0.157 for mode-128/256/512 respectively. The old
+ * tex doc Tab 8 numbers (28 / 9 B for mode-256/512 hint reservation)
+ * were computed from the WRONG model and would have caused infinite
+ * IRS rejection loops in production.
  *
  * OOV failure does not exist: the rANS vocabulary covers the full
  * |sym| <= M_voc tight bound derived from the 11*sigma truncation
  * of SampleY, so the only rejection cause is the rare overflow event.
  * ============================================================ */
 #if SHUTTLE_MODE == 128
-/* mode-128 plumbing: sigma_zhi = sigma_hint = r/alpha_r = 101/64 ~= 1.58,
- * so z-hi and hint share the same frequency table but stay in two streams
- * (kept independent for decoder simplicity). */
 #  define SHUTTLE_ZHI_RESERVED_BYTES    375
-#  define SHUTTLE_HINT_RESERVED_BYTES   194
+#  define SHUTTLE_HINT_RESERVED_BYTES   197
 #elif SHUTTLE_MODE == 256
 #  define SHUTTLE_ZHI_RESERVED_BYTES    883
-#  define SHUTTLE_HINT_RESERVED_BYTES    28
+#  define SHUTTLE_HINT_RESERVED_BYTES   158
 #elif SHUTTLE_MODE == 512
 #  define SHUTTLE_ZHI_RESERVED_BYTES   1987
-#  define SHUTTLE_HINT_RESERVED_BYTES     9
+#  define SHUTTLE_HINT_RESERVED_BYTES   241
 #endif
 
 #define SHUTTLE_ZHI_BLOCK_BYTES     (2 + SHUTTLE_ZHI_RESERVED_BYTES)

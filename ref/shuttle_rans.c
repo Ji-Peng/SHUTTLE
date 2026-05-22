@@ -7,9 +7,13 @@
  *   z-hi  : HighBits_{alpha_0'}(z^(0)) ⨁ HighBits_{alpha_r}(z^(1..lenS))
  *   hint  : MakeHint output
  *
- * For mode-128 sigma_zhi == sigma_hint, so the two contexts alias the
- * same unified table (defined in rans_tables.h with the *_unified macros
- * and aliased back to the *_zhi / *_hint names).
+ * Two distinct frequency tables per mode (ZHI and HINT) — the earlier
+ * "mode-128 shares one unified table" optimization was removed once we
+ * discovered that the hint distribution is NOT a discrete Gaussian
+ * (SHUTTLE_rANS.tex §4.5 errata). Even though mode-128's nominal
+ * sigma_h coincides with sigma_zhi, the actual hint PMF (bucket-crossing,
+ * wider than D_{Z, sigma_h}) differs in shape from the z-hi PMF, so a
+ * shared table would be sub-optimal.
  *
  * State is uint32_t; bytes are emitted to the TAIL of the output buffer
  * during encode (LIFO), then compacted with memmove so the final layout
@@ -32,9 +36,7 @@
 /* ============================================================
  * Per-mode table bindings.
  *
- * The ZHI_/HINT_ infixes in rans_tables.h already account for the mode-128
- * alias to *_unified, so we always reference the ZHI / HINT symbols below
- * regardless of whether they alias the same data underneath.
+ * All three modes have separate ZHI_ and HINT_ tables in rans_tables.h.
  * ============================================================ */
 
 #if SHUTTLE_MODE == 128

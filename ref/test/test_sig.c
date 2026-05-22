@@ -89,17 +89,26 @@ static int32_t sample_from_table(const int16_t *syms, const uint16_t *freqs,
  * the rounded distribution overshoots p(±1) by an order of magnitude,
  * which would blow the hint reservation in this test even though the
  * real signer never gets near it. */
+/* Max half-width supported by the cached PMF table. Must accommodate
+ * the largest z-truncation we sample with (11 * sigma_y_max = 11 * 202
+ * = 2222 for mode-512, so 2*M_voc + 1 = 4445). */
+#define SG_CDF_SIZE  5000
+
 static int32_t sample_discrete_gaussian(double sigma, int M_voc) {
   /* Cache CDFs keyed by (sigma, M_voc). 4 slots is enough for the
-   * mode's z-hi + hint pair. */
+   * mode's z-hi + hint + z2 (for bucket-crossing) trio. */
   enum { CACHE_SLOTS = 4 };
   static struct {
     double sigma;
     int    M_voc;
     int    valid;
-    double cdf[256];   /* 2*M_voc+1 entries; M_voc <= 50 across all modes. */
+    double cdf[SG_CDF_SIZE];
   } cache[CACHE_SLOTS];
   static int next_slot;
+  if (2 * M_voc + 1 > SG_CDF_SIZE) {
+    fprintf(stderr, "sample_discrete_gaussian: M_voc=%d exceeds SG_CDF_SIZE\n", M_voc);
+    abort();
+  }
 
   int slot = -1;
   for (int s = 0; s < CACHE_SLOTS; ++s)
@@ -134,9 +143,26 @@ static inline int32_t sample_gaussian_zhi(int M_voc) {
       (double)SHUTTLE_SIGMA / (double)SHUTTLE_ALPHA_R, M_voc);
 }
 
+/* Sample a hint coefficient from the real (bucket-crossing) PMF:
+ *   h = round(u) - round(u - 2z/alpha_h),  u ~ Uniform[0,1), z ~ D_{Z, r}.
+ * Earlier this used a discrete Gaussian D_{Z, 2r/alpha_h}, which severely
+ * under-counts hint nonzeros for mode-256/512 (see SHUTTLE_rANS.tex §4.5
+ * errata). The current version simulates the actual MakeHint geometry. */
 static inline int32_t sample_gaussian_hint(int M_voc) {
-  return sample_discrete_gaussian(
-      2.0 * (double)SHUTTLE_SIGMA / (double)SHUTTLE_ALPHA_H, M_voc);
+  static const double sigma_y = (double)SHUTTLE_SIGMA;
+  /* Draw z ~ D_{Z, r} via inverse-CDF on the truncated discrete Gaussian. */
+  int M_z = (int)(11.0 * sigma_y);
+  int32_t z = sample_discrete_gaussian(sigma_y, M_z);
+  double delta = 2.0 * (double)z / (double)SHUTTLE_ALPHA_H;
+  int32_t k = (int32_t)floor(delta + 0.5);   /* round half up */
+  double f = delta - (double)k;
+  /* Independent uniform u to decide bucket crossing. */
+  double u = ((double)rand() + 1.0) / ((double)RAND_MAX + 2.0);
+  int32_t hint = k;
+  if (u < fabs(f)) hint += (f > 0 ? 1 : -1);
+  if (hint >  M_voc) hint =  M_voc;
+  if (hint < -M_voc) hint = -M_voc;
+  return hint;
 }
 
 /* Fill z_1[0..L] with coefficients whose split (z0 at alpha_0', z1 at
