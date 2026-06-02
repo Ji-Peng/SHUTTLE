@@ -37,8 +37,32 @@ int32_t montgomery_reduce(int64_t a) {
 *
 * Returns r.
 **************************************************/
+/* ============================================================
+ * Constant-time Barrett reduction (division-free) for the scheme-domain
+ * reductions, which run on SECRET data (NTT residues of s/y/z, commitment w).
+ * `a % d` must not become a hardware/variable-time divide, and must not rely on
+ * the compiler strength-reducing `% const`.  REC = floor(2^32 / d) is a
+ * COMPILE-TIME constant (const/const, folded -- no runtime divide); SH=32 keeps
+ * au*REC < 2^63 for any q < 2^16 with |a| <= 2^31, the shortfall < 0.5, so
+ * (au*REC)>>32 + one branchless correction is the exact floor.  Bit-identical to
+ * `a % d` (verified over the full int32 range for all SHUTTLE q).
+ * ============================================================ */
+#define SHUTTLE_BARRETT_SH 32
+#define SHUTTLE_BARRETT_Q  (((uint64_t)1 << SHUTTLE_BARRETT_SH) / (uint64_t)SHUTTLE_Q)
+#define SHUTTLE_BARRETT_2Q (((uint64_t)1 << SHUTTLE_BARRETT_SH) / (uint64_t)SHUTTLE_DQ)
+
+static inline uint32_t barrett_mod_u(uint32_t au, uint32_t d, uint64_t REC) {
+  uint32_t qh = (uint32_t)(((uint64_t)au * REC) >> SHUTTLE_BARRETT_SH);
+  uint32_t r  = au - qh * d;                          /* in [0, 2d) */
+  uint32_t ge = (uint32_t)0 - (uint32_t)(r >= d);     /* all-ones iff r >= d */
+  return r - (ge & d);                                /* in [0, d) */
+}
+
 int32_t reduce32(int32_t a) {
-  return a % SHUTTLE_Q;
+  uint32_t sa = (uint32_t)(a >> 31);                  /* 0 or 0xFFFFFFFF */
+  uint32_t au = ((uint32_t)a ^ sa) - sa;              /* |a| */
+  uint32_t r  = barrett_mod_u(au, (uint32_t)SHUTTLE_Q, SHUTTLE_BARRETT_Q);
+  return (int32_t)((r ^ sa) - sa);                    /* reapply sign (== a % Q) */
 }
 
 /*************************************************
@@ -102,7 +126,10 @@ int32_t caddq2(int32_t a) {
 * Returns r in [0, 2q) with r congruent to a mod 2q.
 **************************************************/
 int32_t reduce_mod_2q(int32_t a) {
-  int32_t r = a % SHUTTLE_DQ;
-  r += (r >> 31) & SHUTTLE_DQ;      /* make non-negative */
+  uint32_t sa = (uint32_t)(a >> 31);
+  uint32_t au = ((uint32_t)a ^ sa) - sa;              /* |a| */
+  uint32_t ru = barrett_mod_u(au, (uint32_t)SHUTTLE_DQ, SHUTTLE_BARRETT_2Q);
+  int32_t  r  = (int32_t)((ru ^ sa) - sa);            /* a % 2q (truncate) */
+  r += (r >> 31) & SHUTTLE_DQ;                        /* make non-negative -> [0,2q) */
   return r;
 }
