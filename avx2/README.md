@@ -21,6 +21,21 @@ int sm3hash_avx2(const unsigned char *const msg[8],
 
 `output_len_bits` and `msg_len_bits` are **shared** across the 8 lanes; `msg[]` and `output[]` are **per-lane** pointers. This matches the brief: in `pseudoXOF_avx2` the two lengths are unified for all 8 lanes while the messages and outputs are 8 separate buffers. `pseudoXOF` follows GB/T 32918.4-2016 §5.4.3 (KDF-SM3): output block $i$ is $\mathrm{SM3}(\text{msg} \parallel ct)$ with the 32-bit counter $ct = i+1$ appended MSB-first.
 
+## DRNG (8-way SM3 Hash-DRBG)
+
+`drng_avx2.{c,h}` adds the 8-way companions to `../ref/drng.c` — the deterministic RNG the signature uses for seed material:
+
+```c
+int init_random_number_avx2(DRNG_ctx_avx2 *drng,
+                            const unsigned char *const seed[8],
+                            unsigned long long seed_len_bytes);
+int get_random_number_avx2(DRNG_ctx_avx2 *drng,
+                           unsigned char *const random_number[8],
+                           unsigned long long random_number_len_bits);
+```
+
+`seed_len_bytes` / `random_number_len_bits` are **shared** across the 8 lanes; `seed[]` / `random_number[]` are **per-lane**. `DRNG_ctx_avx2` holds 8 independent `(V, C, reseed_counter)` states. The DRBG control flow (the SM3 derivation function, instantiate, generate, and the big-number add/increment over the 55-byte state) is a lane-parallel copy of the reference; the only vectorised part is the SM3 kernel, which becomes `sm3hash_avx2` because every SM3 call inside the DRBG hashes per-lane messages of identical length. Output and internal state are byte-identical to running the scalar `init_random_number` / `get_random_number` once per lane (checked across seed lengths, request sizes, and sequences of back-to-back `get` calls).
+
 ## How it works
 
 - **Load + transpose.** A 64-byte block of each of the 8 messages is loaded as two 256-bit vectors and turned into the 16 message words $W[0..15]$ by an 8×8 dword transpose (`unpacklo/hi` + `permute2x128`) followed by a per-dword byte swap, because SM3 reads words big-endian. The transpose sequence was verified against simulated intrinsic semantics before being committed.
@@ -31,11 +46,11 @@ int sm3hash_avx2(const unsigned char *const msg[8],
 ## Build & test
 
 ```sh
-make test          # builds against ../ref/auxfunc.c and checks 392 vectors
+make test          # XOF (vs ../ref/auxfunc.c) + DRNG (vs ../ref/drng.c)
 make check-const   # re-derives SM3_T[]/SM3_IV[] from the spec and diffs the header
 ```
 
-`make test` compares `pseudoXOF_avx2` / `sm3hash_avx2` against the scalar reference across a sweep of message lengths (empty, sub-byte, byte-aligned, block-boundary, multi-block, and the two-final-block window where $\text{msg\_tail\_bits} > 415$) and output lengths, then prints cycle counts. On an i7-11700K (Rocket Lake) the small-message case is ~8× faster than 8 scalar calls (pure SIMD width) and large messages are much faster still thanks to the prefix precompute.
+`make test` builds and runs two checkers. `test_avx2` compares `pseudoXOF_avx2` / `sm3hash_avx2` against the scalar reference across a sweep of message lengths (empty, sub-byte, byte-aligned, block-boundary, multi-block, and the two-final-block window where $\text{msg\_tail\_bits} > 415$) and output lengths, then prints cycle counts. `test_drng_avx2` drives 8 reference DRBG contexts and the 8-way context through the same instantiate + sequences of generate calls and checks both output and internal state. On an i7-11700K (Rocket Lake) the small-message XOF case is ~8× faster than 8 scalar calls (pure SIMD width) and large messages are much faster still thanks to the prefix precompute.
 
 ## Auditable constants
 
