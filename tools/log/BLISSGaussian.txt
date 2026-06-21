@@ -1,0 +1,21 @@
+理论平均接受概率: 0.975679
+理论平均拒绝率:   0.024321 (2.43%)
+
+\begin{table}[H]
+    \centering
+    \renewcommand{\arraystretch}{1.2}
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{|c|c|c|c|c|c|c|c|c|}
+        \hline
+        $\sigma_2$ & $k$ & \textbf{Avg. Acc.} & \textbf{Avg. Rej.} & \textbf{Avg. Iter.} & \textbf{P($>2N$)} & \textbf{Max. Exp.} & \textbf{Cost} & \textbf{All Cost} \\
+        \hline
+        3.2227 & 256 & 89.0\% & 11.0\% & 1438.46 & $2^{-1737.8}$ & 3.4615 & 65.74 & 94559.10 \\
+        1.6113 & 512 & 80.2\% & 19.8\% & 1596.91 & $2^{-842.5}$ & 7.0192 & 59.12 & 94406.59 \\
+        0.8057 & 1024 & 66.9\% & 33.1\% & 1913.83 & $2^{-229.5}$ & 14.4236 & 55.93 & 107048.28 \\
+        \hline
+    \end{tabular}
+    }
+    \caption{不同 $\sigma_2$ 与 $k$ 下的高斯采样器性能，这里 $\sigma=825$。Avg. Iter. 表示在平均接受率为p的情况下，得到N=1280个有效样本所需的平均调用次数，即 N/p。P($>2N$) 表示得到N=1280个有效样本所需调用次数超过2N的概率。Max. Exp. 表示在 $u=1, x=11\sigma_2$ 时的指数最大值。Cost 表示预估开销，其中设每字节 PRNG 开销为 y=2 cycles，按 $cost=cost1+cost2+cost3+cost4$ 计算，$cost1=12y$，$cost2=11\sigma_2\cdot 3.1/8$，$cost3=\log_2(k)\cdot y/8$，$cost4=26$ cycles。All Cost 定义为 Cost 与 Avg. Iter. 的乘积。}
+    \label{tab:rejection-rates-comprehensive-1}
+\end{table}
+
