@@ -1,7 +1,7 @@
-"""BLISSGaussian: BLISS 风格高斯采样器接受率与性能分析。
+"""BLISSGaussian: BLISS-style Gaussian sampler acceptance rate and performance analysis.
 
-由 BLISSGaussian.ipynb 转换而来。所有输出重定向到 log/BLISSGaussian.txt。
-运行: python BLISSGaussian.py
+Converted from BLISSGaussian.ipynb. All output is redirected to log/BLISSGaussian.txt.
+Run: python BLISSGaussian.py
 """
 
 import math
@@ -11,38 +11,38 @@ from contextlib import redirect_stdout
 
 import numpy as np
 
-# numpy >= 2.0 提供 np.trapezoid，旧版本只有 np.trapz；兼容两者。
+# numpy >= 2.0 provides np.trapezoid; older versions only have np.trapz, so support both.
 if not hasattr(np, "trapezoid"):
     np.trapezoid = np.trapz
 
 
 def run_basic_acceptance():
-    """基础参数 (sigma=16) 下的理论平均接受/拒绝率。"""
-    # 1. 定义参数
+    """Theoretical average acceptance/rejection rates for the baseline parameters (sigma=16)."""
+    # 1. Define parameters
     sigma = 16
-    x_max = 64  # CDT 包含 64 个条目，所以 x 的取值为 0 到 63
+    x_max = 64  # CDT has 64 entries, so x ranges from 0 to 63
 
-    # 2. 计算 x 的概率分布 P(X=x)
+    # 2. Compute the probability distribution P(X=x).
     x_vals = np.arange(x_max)
     weights = np.exp(-(x_vals**2) / (2 * sigma**2))
     p_x = weights / np.sum(weights)
 
-    # 3. 定义给定 x 和 u 时的接受概率函数（数值积分）
+    # 3. Define the acceptance-probability function for given x and u (numerical integration).
     def integrate_accept(x, n_points=1000):
         u_vals = np.linspace(0, 1, n_points)
         f_vals = np.exp(-(u_vals**2 / 512) - (x * u_vals / 256))
         return np.trapezoid(f_vals, u_vals)
 
-    # 4. 计算总期望接受概率
+    # 4. Compute the total expected acceptance probability.
     expected_acceptance = sum(prob * integrate_accept(x) for x, prob in zip(x_vals, p_x))
     average_rejection_rate = 1 - expected_acceptance
 
-    # 5. 输出结果
-    print(f"理论平均接受概率: {expected_acceptance:.6f}")
-    print(f"理论平均拒绝率:   {average_rejection_rate:.6f} ({average_rejection_rate * 100:.2f}%)")
+    # 5. Print results
+    print(f"Theoretical average acceptance probability: {expected_acceptance:.6f}")
+    print(f"Theoretical average rejection rate:   {average_rejection_rate:.6f} ({average_rejection_rate * 100:.2f}%)")
 
 
-# ----- 综合性能表 -----
+# ----- Comprehensive performance table -----
 
 target_samples = 1280
 prng_cost_per_byte = 2.0
@@ -143,8 +143,9 @@ def render_table(case_config, table_index):
 
         rejection_rate = 1.0 - expected_acceptance
         avg_iters = target_samples / expected_acceptance
-        x_max_worst = 11 * s2
-        max_exponent = (1 + 2 * x_max_worst) / (2 * s2**2)
+        x_max_worst = math.ceil(11 * s2)
+        # max_exponent = (1 + 2 * x_max_worst) / (2 * s2**2)
+        max_exponent = (k-1)*(k-1+2*k*x_max_worst)/(2*(s2*k)**2)
         log2_prob_gt_2n = binomial_shortfall_log2_prob(
             2 * target_samples, target_samples, expected_acceptance
         )
@@ -160,13 +161,13 @@ def render_table(case_config, table_index):
     print("    \\end{tabular}")
     print("    }")
     print(
-        f"    \\caption{{不同 $\\sigma_2$ 与 $k$ 下的高斯采样器性能，这里 $\\sigma={case_config['sigma_label']}$。"
-        f"Avg. Iter. 表示在平均接受率为p的情况下，得到N=1280个有效样本所需的平均调用次数，即 N/p。"
-        f"P($>2N$) 表示得到N=1280个有效样本所需调用次数超过2N的概率。"
-        f"Max. Exp. 表示在 $u=1, x=11\\sigma_2$ 时的指数最大值。"
-        f"Cost 表示预估开销，其中设每字节 PRNG 开销为 y=2 cycles，按 $cost=cost1+cost2+cost3+cost4$ 计算，"
-        f"$cost1=12y$，$cost2=11\\sigma_2\\cdot 3.1/8$，$cost3=\\log_2(k)\\cdot y/8$，$cost4=26$ cycles。"
-        f"All Cost 定义为 Cost 与 Avg. Iter. 的乘积。}}"
+        f"    \\caption{{Gaussian sampler performance for different $\\sigma_2$ and $k$, with $\\sigma={case_config['sigma_label']}$."
+        f"Avg. Iter. is the average number of calls needed to obtain N=1280 valid samples when the average acceptance rate is p, i.e., N/p. "
+        f"P($>2N$) is the probability that obtaining N=1280 valid samples requires more than 2N calls. "
+        f"Max. Exp. is the maximum exponent at $u=1, x=11\\sigma_2$. "
+        f"Cost is the estimated cost, where the PRNG cost per byte is y=2 cycles and $cost=cost1+cost2+cost3+cost4$, "
+        f"$cost1=12y$, $cost2=11\\sigma_2\\cdot 3.1/8$, $cost3=\\log_2(k)\\cdot y/8$, and $cost4=26$ cycles. "
+        f"All Cost is defined as the product of Cost and Avg. Iter..}}"
     )
     print(f"    \\label{{tab:rejection-rates-comprehensive-{table_index}}}")
     print("\\end{table}")
@@ -203,4 +204,4 @@ if __name__ == "__main__":
     with open(log_path, "w", encoding="utf-8") as f:
         with redirect_stdout(f):
             main()
-    print(f"输出已写入 {log_path}", file=sys.stderr)
+    print(f"Output written to {log_path}", file=sys.stderr)

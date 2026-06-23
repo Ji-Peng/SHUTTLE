@@ -52,89 +52,89 @@ w = 36 | R_1045: 1 + 2^(-95.40) | R_inf: 1 + 2^(-89.55)
 w = 37 | R_1045: 1 + 2^(-95.40) | R_inf: 1 + 2^(-89.48)
 w = 38 | R_1045: 1 + 2^(-95.40) | R_inf: 1 + 2^(-89.48)
 
-=== SHUTTLE-NGCC-SUF sk Gaussian Sampler: sigma=0.85, theta=93 bits, a=1023 ===
+=== SHUTTLE-NGCC-SUF sk Gaussian Sampler: sigma=0.85, theta=96 bits, a=1023 ===
 
-/* 93-bit RCDT -> 3x31-bit limbs */
-const uint32_t GAUSS0_93_3x31[9][3] = {
-    {0x38796E74U, 0x3D9EF323U, 0x2E3A3D53U},
-    {0x022191ECU, 0x30A8170AU, 0x054BC7B7U},
-    {0x5356FC2DU, 0x4B773242U, 0x00299EF3U},
-    {0x17936651U, 0x38084E94U, 0x00005365U},
-    {0x360495B4U, 0x06C6FF44U, 0x0000002AU},
-    {0x7808379AU, 0x02A8D408U, 0x00000000U},
-    {0x7BA70C5AU, 0x00001594U, 0x00000000U},
-    {0x15F13AF5U, 0x00000000U, 0x00000000U},
-    {0x00000B2DU, 0x00000000U, 0x00000000U}
+/* 96-bit RCDT -> 3x32-bit limbs */
+const uint32_t GAUSS0_96_3x32[9][3] = {
+    {0xC3CB73B8U, 0xF67BCC8DU, 0x5C747AA6U},
+    {0x110C8F76U, 0xC2A05C28U, 0x0A978F6EU},
+    {0x9AB7E17DU, 0x2DDCC90AU, 0x00533DE7U},
+    {0xBC9B329AU, 0xE0213A50U, 0x0000A6CAU},
+    {0xB024ADB1U, 0x1B1BFD11U, 0x00000054U},
+    {0xC041BCDFU, 0x0AA35023U, 0x00000000U},
+    {0xDD3862DDU, 0x00005653U, 0x00000000U},
+    {0xAF89D7B3U, 0x00000000U, 0x00000000U},
+    {0x0000596FU, 0x00000000U, 0x00000000U}
 };
 
-Renyi divergence R_1023: 1 + 2^(-95.93)
-Renyi divergence R_inf:  1 + 2^(-90.61)
-w =  8 | R_1023: 1 + 2^(-81.52) | R_inf: 1 + 2^(-81.51)
-w =  9 | R_1023: 1 + 2^(-95.93) | R_inf: 1 + 2^(-90.61)
-w = 10 | R_1023: 1 + 2^(-95.93) | R_inf: 1 + 2^(-90.61)
+Renyi divergence R_1023: 1 + 2^(-100.48)
+Renyi divergence R_inf:  1 + 2^(-93.83)
+w =  8 | R_1023: 1 + 2^(-81.52) | R_inf: 1 + 2^(-81.52)
+w =  9 | R_1023: 1 + 2^(-100.48) | R_inf: 1 + 2^(-93.83)
+w = 10 | R_1023: 1 + 2^(-100.48) | R_inf: 1 + 2^(-93.83)
 
---- RCDT 实际标准差（keygen sigma=1 噪声采样器）---
-RCDT 支撑范围: [-9, 9]
-zero-fold 接受概率: 0.680576165085987481685520232099
-实际方差: 0.722473616033041176262565641004
-实际标准差: 0.849984479877745283212476670884
-相对理想标准差 0.85 的绝对差: -1.552012E-5 (-2^(-15.98))
-相对理想标准差 0.85 的相对差: -1.825897E-5 (-2^(-15.74))
-=== SHUTTLE-NGCC-SUF sk Gaussian Sampler: sigma=0.9, theta=93 bits, a=1023 ===
+--- Actual RCDT standard deviation (keygen sigma=1 noise sampler) ---
+RCDT support range: [-9, 9]
+zero-fold acceptance probability: 0.680576165085987481685520232251
+actual variance: 0.722473616033041176262565661095
+actual standard deviation: 0.849984479877745283212476682702
+absolute gap from ideal standard deviation 0.85: -1.552012E-5 (-2^(-15.98))
+absolute gap from ideal standard deviation 0.85 relative gap: -1.825897E-5 (-2^(-15.74))
+=== SHUTTLE-NGCC-SUF sk Gaussian Sampler: sigma=0.9, theta=96 bits, a=1023 ===
 
-/* 93-bit RCDT -> 3x31-bit limbs */
-const uint32_t GAUSS0_93_3x31[10][3] = {
-    {0x2C78751EU, 0x5CF42326U, 0x31600683U},
-    {0x27C71D62U, 0x258975C5U, 0x06F6D849U},
-    {0x4A7F9678U, 0x79CFEC62U, 0x004ED9DCU},
-    {0x4399D042U, 0x6EBCBE3EU, 0x000109B2U},
-    {0x5032416FU, 0x1E440CCDU, 0x00000106U},
-    {0x6E7B80FCU, 0x25B9EB62U, 0x00000000U},
-    {0x537BE300U, 0x000328FDU, 0x00000000U},
-    {0x5C2C2045U, 0x00000013U, 0x00000000U},
-    {0x0011E74EU, 0x00000000U, 0x00000000U},
-    {0x00000009U, 0x00000000U, 0x00000000U}
+/* 96-bit RCDT -> 3x32-bit limbs */
+const uint32_t GAUSS0_96_3x32[10][3] = {
+    {0x63C3A91BU, 0x73D08C99U, 0x62C00D07U},
+    {0x3E38EB38U, 0x9625D715U, 0x0DEDB092U},
+    {0x53FCB3E2U, 0xE73FB18AU, 0x009DB3B9U},
+    {0x1CCE8231U, 0xBAF2F8FAU, 0x00021365U},
+    {0x81920B96U, 0x79103336U, 0x0000020CU},
+    {0x73DC07FBU, 0x96E7AD8BU, 0x00000000U},
+    {0x9BDF1816U, 0x000CA3F6U, 0x00000000U},
+    {0xE1610238U, 0x0000004EU, 0x00000000U},
+    {0x008F3A79U, 0x00000000U, 0x00000000U},
+    {0x0000004BU, 0x00000000U, 0x00000000U}
 };
 
-Renyi divergence R_1023: 1 + 2^(-94.15)
-Renyi divergence R_inf:  1 + 2^(-89.75)
-w =  9 | R_1023: 1 + 2^(-89.76) | R_inf: 1 + 2^(-88.86)
-w = 10 | R_1023: 1 + 2^(-94.15) | R_inf: 1 + 2^(-89.75)
+Renyi divergence R_1023: 1 + 2^(-96.74)
+Renyi divergence R_inf:  1 + 2^(-93.41)
+w =  9 | R_1023: 1 + 2^(-89.76) | R_inf: 1 + 2^(-89.66)
+w = 10 | R_1023: 1 + 2^(-96.74) | R_inf: 1 + 2^(-93.41)
 
---- RCDT 实际标准差（keygen sigma=1 噪声采样器）---
-RCDT 支撑范围: [-10, 10]
-zero-fold 接受概率: 0.692871482047764696004927639483
-实际方差: 0.809994104375584195798940404028
-实际标准差: 0.899996724647142366364961991619
-相对理想标准差 0.9 的绝对差: -3.275353E-6 (-2^(-18.22))
-相对理想标准差 0.9 的相对差: -3.639281E-6 (-2^(-18.07))
-=== SHUTTLE-NGCC-SUF sk Gaussian Sampler: sigma=1, theta=93 bits, a=1023 ===
+--- Actual RCDT standard deviation (keygen sigma=1 noise sampler) ---
+RCDT support range: [-10, 10]
+zero-fold acceptance probability: 0.692871482047764696004927639754
+actual variance: 0.809994104375584195798940437721
+actual standard deviation: 0.899996724647142366364962010338
+absolute gap from ideal standard deviation 0.9: -3.275353E-6 (-2^(-18.22))
+absolute gap from ideal standard deviation 0.9 relative gap: -3.639281E-6 (-2^(-18.07))
+=== SHUTTLE-NGCC-SUF sk Gaussian Sampler: sigma=1, theta=96 bits, a=1023 ===
 
-/* 93-bit RCDT -> 3x31-bit limbs */
-const uint32_t GAUSS0_93_3x31[11][3] = {
-    {0x057FB7BBU, 0x2DF4C635U, 0x36FED273U},
-    {0x055455FCU, 0x2E17C41BU, 0x0AB7433DU},
-    {0x22A8A988U, 0x45896D14U, 0x00D5F51CU},
-    {0x44D9085CU, 0x399BDCFBU, 0x000656E6U},
-    {0x36EE777EU, 0x11C429AFU, 0x000011E7U},
-    {0x61F25513U, 0x574A372EU, 0x00000012U},
-    {0x7B1A38D9U, 0x03977C96U, 0x00000000U},
-    {0x76A6C520U, 0x00008224U, 0x00000000U},
-    {0x6397C3C8U, 0x00000006U, 0x00000000U},
-    {0x00109FC3U, 0x00000000U, 0x00000000U},
-    {0x0000001DU, 0x00000000U, 0x00000000U}
+/* 96-bit RCDT -> 3x32-bit limbs */
+const uint32_t GAUSS0_96_3x32[11][3] = {
+    {0x2BFDBDFCU, 0xB7D318D4U, 0x6DFDA4E6U},
+    {0x2AA2B001U, 0xB85F106CU, 0x156E867AU},
+    {0x15454C5FU, 0x1625B451U, 0x01ABEA39U},
+    {0x26C842F8U, 0xE66F73EEU, 0x000CADCCU},
+    {0xB773BC08U, 0x4710A6BDU, 0x000023CEU},
+    {0x0F92A8ADU, 0x5D28DCBBU, 0x00000025U},
+    {0xD8D1C6D8U, 0x0E5DF25BU, 0x00000000U},
+    {0xB536290EU, 0x00020893U, 0x00000000U},
+    {0x1CBE1E4DU, 0x0000001BU, 0x00000000U},
+    {0x0084FE20U, 0x00000000U, 0x00000000U},
+    {0x000000EFU, 0x00000000U, 0x00000000U}
 };
 
-Renyi divergence R_1023: 1 + 2^(-93.04)
-Renyi divergence R_inf:  1 + 2^(-89.81)
+Renyi divergence R_1023: 1 + 2^(-96.38)
+Renyi divergence R_inf:  1 + 2^(-92.66)
 w =  9 | R_1023: 1 + 2^(-72.94) | R_inf: 1 + 2^(-72.94)
-w = 10 | R_1023: 1 + 2^(-88.09) | R_inf: 1 + 2^(-87.78)
-w = 11 | R_1023: 1 + 2^(-93.04) | R_inf: 1 + 2^(-89.81)
+w = 10 | R_1023: 1 + 2^(-88.09) | R_inf: 1 + 2^(-88.04)
+w = 11 | R_1023: 1 + 2^(-96.38) | R_inf: 1 + 2^(-92.66)
 
---- RCDT 实际标准差（keygen sigma=1 噪声采样器）---
-RCDT 支撑范围: [-11, 11]
-zero-fold 接受概率: 0.714825776256395601015976665931
-实际方差: 0.999999788767728083111723010752
-实际标准差: 0.999999894383858464171185047264
-相对理想标准差 1 的绝对差: -1.056161E-7 (-2^(-23.17))
-相对理想标准差 1 的相对差: -1.056161E-7 (-2^(-23.17))
+--- Actual RCDT standard deviation (keygen sigma=1 noise sampler) ---
+RCDT support range: [-11, 11]
+zero-fold acceptance probability: 0.714825776256395601015976666158
+actual variance: 0.999999788767728083111723042976
+actual standard deviation: 0.999999894383858464171185063376
+absolute gap from ideal standard deviation 1: -1.056161E-7 (-2^(-23.17))
+absolute gap from ideal standard deviation 1 relative gap: -1.056161E-7 (-2^(-23.17))

@@ -1,12 +1,12 @@
 
 SHUTTLE-NGCC-SUF 128:
-第一个公式近似结果: 2^{-50.25}
-第二个公式近似结果: 2^{-93.13}
+First formula approximation: 2^{-50.25}
+Second formula approximation: 2^{-93.13}
 
 SHUTTLE-NGCC-SUF 256:
-第一个公式近似结果: 2^{-50.98}
-第二个公式近似结果: 2^{-93.91}
+First formula approximation: 2^{-50.98}
+Second formula approximation: 2^{-93.91}
 
 SHUTTLE-NGCC-SUF 512:
-第一个公式近似结果: 2^{-51.97}
-第二个公式近似结果: 2^{-94.91}
+First formula approximation: 2^{-51.97}
+Second formula approximation: 2^{-94.91}
