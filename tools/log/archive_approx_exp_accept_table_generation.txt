@@ -1,0 +1,11 @@
+SHUTTLE accept-branch exp approximation
+r = 825, k = 256
+x in {0,...,36}, y in {0,...,255}
+p = -y*(y+2*k*x)/(2*r^2)
+minimum p = -3.5005950413223140495867768595 at x=36 y=255
+scheme = direct Q64 threshold table, y=0 accepted unconditionally
+table bytes = 75776
+runtime arithmetic = indexed load only; no 64x64 product in exp approximation
+mpmath precheck max relative error = 8.32006733107637905529694099095e-19
+mpmath precheck precision = 60.060038599275135198 bits at x=36 y=255
+target precision = 53 bits

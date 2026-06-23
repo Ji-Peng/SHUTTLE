@@ -1,0 +1,4 @@
+max accept relative error = 8.3200673310763773809241753749677339272428e-19
+accept precision          = 60.06003859927513548823 bits
+worst point               = x=36 y=255
+table size                = 75776 bytes
