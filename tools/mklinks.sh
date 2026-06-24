@@ -45,7 +45,23 @@ ref="$root/ref"
 # would-be-fork scalar sources (polyvec/sampler/irs/rounding/sign) and ALL the
 # NGCC infra (SIG_AlgorithmInstance/KAT_SIG/drng/auxfunc/README) are SYMLINKED
 # scalar -- they are NOT in this skip set.
+# is_fork <filename> <backend>: true (return 0) iff <filename> is a REAL fork
+# in <backend>/ and must NOT be symlinked from ref/.  Most forks are common to
+# all backends; the M9 SIMD sampler perf forks (sampler.c, polyvec.c) currently
+# exist ONLY for avx2, so they are backend-gated -- avx512 keeps the scalar
+# symlink until its own SIMD fork lands (a follow-on; do not touch avx512 now).
 is_fork() {
+    backend="$2"
+    # M9 SIMD sampler perf forks (avx2 ONLY at present): sampler.c routes the
+    # 96-bit RCDT scan (cdt_scan96) through the AVX2 8-way borrow-fold kernel,
+    # and polyvec.c routes the ExpandA uniform-reject scan through a 16-wide
+    # AVX2 reject + BMI2 compaction.  Both are guarded by -DUSE_AVX2_SAMPLER and
+    # are BYTE-EXACT to the scalar ref (KAT-locked).
+    if [ "$backend" = "avx2" ]; then
+        case "$1" in
+        sampler.c | polyvec.c) return 0 ;;
+        esac
+    fi
     case "$1" in
     # Real per-backend fork: the namespace-tail-only config.h.
     config.h) return 0 ;;
@@ -75,7 +91,7 @@ link_into() {
         f=$(basename "$path")
         # Only link regular files (skip directories like test/ out/).
         [ -f "$path" ] || continue
-        if is_fork "$f"; then
+        if is_fork "$f" "$backend"; then
             continue
         fi
         target="../ref/$f"
