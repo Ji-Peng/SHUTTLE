@@ -1,3 +1,10 @@
+*** SUPERSEDED -- DO NOT USE FOR check-consts / drift gating ***
+*** This is a STALE g=4 (16-segment, deg-9, 1280-byte) sweep selection.
+*** The AUTHORITATIVE production selection is g=2 (4-segment, deg-13,
+*** 448-byte) -- see approx_log_poly_generation.txt + ../approx_log_poly.h.
+*** Kept only as an audit trail of the (g=0..7) sweep; P06-T1 / MS-B4.
+*** ----------------------------------------------------------------------
+
 SHUTTLE SamplerU / ApproxLog : segmented base-2 logarithm
 target log2(b), b in [1,2);  eta_log <= 2^-57 absolute
 coefficient format = signed Q62;  x = Q64 multiplier in [0,1)

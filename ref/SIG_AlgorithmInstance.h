@@ -12,13 +12,25 @@ other purposes.
 #ifndef SIG_ALGORITHM_INSTANCE_H
 #define SIG_ALGORITHM_INSTANCE_H
 
+// SHUTTLE_MODE (128/256/512) and CRYPTO_ALGNAME flow in from config.h; pulling
+// it here lets one header serve all three parameter sets via #if SHUTTLE_MODE.
+#include "config.h"
+
 // Set "OUTPUT_BLANK_TEST_VECTORS" as 0 to generate test vector files
 // Set "OUTPUT_BLANK_TEST_VECTORS" as 1 to generate blank template (default)
-#define OUTPUT_BLANK_TEST_VECTORS 1
+#define OUTPUT_BLANK_TEST_VECTORS 0
 
 // Set "ALGORITHM_INSTANCE" as your algorithm instance name (no more than 64 bytes)
 // Only letters, numbers, '-' or '_' are permitted
-#define ALGORITHM_INSTANCE "AlgorithmInstance"
+#if SHUTTLE_MODE == 128
+#define ALGORITHM_INSTANCE "SHUTTLE-128"
+#elif SHUTTLE_MODE == 256
+#define ALGORITHM_INSTANCE "SHUTTLE-256"
+#elif SHUTTLE_MODE == 512
+#define ALGORITHM_INSTANCE "SHUTTLE-512"
+#else
+#error "Unsupported SHUTTLE_MODE (expected 128, 256, or 512)"
+#endif
 
 #ifdef __cplusplus
 extern "C"

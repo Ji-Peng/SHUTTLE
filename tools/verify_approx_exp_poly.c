@@ -4,7 +4,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "approx_exp_poly.h"
+/* Exercise the IN-TREE wrapper (ref/approx_exp.h), which #include's the
+ * frozen tools/approx_exp_poly.h and re-exports the same entry points.
+ * This makes the authoritative verifier gate the actual integration
+ * surface, not just the raw autogen header.  Build with: -I. -I.. (so both
+ * "approx_exp.h" and the "tools/approx_exp_poly.h" it includes resolve).
+ */
+#include "approx_exp.h"
 
 #define BLISS_R 825
 #define BLISS_K 256
@@ -40,7 +46,8 @@ int main(void)
             }
         }
     }
-    /* performance-optimal 4-way batched variant must be bit-identical to scalar */
+    /* performance-optimal 4-way batched variant must be bit-identical to
+     * scalar */
     int x4_ok = 1;
     for (int x = 0; x <= SHUTTLE_EXP_POLY_X_MAX && x4_ok; x++)
         for (int y = 0; y <= SHUTTLE_EXP_POLY_Y_MAX - 3; y++) {
@@ -49,7 +56,10 @@ int main(void)
             uint64_t o[4];
             shuttle_exp_accept_poly_q64_x4(xs, ys, o);
             for (int n = 0; n < 4; n++)
-                if (o[n] != shuttle_exp_accept_poly_q64(xs[n], ys[n])) { x4_ok = 0; break; }
+                if (o[n] != shuttle_exp_accept_poly_q64(xs[n], ys[n])) {
+                    x4_ok = 0;
+                    break;
+                }
         }
 
     __float128 bits = -logq(max_rel) / logq(2.0Q);
