@@ -26,7 +26,7 @@
  * KAPPA_B - g bits.  Any KAPPA_B <= 58 keeps the cross-segment rounding wobble
  * (~d ULP ~ 2^-59) below one mantissa step's log2 increase. */
 #ifndef KAPPA_B
-#define KAPPA_B 56
+#define KAPPA_B 57   /* spec value (Description.tex parameter table) */
 #endif
 #define RBITS (KAPPA_B - SHUTTLE_LOG_POLY_G)        /* reduced-argument bits */
 /* snap a Q64 fraction down to the KAPPA_B-representable mantissa grid */
@@ -98,6 +98,21 @@ int main(void)
     __float128 drop_bits = (worst_drop < 0)
         ? -logq((__float128)(-worst_drop) / QSCALE) / logq(2.0Q) : 999.0Q;
 
+    /* performance-optimal 2-way batched variant must be bit-identical to scalar */
+    int x2_ok = 1;
+    for (uint32_t j = 0; j < SHUTTLE_LOG_POLY_SEGMENTS && x2_ok; j++)
+        for (uint32_t i = 0; i < 4096; i++) {
+            uint32_t j2 = (j + 1u) % SHUTTLE_LOG_POLY_SEGMENTS;
+            uint64_t x0 = ((__uint128_t)i << 64) / 4096;
+            uint64_t x1 = ((__uint128_t)(4095 - i) << 64) / 4096;
+            uint32_t s[2] = {j, j2};
+            uint64_t xb[2] = {x0, x1};
+            int64_t o[2];
+            shuttle_log2_frac_q62_x2(s, xb, o);
+            if (o[0] != shuttle_log2_frac_q62(j, x0) ||
+                o[1] != shuttle_log2_frac_q62(j2, x1)) { x2_ok = 0; break; }
+        }
+
     __float128 bits = -logq(max_abs) / logq(2.0Q);
     char es[128], bs[128];
     quadmath_snprintf(es, sizeof es, "%.40Qe", max_abs);
@@ -116,7 +131,8 @@ int main(void)
         printf("monotone @ kappa_b=%d: FAIL (worst drop 2^-%s)\n", KAPPA_B, ds);
     }
     printf("CT-scan == direct   : %s\n", ct_scan_ok ? "PASS" : "FAIL");
-    int ok = (bits >= TARGET_BITS) && pin_zero_ok && mono_ok && ct_scan_ok;
+    printf("x2 batched == scalar: %s\n", x2_ok ? "PASS" : "FAIL");
+    int ok = (bits >= TARGET_BITS) && pin_zero_ok && mono_ok && ct_scan_ok && x2_ok;
     printf("RESULT             : %s (need >= %.1f bits)\n",
            ok ? "PASS" : "FAIL", (double)TARGET_BITS);
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;

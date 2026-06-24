@@ -40,6 +40,18 @@ int main(void)
             }
         }
     }
+    /* performance-optimal 4-way batched variant must be bit-identical to scalar */
+    int x4_ok = 1;
+    for (int x = 0; x <= SHUTTLE_EXP_POLY_X_MAX && x4_ok; x++)
+        for (int y = 0; y <= SHUTTLE_EXP_POLY_Y_MAX - 3; y++) {
+            int xs[4] = {x, x, x, x};
+            int ys[4] = {y, y + 1, y + 2, y + 3};
+            uint64_t o[4];
+            shuttle_exp_accept_poly_q64_x4(xs, ys, o);
+            for (int n = 0; n < 4; n++)
+                if (o[n] != shuttle_exp_accept_poly_q64(xs[n], ys[n])) { x4_ok = 0; break; }
+        }
+
     __float128 bits = -logq(max_rel) / logq(2.0Q);
     char err_s[128];
     char bits_s[128];
@@ -48,5 +60,6 @@ int main(void)
     printf("max accept relative error = %s\n", err_s);
     printf("accept precision          = %s bits\n", bits_s);
     printf("worst point               = x=%d y=%d\n", worst_x, worst_y);
-    return bits >= TARGET_BITS ? EXIT_SUCCESS : EXIT_FAILURE;
+    printf("x4 batched == scalar      = %s\n", x4_ok ? "PASS" : "FAIL");
+    return (bits >= TARGET_BITS && x4_ok) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

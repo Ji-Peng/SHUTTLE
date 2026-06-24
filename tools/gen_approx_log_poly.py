@@ -58,8 +58,8 @@ MARGIN_BITS = mp.mpf(57.5)  # require >= ~0.5 bit head-room when *selecting*
 GRID_PER_SEG = 2049         # audit samples per segment (the C __float128
                             # verifier at 2^18/seg is the authoritative gate)
 
-SELECTED_G = 4
-SELECTED_DEGREE = 9
+SELECTED_G = 2
+SELECTED_DEGREE = 13
 
 
 def f_seg(g: int, j: int):
@@ -295,7 +295,9 @@ def emit_header(path: Path, res: Audit):
           "}",
           "",
           "/* Branch-free constant-time equality mask: all-ones iff a==b, else 0.",
-          "   Pure arithmetic (no compare/branch instruction, data-independent). */",
+          "   Data-independent: no branch and no cmov.  (At -O2/-O3 the compiler",
+          "   may re-fold this into a cmp+sbb/sete, all single-cycle, flag consumed",
+          "   arithmetically -- never by a conditional jump.) */",
           "SHUTTLE_ALWAYS_INLINE uint64_t shuttle_log_eqmask(uint32_t a, uint32_t b)",
           "{",
           "    uint64_t z = (uint64_t)(a ^ b);          /* 0 iff a==b */",
@@ -328,6 +330,42 @@ def emit_header(path: Path, res: Audit):
           "    for (int k = SHUTTLE_LOG_POLY_DEGREE - 1; k >= 0; k--)",
           "        acc = (__int128)c[k] + (__int128)shuttle_log_mulhi(acc, x_q64);",
           "    return (int64_t)acc;",
+          "}",
+          "",
+          "/* PERFORMANCE-OPTIMAL variant (see ApproxLog.tex, Table tab:batch):",
+          "   2-way batched evaluator, ~69 cyc/output vs ~78 for the scalar above.",
+          "   Computes two INDEPENDENT log2 fractions at once -- each kShuttleLogPoly",
+          "   entry is loaded once and shared by both lanes, and the two Horner chains",
+          "   interleave to hide the multiply latency.  Register-lean fused form (only",
+          "   the 2*SEGMENTS masks + two accumulators are live).  Same constant-time",
+          "   guarantees as the scalar.  Use this when the caller can supply two",
+          "   independent inputs; otherwise use shuttle_log2_frac_q62. */",
+          "SHUTTLE_ALWAYS_INLINE void shuttle_log2_frac_q62_x2(const uint32_t sel[2], const uint64_t x_q64[2], int64_t out[2])",
+          "{",
+          "    uint64_t M0[SHUTTLE_LOG_POLY_SEGMENTS], M1[SHUTTLE_LOG_POLY_SEGMENTS];",
+          "    for (uint32_t j = 0; j < SHUTTLE_LOG_POLY_SEGMENTS; j++) {",
+          "        M0[j] = shuttle_log_eqmask(j, sel[0]);",
+          "        M1[j] = shuttle_log_eqmask(j, sel[1]);",
+          "    }",
+          "    int64_t h0 = 0, h1 = 0;",
+          "    for (uint32_t j = 0; j < SHUTTLE_LOG_POLY_SEGMENTS; j++) {",
+          "        int64_t v = kShuttleLogPoly[j][SHUTTLE_LOG_POLY_DEGREE];",
+          "        h0 |= (int64_t)(M0[j] & (uint64_t)v);",
+          "        h1 |= (int64_t)(M1[j] & (uint64_t)v);",
+          "    }",
+          "    __int128 a0 = h0, a1 = h1;",
+          "    for (int k = SHUTTLE_LOG_POLY_DEGREE - 1; k >= 0; k--) {",
+          "        int64_t c0 = 0, c1 = 0;",
+          "        for (uint32_t j = 0; j < SHUTTLE_LOG_POLY_SEGMENTS; j++) {",
+          "            int64_t v = kShuttleLogPoly[j][k];",
+          "            c0 |= (int64_t)(M0[j] & (uint64_t)v);",
+          "            c1 |= (int64_t)(M1[j] & (uint64_t)v);",
+          "        }",
+          "        a0 = (__int128)c0 + (__int128)shuttle_log_mulhi(a0, x_q64[0]);",
+          "        a1 = (__int128)c1 + (__int128)shuttle_log_mulhi(a1, x_q64[1]);",
+          "    }",
+          "    out[0] = (int64_t)a0;",
+          "    out[1] = (int64_t)a1;",
           "}",
           "",
           "#undef SHUTTLE_ALWAYS_INLINE",
@@ -390,13 +428,142 @@ def sweep_table():
     return rows
 
 
+# deployed single-segment baseline: P(u)=2^-62 sum c_i u^i ~ log2(1+u), u=b-1
+# (tools/LogPolyApprox/log2_b_in_1_2_abs_57_64.txt, degree 21, Q62)
+DEPLOYED_BASELINE = [
+    12, 6653256548922149505, -3326628274459181085, 2217752182851402654,
+    -1663314133014378403, 1330651220520872915, -1108874821083789136,
+    950452344052204895, -831560255485224283, 738694605269400153,
+    -662829495809222924, 595932539625226929, -528794318160472007,
+    451527267200338167, -358255448212785553, 253529021404104913,
+    -153211958011988634, 75505384931375114, -28766651603269161,
+    7878760815328986, -1372175949002259, 113674624297114,
+]
+# schemes to emit for the performance exploration: (g, degree) at >=1-bit margin
+# (g3 uses degree 11, not the thin-margin 10, since it is the selected scheme)
+EXPLORE_SCHEMES = [(1, 16), (2, 13), (3, 11), (4, 9), (5, 8), (6, 7), (7, 6)]
+
+
+def emit_nway(g, d, nseg, N):
+    """Emit an N-way batched evaluator log2_frac_g{g}_x{N} that runs N
+    independent inputs together.  Two goals: (i) amortize the constant-time table
+    loads (each kLogPoly entry is loaded once and shared across the N lanes), and
+    (ii) hide the Horner multiply latency by interleaving N independent dependency
+    chains.  To keep register pressure low we DO NOT materialize N full
+    coefficient rows; instead we precompute only the N*2^g equality masks once and
+    FUSE the per-coefficient column scan into each Horner step -- so only N
+    accumulators (+ N small temporaries + the mask array) are live."""
+    L = [f"AL_INLINE void log2_frac_g{g}_x{N}(const uint32_t sel[{N}], "
+         f"const uint64_t xx[{N}], int64_t out[{N}]){{"]
+    # N x 2^g equality masks, precomputed once
+    L.append(f"    uint64_t M[{N}][{nseg}];")
+    L.append(f"    for(uint32_t j=0;j<{nseg};j++){{ "
+             + " ".join(f"M[{n}][j]=al_eqmask(j,sel[{n}]);" for n in range(N)) + " }")
+    # highest coefficient (column d) -> Horner init
+    L.append("    " + " ".join(f"int64_t h{n}=0;" for n in range(N)))
+    L.append(f"    for(uint32_t j=0;j<{nseg};j++){{ int64_t v=kLogPoly_g{g}[j][{d}];")
+    L.append("        " + " ".join(f"h{n}|=(int64_t)(M[{n}][j]&(uint64_t)v);" for n in range(N)) + " }")
+    L.append("    " + " ".join(f"__int128 a{n}=h{n};" for n in range(N)))
+    # fused column-scan + interleaved Horner, high coefficient to low
+    L.append(f"    for(int k={d-1};k>=0;k--){{")
+    L.append("        " + " ".join(f"int64_t c{n}=0;" for n in range(N)))
+    L.append(f"        for(uint32_t j=0;j<{nseg};j++){{ int64_t v=kLogPoly_g{g}[j][k];")
+    L.append("            " + " ".join(f"c{n}|=(int64_t)(M[{n}][j]&(uint64_t)v);" for n in range(N)) + " }")
+    L.append("        " + " ".join(f"a{n}=(__int128)c{n}+(__int128)al_mulhi(a{n},xx[{n}]);" for n in range(N)))
+    L.append("    }")
+    L.append("    " + " ".join(f"out[{n}]=(int64_t)a{n};" for n in range(N)))
+    L.append("}")
+    return L
+
+
+def emit_explore(path: Path):
+    """Emit one header with every scheme (baseline + g=1..7) for benchmarking:
+    per-scheme coefficient table and an inline evaluator, sharing the rounded
+    high-half multiply and the constant-time equality mask."""
+    L = []
+    L += ["#ifndef SHUTTLE_APPROX_LOG_EXPLORE_H",
+          "#define SHUTTLE_APPROX_LOG_EXPLORE_H",
+          "#include <stdint.h>",
+          "#if defined(__GNUC__) || defined(__clang__)",
+          "#define AL_INLINE static inline __attribute__((always_inline))",
+          "#else",
+          "#define AL_INLINE static inline",
+          "#endif",
+          "",
+          "/* rounded high-half of a signed 128-bit product: ((a*x)+2^63)>>64 */",
+          "AL_INLINE int64_t al_mulhi(__int128 a, uint64_t x){",
+          "    return (int64_t)(((a*(__int128)(__uint128_t)x)+((__int128)1<<63))>>64);",
+          "}",
+          "/* constant-time equality mask: all-ones iff a==b */",
+          "AL_INLINE uint64_t al_eqmask(uint32_t a, uint32_t b){",
+          "    uint64_t z=(uint64_t)(a^b); uint64_t nz=(z|(~z+1))>>63; return nz-1;",
+          "}",
+          ""]
+    # baseline (single segment, degree 21, Q62 multiplier u=b-1, >>62 rounding)
+    db = DEPLOYED_BASELINE
+    L += [f"/* baseline: deployed single-segment degree {len(db)-1}, Q62, u=b-1 as Q62 */",
+          f"static const int64_t kLogBaseline[{len(db)}] = {{",
+          "    " + ", ".join(f"INT64_C({c})" for c in db),
+          "};",
+          "AL_INLINE int64_t log2_frac_baseline(uint64_t u_q62){",
+          f"    __int128 acc = kLogBaseline[{len(db)-1}];",
+          f"    for (int k={len(db)-2}; k>=0; k--)",
+          "        acc = (__int128)kLogBaseline[k] + (((acc*(__int128)(__uint128_t)u_q62)+((__int128)1<<61))>>62);",
+          "    return (int64_t)acc;",
+          "}",
+          ""]
+    schemes_meta = [("baseline", 0, len(db) - 1, 1)]
+    for g, d in EXPLORE_SCHEMES:
+        res = audit(g, d)
+        if not (res.fits_i64 and res.no_i128_overflow):
+            raise SystemExit(f"explore scheme g={g} d={d} unsafe")
+        nseg = 1 << g
+        rows = ["    {" + ", ".join(f"INT64_C({c})" for c in sf.coeffs_q62) + "}," for sf in res.segs]
+        L += [f"/* g={g}: {nseg} segments, degree {d}, Q62, err 2^-{mp.nstr(res.bits,5)} */",
+              f"static const int64_t kLogPoly_g{g}[{nseg}][{d+1}] = {{"]
+        L += rows
+        L += ["};",
+              f"AL_INLINE int64_t log2_frac_g{g}(uint32_t sel, uint64_t x_q64){{",
+              f"    int64_t c[{d+1}]; for (int k=0;k<={d};k++) c[k]=0;",
+              f"    for (uint32_t j=0;j<{nseg};j++){{ uint64_t m=al_eqmask(j,sel);",
+              f"        for (int k=0;k<={d};k++) c[k]|=(int64_t)(m&(uint64_t)kLogPoly_g{g}[j][k]); }}",
+              f"    __int128 acc=c[{d}]; for (int k={d-1};k>=0;k--) acc=(__int128)c[k]+(__int128)al_mulhi(acc,x_q64);",
+              "    return (int64_t)acc;",
+              "}"]
+        # N-way batched variants: one shared table load per entry, N interleaved
+        # Horner chains -> amortizes the scan loads and hides the multiply latency.
+        for N in (2, 3, 4, 8):
+            L += emit_nway(g, d, nseg, N)
+        L.append("")
+        schemes_meta.append((f"g{g}", g, d, nseg))
+    # a small descriptor table so the harness can loop over schemes
+    L += ["/* scheme descriptors: {name, g, degree, segments, scan_ops} */",
+          "typedef struct { const char *name; int g; int degree; int segments; int scan_ops; } al_scheme_t;",
+          "static const al_scheme_t AL_SCHEMES[] = {"]
+    for name, g, d, nseg in schemes_meta:
+        scan = 0 if name == "baseline" else nseg * (d + 1)
+        L.append(f'    {{"{name}", {g}, {d}, {nseg}, {scan}}},')
+    L += ["};",
+          f"#define AL_NUM_SCHEMES {len(schemes_meta)}",
+          "#undef AL_INLINE",
+          "#endif",
+          ""]
+    path.write_text("\n".join(L))
+    print(f"wrote {path} ({len(schemes_meta)} schemes)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", type=Path, default=Path(__file__).resolve().parent)
     ap.add_argument("--g", type=int, default=SELECTED_G)
     ap.add_argument("--degree", type=int, default=SELECTED_DEGREE)
     ap.add_argument("--sweep", action="store_true", help="run full g=0..7 comparison sweep")
+    ap.add_argument("--explore", type=Path, default=None,
+                    help="emit a combined benchmarking header at this path and exit")
     args = ap.parse_args()
+    if args.explore is not None:
+        emit_explore(args.explore)
+        return
     out_dir = args.out_dir
     log_dir = out_dir / "log"
     log_dir.mkdir(parents=True, exist_ok=True)

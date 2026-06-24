@@ -179,6 +179,37 @@ def write_header(path: Path, cs, t: int, degree: int) -> None:
     lines.append("    return v;")
     lines.append("}")
     lines.append("")
+    # canonical PERFORMANCE-OPTIMAL 4-way batched variant
+    N = 4
+    lines.append("/* PERFORMANCE-OPTIMAL variant (see ApproxExp.tex, Table tab:exp-batch):")
+    lines.append("   4-way batched, ~42 cyc/output vs ~56 for the scalar above.  Four")
+    lines.append("   INDEPENDENT exp evaluations share the coefficient table (one load per")
+    lines.append("   Horner step) and interleave four Horner + squaring chains to hide the")
+    lines.append("   multiply latency; only four accumulators are live.  Same constant-time")
+    lines.append("   guarantees as the scalar.  Use when the caller can supply four")
+    lines.append("   independent (x,y); otherwise use shuttle_exp_accept_poly_q64. */")
+    lines.append("SHUTTLE_ALWAYS_INLINE void shuttle_exp_accept_poly_q64_x4(const int x[4], const int y[4], uint64_t out[4])")
+    lines.append("{")
+    for n in range(N):
+        lines.append(f"    int64_t s{n} = (int64_t)(((uint64_t)y[{n}] * (uint64_t)(y[{n}] + 512 * x[{n}])) << 40);")
+    lines.append("    " + " ".join(f"__int128 a{n} = kShuttleExpPolyCoeff[{degree - 1}];" for n in range(N)))
+    lines.append(f"    for (int k = {degree - 2}; k >= 0; k--) {{")
+    lines.append("        int64_t c = kShuttleExpPolyCoeff[k];")
+    for n in range(N):
+        lines.append(f"        a{n} = (__int128)c + ((__int128)shuttle_high64_s128(a{n}, s{n}) * 2);")
+    lines.append("    }")
+    for n in range(N):
+        lines.append(f"    a{n} = ((__int128)UINT64_MAX) + ((__int128)shuttle_high64_s128(a{n}, s{n}) * 2);")
+    for n in range(N):
+        lines.append(f"    uint64_t v{n} = (uint64_t)a{n};")
+    lines.append(f"    for (int q = 0; q < {t}; q++) {{")
+    for n in range(N):
+        lines.append(f"        v{n} = shuttle_high64_u64(v{n}, v{n});")
+    lines.append("    }")
+    for n in range(N):
+        lines.append(f"    out[{n}] = v{n};")
+    lines.append("}")
+    lines.append("")
     lines.append("#undef SHUTTLE_ALWAYS_INLINE")
     lines.append("")
     lines.append("#endif")
@@ -234,12 +265,84 @@ def write_log(path: Path, cs, selected: AuditResult, rows) -> None:
     print(text, end="")
 
 
+def emit_exp_nway(cs_tab, t, N):
+    """N-way batched accept-poly: shared Taylor coefficients, N interleaved
+    (Horner + squaring) dependency chains.  Unlike ApproxLog there is no table
+    scan and the coefficients are the SAME for every lane, so only N
+    accumulators are live -- batching purely hides the Horner/squaring latency.
+    cs_tab = [c1..cd] (c0 is the implicit UINT64_MAX step)."""
+    d = len(cs_tab)
+    nm = f"_t{t}d{d}"
+    L = [f"AL_INLINE void shuttle_exp{nm}_x{N}(const int xx[{N}], const int yy[{N}], uint64_t out[{N}]){{"]
+    L.append("    " + " ".join(
+        f"int64_t s{n}=(int64_t)(((uint64_t)yy[{n}]*(uint64_t)(yy[{n}]+512*xx[{n}]))<<40);" for n in range(N)))
+    L.append("    " + " ".join(f"__int128 a{n}=kExp{nm}[{d-1}];" for n in range(N)))
+    L.append(f"    for(int k={d-2};k>=0;k--){{ int64_t c=kExp{nm}[k];")
+    L.append("        " + " ".join(f"a{n}=(__int128)c+((__int128)al_exp_hs(a{n},s{n})*2);" for n in range(N)) + " }")
+    L.append("    " + " ".join(f"a{n}=((__int128)UINT64_MAX)+((__int128)al_exp_hs(a{n},s{n})*2);" for n in range(N)))
+    L.append("    " + " ".join(f"uint64_t v{n}=(uint64_t)a{n};" for n in range(N)))
+    L.append(f"    for(int q=0;q<{t};q++){{")
+    L.append("        " + " ".join(f"v{n}=al_exp_hu(v{n},v{n});" for n in range(N)))
+    L.append("    }")
+    L.append("    " + " ".join(f"out[{n}]=v{n};" for n in range(N)))
+    L.append("}")
+    return L
+
+
+def find_min_degree(t, target=53.0):
+    for d in range(1, 30):
+        if audit_scheme(t, d).precision_bits >= target:
+            return d
+    return None
+
+
+EXP_EXPLORE_T = [4, 5, 6, 7, 8]   # squaring counts to explore (each at min degree)
+
+
+def emit_exp_explore(path: Path):
+    L = ["#ifndef SHUTTLE_APPROX_EXP_EXPLORE_H", "#define SHUTTLE_APPROX_EXP_EXPLORE_H",
+         "#include <stdint.h>",
+         "#if defined(__GNUC__) || defined(__clang__)",
+         "#define AL_INLINE static inline __attribute__((always_inline))",
+         "#else", "#define AL_INLINE static inline", "#endif", "",
+         "AL_INLINE int64_t al_exp_hs(__int128 a, int64_t b){ return (int64_t)((a*(__int128)b)>>64); }",
+         "AL_INLINE uint64_t al_exp_hu(uint64_t a, uint64_t b){ return (uint64_t)(((__uint128_t)a*(__uint128_t)b)>>64); }",
+         ""]
+    meta = []
+    for t in EXP_EXPLORE_T:
+        d = find_min_degree(t)
+        res = audit_scheme(t, d)
+        if not res.coeffs_fit_i64:
+            continue
+        cs = coeffs(t, d)
+        cs_tab = cs[1:]
+        nm = f"_t{t}d{d}"
+        L += [f"/* t={t} squarings, degree {d}, total mul {t+d}, precision 2^-{mp.nstr(res.precision_bits,5)} */",
+              f"static const int64_t kExp{nm}[{d}] = {{ " + ", ".join(f"INT64_C({c})" for c in cs_tab) + " };"]
+        for N in (1, 2, 3, 4, 8):
+            L += emit_exp_nway(cs_tab, t, N)
+        L.append("")
+        meta.append((t, d, t + d))
+    L += ["typedef struct { int t, degree, total_mul; } exp_scheme_t;",
+          "static const exp_scheme_t EXP_SCHEMES[] = {"]
+    for t, d, tm in meta:
+        L.append(f"    {{{t}, {d}, {tm}}},")
+    L += ["};", f"#define EXP_NUM_SCHEMES {len(meta)}", "#undef AL_INLINE", "#endif", ""]
+    path.write_text("\n".join(L))
+    print(f"wrote {path}: schemes " + ", ".join(f"t{t}d{d}" for t, d, _ in meta))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", type=Path, default=Path(__file__).resolve().parent)
     parser.add_argument("--squarings", type=int, default=SELECTED_SQUARINGS)
     parser.add_argument("--degree", type=int, default=SELECTED_DEGREE)
+    parser.add_argument("--explore", type=Path, default=None,
+                        help="emit a combined N-way benchmarking header and exit")
     args = parser.parse_args()
+    if args.explore is not None:
+        emit_exp_explore(args.explore)
+        return
     out_dir = args.out_dir
     log_dir = out_dir / "log"
     log_dir.mkdir(parents=True, exist_ok=True)
