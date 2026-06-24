@@ -26,30 +26,46 @@
 
 #    include "fips202x8.h"
 
-static void shakex8_squeeze_buffered(
-    uint8_t *const out[8], size_t out_len, keccakx8_state *st,
-    unsigned int rate,
-    void (*sqblk)(uint8_t *, uint8_t *, uint8_t *, uint8_t *, uint8_t *,
-                  uint8_t *, uint8_t *, uint8_t *, size_t,
-                  keccakx8_state *))
-{
-    size_t nblocks = out_len / rate;
-    size_t off = nblocks * rate;
-    size_t tail = out_len - off;
-    uint8_t t[8][SHAKE128_RATE];
-
-    if (nblocks) {
-        sqblk(out[0], out[1], out[2], out[3], out[4], out[5], out[6],
-              out[7], nblocks, st);
-    }
-    if (tail) {
-        size_t k;
-        sqblk(t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], 1, st);
-        for (k = 0; k < 8; k++) {
-            memcpy(out[k] + off, t[k], tail);
-        }
-    }
-}
+/* 8-lane SHAKE squeeze with a buffered final partial block.  out[k] receives
+ * out_len bytes for lane k.  We squeeze whole rate blocks straight into the
+ * destination, then one extra block into a scratch row to copy the tail.
+ *
+ * RATE is a COMPILE-TIME CONSTANT (SHAKE128_RATE / SHAKE256_RATE), passed as
+ * a template parameter through the SHAKEX8_SQUEEZE_BODY macro so the
+ * `out_len / RATE` becomes a constant-divisor multiply-shift rather than a
+ * hardware `div`.  Mirrors symmetric_avx2.c's SHAKEX4_SQUEEZE_BODY.  out_len
+ * is the (public) squeeze length, never secret, so the divide would be safe
+ * regardless -- but keeping it a constant divisor keeps the constant-time
+ * scanner (tools/ct_scan.py) clean now that this TU sits on the secret-seeded
+ * ExpandS/SampleY path via the M9 N-way batched refill
+ * (USE_AVX512_XOF_NWAY). */
+#    define SHAKEX8_SQUEEZE_BODY(out, out_len, st, RATE, SQBLK)              \
+        do {                                                                \
+            size_t nblocks_ = (out_len) / (RATE);                           \
+            size_t off_ = nblocks_ * (RATE);                                \
+            size_t tail_ = (out_len) - off_;                                \
+            uint8_t b0_[RATE], b1_[RATE], b2_[RATE], b3_[RATE], b4_[RATE],   \
+                b5_[RATE], b6_[RATE], b7_[RATE];                            \
+            if (nblocks_)                                                    \
+                SQBLK((out)[0], (out)[1], (out)[2], (out)[3], (out)[4],      \
+                      (out)[5], (out)[6], (out)[7], nblocks_, (st));         \
+            if (tail_) {                                                     \
+                size_t k_;                                                   \
+                uint8_t *bp_[8];                                            \
+                bp_[0] = b0_;                                                \
+                bp_[1] = b1_;                                                \
+                bp_[2] = b2_;                                                \
+                bp_[3] = b3_;                                                \
+                bp_[4] = b4_;                                                \
+                bp_[5] = b5_;                                                \
+                bp_[6] = b6_;                                                \
+                bp_[7] = b7_;                                                \
+                SQBLK(bp_[0], bp_[1], bp_[2], bp_[3], bp_[4], bp_[5],        \
+                      bp_[6], bp_[7], 1, (st));                              \
+                for (k_ = 0; k_ < 8; k_++)                                   \
+                    memcpy((out)[k_] + off_, bp_[k_], tail_);                \
+            }                                                               \
+        } while (0)
 
 void xof128_avx512_init(xof_ctx_avx512 *ctx,
                         const uint8_t *const seed[XOF_LANES_AVX512],
@@ -63,8 +79,8 @@ void xof128_avx512_squeeze(xof_ctx_avx512 *ctx,
                            uint8_t *const out[XOF_LANES_AVX512],
                            size_t out_len)
 {
-    shakex8_squeeze_buffered(out, out_len, ctx, SHAKE128_RATE,
-                             shake128x8_squeezeblocks);
+    SHAKEX8_SQUEEZE_BODY(out, out_len, ctx, SHAKE128_RATE,
+                         shake128x8_squeezeblocks);
 }
 
 void xof256_avx512_init(xof_ctx_avx512 *ctx,
@@ -79,8 +95,8 @@ void xof256_avx512_squeeze(xof_ctx_avx512 *ctx,
                            uint8_t *const out[XOF_LANES_AVX512],
                            size_t out_len)
 {
-    shakex8_squeeze_buffered(out, out_len, ctx, SHAKE256_RATE,
-                             shake256x8_squeezeblocks);
+    SHAKEX8_SQUEEZE_BODY(out, out_len, ctx, SHAKE256_RATE,
+                         shake256x8_squeezeblocks);
 }
 
 #else /* NGCC_MODE: 16-way SM3 DRBG ==================================== \

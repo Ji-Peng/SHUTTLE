@@ -164,8 +164,14 @@ AVX2_EXTRA = {
     "sha3": ["symmetric_avx2.c", "fips202x4.c", "f1600x4.S"],
 }
 AVX512_EXTRA = {
-    "ngcc": ["auxfunc_avx512.c", "drng_avx512.c"],
-    "sha3": ["fips202x8.c"],
+    # symmetric_avx512.c = the xof*_avx512_* lane-batched wrappers (M9
+    # ExpandA/ExpandS/SampleY N-way refills); pure pointer marshaling over the
+    # N-way kernels, but it sits on the secret-seeded ExpandS/SampleY path so
+    # we scan it too (mirrors symmetric_avx2.c in AVX2_EXTRA).  Its SHA3
+    # squeeze block-count division is templated on a COMPILE-TIME rate, so it
+    # emits a multiply-shift, not a hardware div.
+    "ngcc": ["symmetric_avx512.c", "auxfunc_avx512.c", "drng_avx512.c"],
+    "sha3": ["symmetric_avx512.c", "fips202x8.c", "keccakf1600x8.c"],
 }
 
 
