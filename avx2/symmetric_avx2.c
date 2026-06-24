@@ -52,8 +52,15 @@
  * sits on the secret-seeded ExpandS/SampleY path (M9). */
 #    define SHAKEX4_SQUEEZE_BODY(out, out_len, st, RATE, SQBLK)        \
         do {                                                          \
-            size_t nblocks_ = (out_len) / (RATE);                     \
-            size_t off_ = nblocks_ * (RATE);                          \
+            /* Division-free nblocks/off (out_len is PUBLIC): gcc -Os   \
+             * re-emits a hardware `div` for `out_len/RATE` even with   \
+             * constant RATE (KyberSlash class); this accumulator loop  \
+             * avoids any divide under every compiler/opt. */           \
+            size_t off_ = 0, nblocks_ = 0;                            \
+            while (off_ + (RATE) <= (out_len)) {                      \
+                off_ += (RATE);                                       \
+                ++nblocks_;                                           \
+            }                                                         \
             size_t tail_ = (out_len) - off_;                          \
             uint8_t b0_[RATE], b1_[RATE], b2_[RATE], b3_[RATE];       \
             if (nblocks_)                                             \

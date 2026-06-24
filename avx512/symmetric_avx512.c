@@ -41,8 +41,16 @@
  * (USE_AVX512_XOF_NWAY). */
 #    define SHAKEX8_SQUEEZE_BODY(out, out_len, st, RATE, SQBLK)              \
         do {                                                                \
-            size_t nblocks_ = (out_len) / (RATE);                           \
-            size_t off_ = nblocks_ * (RATE);                                \
+            /* Division-free nblocks/off (out_len is the PUBLIC squeeze       \
+             * length): gcc -Os re-emits a hardware `div` for `out_len/RATE`  \
+             * even with RATE a compile-time constant (the KyberSlash class), \
+             * which tools/ct_scan.py forbids.  This accumulator loop avoids  \
+             * any divide under every compiler/opt; the loop count is public. */ \
+            size_t off_ = 0, nblocks_ = 0;                                   \
+            while (off_ + (RATE) <= (out_len)) {                             \
+                off_ += (RATE);                                             \
+                ++nblocks_;                                                 \
+            }                                                               \
             size_t tail_ = (out_len) - off_;                                \
             uint8_t b0_[RATE], b1_[RATE], b2_[RATE], b3_[RATE], b4_[RATE],   \
                 b5_[RATE], b6_[RATE], b7_[RATE];                            \
