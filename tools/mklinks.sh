@@ -59,9 +59,15 @@ is_fork() {
     # compaction (avx2 = 16-wide + BMI2 pdep/pext; avx512 = 32-wide + vpcompressw).
     # Both are guarded by -DUSE_AVX2_SAMPLER / -DUSE_AVX512_SAMPLER and are
     # BYTE-EXACT to the scalar ref (KAT-locked).
+    # M9 SIMD NTT commitment fork (avx2 + avx512): rounding.c routes the
+    # mat_mul_2q / mat_mul_z1_2q NTT-domain products through the SIMD NTT
+    # kernels (poly_ntt_simd / *_import / pointwise / invntt), importing the
+    # cached canonical operands to backend-native order via nttunpack (K1).
+    # Guarded by -DUSE_AVX2_NTT / -DUSE_AVX512_NTT and BYTE-EXACT to the
+    # scalar ref (KAT-locked: the mod-2q lift downstream is unchanged scalar).
     if [ "$backend" = "avx2" ] || [ "$backend" = "avx512" ]; then
         case "$1" in
-        sampler.c | polyvec.c) return 0 ;;
+        sampler.c | polyvec.c | rounding.c) return 0 ;;
         esac
     fi
     case "$1" in
