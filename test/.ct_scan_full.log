@@ -1,0 +1,1650 @@
+# SHUTTLE CT Scan Matrix Report
+
+date_utc: 2026-06-24T12:57:09Z
+backends: ref avx2 avx512
+modes: 128 256 512
+compilers: gcc clang
+opts: -O3 -Os
+xofs: ngcc sha3
+include_optional: 1 (no-op: SHUTTLE ships no float-exp variant)
+allowlist:
+  - gather: avx2/fips202x4.c and avx512/fips202x8.c public SHAKE lane pointers/offsets only
+  - public_div: SHAKE one-shot/N-way output-length block counts; SM3 DRBG/pseudoXOF output-length block counts; sampler Gaussian batch block counts
+  (each cites SECRET_PUBLIC_AUDIT.md)
+
+## backend=ref mode=128 cc=gcc opt=-O3 xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+RESULT: PASS
+
+## backend=ref mode=128 cc=gcc opt=-Os xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+RESULT: PASS
+
+## backend=ref mode=128 cc=clang opt=-O3 xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+RESULT: PASS
+
+## backend=ref mode=128 cc=clang opt=-Os xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+RESULT: PASS
+
+## backend=ref mode=256 cc=gcc opt=-O3 xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+RESULT: PASS
+
+## backend=ref mode=256 cc=gcc opt=-Os xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+RESULT: PASS
+
+## backend=ref mode=256 cc=clang opt=-O3 xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+RESULT: PASS
+
+## backend=ref mode=256 cc=clang opt=-Os xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+RESULT: PASS
+
+## backend=ref mode=512 cc=gcc opt=-O3 xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+RESULT: PASS
+
+## backend=ref mode=512 cc=gcc opt=-Os xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+RESULT: PASS
+
+## backend=ref mode=512 cc=clang opt=-O3 xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+RESULT: PASS
+
+## backend=ref mode=512 cc=clang opt=-Os xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+RESULT: PASS
+
+## backend=ref mode=128 cc=gcc opt=-O3 xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+RESULT: PASS
+
+## backend=ref mode=128 cc=gcc opt=-Os xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c; allowlisted_public_div=2
+RESULT: PASS
+
+## backend=ref mode=128 cc=clang opt=-O3 xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+RESULT: PASS
+
+## backend=ref mode=128 cc=clang opt=-Os xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+RESULT: PASS
+
+## backend=ref mode=256 cc=gcc opt=-O3 xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+RESULT: PASS
+
+## backend=ref mode=256 cc=gcc opt=-Os xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c; allowlisted_public_div=2
+RESULT: PASS
+
+## backend=ref mode=256 cc=clang opt=-O3 xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+RESULT: PASS
+
+## backend=ref mode=256 cc=clang opt=-Os xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+RESULT: PASS
+
+## backend=ref mode=512 cc=gcc opt=-O3 xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+RESULT: PASS
+
+## backend=ref mode=512 cc=gcc opt=-Os xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c; allowlisted_public_div=2
+RESULT: PASS
+
+## backend=ref mode=512 cc=clang opt=-O3 xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+RESULT: PASS
+
+## backend=ref mode=512 cc=clang opt=-Os xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+RESULT: PASS
+
+## backend=avx2 mode=128 cc=gcc opt=-O3 xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx2.c
+PASS drng_avx2.c
+PASS q15361n256/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=128 cc=gcc opt=-Os xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx2.c
+PASS drng_avx2.c
+PASS q15361n256/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=128 cc=clang opt=-O3 xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx2.c
+PASS drng_avx2.c
+PASS q15361n256/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=128 cc=clang opt=-Os xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+FAIL sampler.c: forbidden CT mnemonics
+   15c:	c4 a2 6d 91 1c 1a    	vpgatherqd %xmm2,(%rdx,%ymm11,1),%xmm3
+   166:	c4 22 6d 91 0c 12    	vpgatherqd %xmm2,(%rdx,%ymm10,1),%xmm9
+   17c:	c4 a2 45 91 14 15 04 	vpgatherqd %xmm7,0x4(,%ymm10,1),%xmm2
+   18a:	c4 a2 55 91 3c 15 08 	vpgatherqd %xmm5,0x8(,%ymm10,1),%xmm7
+   19c:	c4 e2 5d 91 2c 35 04 	vpgatherqd %xmm4,0x4(,%ymm6,1),%xmm5
+   1aa:	c4 e2 3d 91 24 35 08 	vpgatherqd %xmm8,0x8(,%ymm6,1),%xmm4
+FAIL sampler_u.c: forbidden CT mnemonics
+   366:	c4 e2 ed 90 24 1a    	vpgatherdq %ymm2,(%rdx,%xmm3,1),%ymm4
+   402:	c4 e2 cd 91 2c 25 00 	vpgatherqq %ymm6,0x0(,%ymm4,1),%ymm5
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx2.c
+PASS drng_avx2.c
+PASS q15361n256/ntt.S
+RESULT: FAIL (CT violation)
+
+## backend=avx2 mode=256 cc=gcc opt=-O3 xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx2.c
+PASS drng_avx2.c
+PASS q61441n512/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=256 cc=gcc opt=-Os xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx2.c
+PASS drng_avx2.c
+PASS q61441n512/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=256 cc=clang opt=-O3 xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx2.c
+PASS drng_avx2.c
+PASS q61441n512/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=256 cc=clang opt=-Os xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+FAIL sampler.c: forbidden CT mnemonics
+   15c:	c4 a2 6d 91 1c 1a    	vpgatherqd %xmm2,(%rdx,%ymm11,1),%xmm3
+   166:	c4 22 6d 91 0c 12    	vpgatherqd %xmm2,(%rdx,%ymm10,1),%xmm9
+   17c:	c4 a2 45 91 14 15 04 	vpgatherqd %xmm7,0x4(,%ymm10,1),%xmm2
+   18a:	c4 a2 55 91 3c 15 08 	vpgatherqd %xmm5,0x8(,%ymm10,1),%xmm7
+   19c:	c4 e2 5d 91 2c 35 04 	vpgatherqd %xmm4,0x4(,%ymm6,1),%xmm5
+   1aa:	c4 e2 3d 91 24 35 08 	vpgatherqd %xmm8,0x8(,%ymm6,1),%xmm4
+FAIL sampler_u.c: forbidden CT mnemonics
+   366:	c4 e2 ed 90 24 1a    	vpgatherdq %ymm2,(%rdx,%xmm3,1),%ymm4
+   402:	c4 e2 cd 91 2c 25 00 	vpgatherqq %ymm6,0x0(,%ymm4,1),%ymm5
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx2.c
+PASS drng_avx2.c
+PASS q61441n512/ntt.S
+RESULT: FAIL (CT violation)
+
+## backend=avx2 mode=512 cc=gcc opt=-O3 xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx2.c
+PASS drng_avx2.c
+PASS q59393n1024/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=512 cc=gcc opt=-Os xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx2.c
+PASS drng_avx2.c
+PASS q59393n1024/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=512 cc=clang opt=-O3 xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx2.c
+PASS drng_avx2.c
+PASS q59393n1024/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=512 cc=clang opt=-Os xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+FAIL sampler.c: forbidden CT mnemonics
+   15c:	c4 a2 6d 91 1c 1a    	vpgatherqd %xmm2,(%rdx,%ymm11,1),%xmm3
+   166:	c4 22 6d 91 0c 12    	vpgatherqd %xmm2,(%rdx,%ymm10,1),%xmm9
+   17c:	c4 a2 45 91 14 15 04 	vpgatherqd %xmm7,0x4(,%ymm10,1),%xmm2
+   18a:	c4 a2 55 91 3c 15 08 	vpgatherqd %xmm5,0x8(,%ymm10,1),%xmm7
+   19c:	c4 e2 5d 91 2c 35 04 	vpgatherqd %xmm4,0x4(,%ymm6,1),%xmm5
+   1aa:	c4 e2 3d 91 24 35 08 	vpgatherqd %xmm8,0x8(,%ymm6,1),%xmm4
+FAIL sampler_u.c: forbidden CT mnemonics
+   366:	c4 e2 ed 90 24 1a    	vpgatherdq %ymm2,(%rdx,%xmm3,1),%ymm4
+   402:	c4 e2 cd 91 2c 25 00 	vpgatherqq %ymm6,0x0(,%ymm4,1),%ymm5
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx2.c
+PASS drng_avx2.c
+PASS q59393n1024/ntt.S
+RESULT: FAIL (CT violation)
+
+## backend=avx2 mode=128 cc=gcc opt=-O3 xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x4.c; allowlisted_gather=37 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS f1600x4.S
+PASS q15361n256/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=128 cc=gcc opt=-Os xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c; allowlisted_public_div=2
+PASS fips202x4.c; allowlisted_gather=3 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary)); allowlisted_public_div=2
+PASS f1600x4.S
+PASS q15361n256/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=128 cc=clang opt=-O3 xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x4.c; allowlisted_gather=50 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS f1600x4.S
+PASS q15361n256/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=128 cc=clang opt=-Os xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+FAIL sampler.c: forbidden CT mnemonics
+   15c:	c4 a2 6d 91 1c 1a    	vpgatherqd %xmm2,(%rdx,%ymm11,1),%xmm3
+   166:	c4 22 6d 91 0c 12    	vpgatherqd %xmm2,(%rdx,%ymm10,1),%xmm9
+   17c:	c4 a2 45 91 14 15 04 	vpgatherqd %xmm7,0x4(,%ymm10,1),%xmm2
+   18a:	c4 a2 55 91 3c 15 08 	vpgatherqd %xmm5,0x8(,%ymm10,1),%xmm7
+   19c:	c4 e2 5d 91 2c 35 04 	vpgatherqd %xmm4,0x4(,%ymm6,1),%xmm5
+   1aa:	c4 e2 3d 91 24 35 08 	vpgatherqd %xmm8,0x8(,%ymm6,1),%xmm4
+FAIL sampler_u.c: forbidden CT mnemonics
+   366:	c4 e2 ed 90 24 1a    	vpgatherdq %ymm2,(%rdx,%xmm3,1),%ymm4
+   402:	c4 e2 cd 91 2c 25 00 	vpgatherqq %ymm6,0x0(,%ymm4,1),%ymm5
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x4.c; allowlisted_gather=3 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS f1600x4.S
+PASS q15361n256/ntt.S
+RESULT: FAIL (CT violation)
+
+## backend=avx2 mode=256 cc=gcc opt=-O3 xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x4.c; allowlisted_gather=37 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS f1600x4.S
+PASS q61441n512/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=256 cc=gcc opt=-Os xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c; allowlisted_public_div=2
+PASS fips202x4.c; allowlisted_gather=3 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary)); allowlisted_public_div=2
+PASS f1600x4.S
+PASS q61441n512/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=256 cc=clang opt=-O3 xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x4.c; allowlisted_gather=50 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS f1600x4.S
+PASS q61441n512/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=256 cc=clang opt=-Os xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+FAIL sampler.c: forbidden CT mnemonics
+   15c:	c4 a2 6d 91 1c 1a    	vpgatherqd %xmm2,(%rdx,%ymm11,1),%xmm3
+   166:	c4 22 6d 91 0c 12    	vpgatherqd %xmm2,(%rdx,%ymm10,1),%xmm9
+   17c:	c4 a2 45 91 14 15 04 	vpgatherqd %xmm7,0x4(,%ymm10,1),%xmm2
+   18a:	c4 a2 55 91 3c 15 08 	vpgatherqd %xmm5,0x8(,%ymm10,1),%xmm7
+   19c:	c4 e2 5d 91 2c 35 04 	vpgatherqd %xmm4,0x4(,%ymm6,1),%xmm5
+   1aa:	c4 e2 3d 91 24 35 08 	vpgatherqd %xmm8,0x8(,%ymm6,1),%xmm4
+FAIL sampler_u.c: forbidden CT mnemonics
+   366:	c4 e2 ed 90 24 1a    	vpgatherdq %ymm2,(%rdx,%xmm3,1),%ymm4
+   402:	c4 e2 cd 91 2c 25 00 	vpgatherqq %ymm6,0x0(,%ymm4,1),%ymm5
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x4.c; allowlisted_gather=3 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS f1600x4.S
+PASS q61441n512/ntt.S
+RESULT: FAIL (CT violation)
+
+## backend=avx2 mode=512 cc=gcc opt=-O3 xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x4.c; allowlisted_gather=37 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS f1600x4.S
+PASS q59393n1024/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=512 cc=gcc opt=-Os xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c; allowlisted_public_div=2
+PASS fips202x4.c; allowlisted_gather=3 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary)); allowlisted_public_div=2
+PASS f1600x4.S
+PASS q59393n1024/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=512 cc=clang opt=-O3 xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x4.c; allowlisted_gather=50 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS f1600x4.S
+PASS q59393n1024/ntt.S
+RESULT: PASS
+
+## backend=avx2 mode=512 cc=clang opt=-Os xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+FAIL sampler.c: forbidden CT mnemonics
+   15c:	c4 a2 6d 91 1c 1a    	vpgatherqd %xmm2,(%rdx,%ymm11,1),%xmm3
+   166:	c4 22 6d 91 0c 12    	vpgatherqd %xmm2,(%rdx,%ymm10,1),%xmm9
+   17c:	c4 a2 45 91 14 15 04 	vpgatherqd %xmm7,0x4(,%ymm10,1),%xmm2
+   18a:	c4 a2 55 91 3c 15 08 	vpgatherqd %xmm5,0x8(,%ymm10,1),%xmm7
+   19c:	c4 e2 5d 91 2c 35 04 	vpgatherqd %xmm4,0x4(,%ymm6,1),%xmm5
+   1aa:	c4 e2 3d 91 24 35 08 	vpgatherqd %xmm8,0x8(,%ymm6,1),%xmm4
+FAIL sampler_u.c: forbidden CT mnemonics
+   366:	c4 e2 ed 90 24 1a    	vpgatherdq %ymm2,(%rdx,%xmm3,1),%ymm4
+   402:	c4 e2 cd 91 2c 25 00 	vpgatherqq %ymm6,0x0(,%ymm4,1),%ymm5
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x4.c; allowlisted_gather=3 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS f1600x4.S
+PASS q59393n1024/ntt.S
+RESULT: FAIL (CT violation)
+
+## backend=avx512 mode=128 cc=gcc opt=-O3 xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx512.c
+PASS drng_avx512.c
+PASS q15361n256/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=128 cc=gcc opt=-Os xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx512.c
+PASS drng_avx512.c
+PASS q15361n256/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=128 cc=clang opt=-O3 xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx512.c
+PASS drng_avx512.c
+PASS q15361n256/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=128 cc=clang opt=-Os xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+FAIL sampler.c: forbidden CT mnemonics
+    d3:	62 b2 7d 2b 91 0c 2a 	vpgatherqd (%rdx,%ymm13,1),%xmm1{%k3}
+    e3:	62 b2 7d 2b 91 14 32 	vpgatherqd (%rdx,%ymm14,1),%xmm2{%k3}
+   109:	62 b2 7d 2b 91 04 35 	vpgatherqd 0x4(,%ymm14,1),%xmm0{%k3}
+   13f:	62 a2 7d 2b 91 14 2d 	vpgatherqd 0x4(,%ymm13,1),%xmm18{%k3}
+   172:	62 b2 7d 2b 91 14 35 	vpgatherqd 0x8(,%ymm14,1),%xmm2{%k3}
+   1a5:	62 32 7d 2b 91 34 2d 	vpgatherqd 0x8(,%ymm13,1),%xmm14{%k3}
+FAIL sampler_u.c: forbidden CT mnemonics
+   352:	62 f2 fd 29 90 1c 12 	vpgatherdq (%rdx,%xmm2,1),%ymm3{%k1}
+   3e7:	62 f2 fd 29 91 2c 25 	vpgatherqq 0x0(,%ymm4,1),%ymm5{%k1}
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx512.c
+PASS drng_avx512.c
+PASS q15361n256/ntt_avx512.S
+RESULT: FAIL (CT violation)
+
+## backend=avx512 mode=256 cc=gcc opt=-O3 xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx512.c
+PASS drng_avx512.c
+PASS q61441n512/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=256 cc=gcc opt=-Os xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx512.c
+PASS drng_avx512.c
+PASS q61441n512/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=256 cc=clang opt=-O3 xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx512.c
+PASS drng_avx512.c
+PASS q61441n512/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=256 cc=clang opt=-Os xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+FAIL sampler.c: forbidden CT mnemonics
+    d3:	62 b2 7d 2b 91 0c 2a 	vpgatherqd (%rdx,%ymm13,1),%xmm1{%k3}
+    e3:	62 b2 7d 2b 91 14 32 	vpgatherqd (%rdx,%ymm14,1),%xmm2{%k3}
+   109:	62 b2 7d 2b 91 04 35 	vpgatherqd 0x4(,%ymm14,1),%xmm0{%k3}
+   13f:	62 a2 7d 2b 91 14 2d 	vpgatherqd 0x4(,%ymm13,1),%xmm18{%k3}
+   172:	62 b2 7d 2b 91 14 35 	vpgatherqd 0x8(,%ymm14,1),%xmm2{%k3}
+   1a5:	62 32 7d 2b 91 34 2d 	vpgatherqd 0x8(,%ymm13,1),%xmm14{%k3}
+FAIL sampler_u.c: forbidden CT mnemonics
+   352:	62 f2 fd 29 90 1c 12 	vpgatherdq (%rdx,%xmm2,1),%ymm3{%k1}
+   3e7:	62 f2 fd 29 91 2c 25 	vpgatherqq 0x0(,%ymm4,1),%ymm5{%k1}
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx512.c
+PASS drng_avx512.c
+PASS q61441n512/ntt_avx512.S
+RESULT: FAIL (CT violation)
+
+## backend=avx512 mode=512 cc=gcc opt=-O3 xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx512.c
+PASS drng_avx512.c
+PASS q59393n1024/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=512 cc=gcc opt=-Os xof=ngcc variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx512.c
+PASS drng_avx512.c
+PASS q59393n1024/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=512 cc=clang opt=-O3 xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx512.c
+PASS drng_avx512.c
+PASS q59393n1024/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=512 cc=clang opt=-Os xof=ngcc variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+FAIL sampler.c: forbidden CT mnemonics
+    d3:	62 b2 7d 2b 91 0c 2a 	vpgatherqd (%rdx,%ymm13,1),%xmm1{%k3}
+    e3:	62 b2 7d 2b 91 14 32 	vpgatherqd (%rdx,%ymm14,1),%xmm2{%k3}
+   109:	62 b2 7d 2b 91 04 35 	vpgatherqd 0x4(,%ymm14,1),%xmm0{%k3}
+   13f:	62 a2 7d 2b 91 14 2d 	vpgatherqd 0x4(,%ymm13,1),%xmm18{%k3}
+   172:	62 b2 7d 2b 91 14 35 	vpgatherqd 0x8(,%ymm14,1),%xmm2{%k3}
+   1a5:	62 32 7d 2b 91 34 2d 	vpgatherqd 0x8(,%ymm13,1),%xmm14{%k3}
+FAIL sampler_u.c: forbidden CT mnemonics
+   352:	62 f2 fd 29 90 1c 12 	vpgatherdq (%rdx,%xmm2,1),%ymm3{%k1}
+   3e7:	62 f2 fd 29 91 2c 25 	vpgatherqq 0x0(,%ymm4,1),%ymm5{%k1}
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS drng.c
+PASS auxfunc.c
+PASS auxfunc_avx512.c
+PASS drng_avx512.c
+PASS q59393n1024/ntt_avx512.S
+RESULT: FAIL (CT violation)
+
+## backend=avx512 mode=128 cc=gcc opt=-O3 xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x8.c; allowlisted_gather=37 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS q15361n256/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=128 cc=gcc opt=-Os xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c; allowlisted_public_div=2
+PASS fips202x8.c; allowlisted_gather=3 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary)); allowlisted_public_div=2
+PASS q15361n256/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=128 cc=clang opt=-O3 xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x8.c; allowlisted_gather=50 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS q15361n256/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=128 cc=clang opt=-Os xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+FAIL sampler.c: forbidden CT mnemonics
+    d3:	62 b2 7d 2b 91 0c 2a 	vpgatherqd (%rdx,%ymm13,1),%xmm1{%k3}
+    e3:	62 b2 7d 2b 91 14 32 	vpgatherqd (%rdx,%ymm14,1),%xmm2{%k3}
+   109:	62 b2 7d 2b 91 04 35 	vpgatherqd 0x4(,%ymm14,1),%xmm0{%k3}
+   13f:	62 a2 7d 2b 91 14 2d 	vpgatherqd 0x4(,%ymm13,1),%xmm18{%k3}
+   172:	62 b2 7d 2b 91 14 35 	vpgatherqd 0x8(,%ymm14,1),%xmm2{%k3}
+   1a5:	62 32 7d 2b 91 34 2d 	vpgatherqd 0x8(,%ymm13,1),%xmm14{%k3}
+FAIL sampler_u.c: forbidden CT mnemonics
+   352:	62 f2 fd 29 90 1c 12 	vpgatherdq (%rdx,%xmm2,1),%ymm3{%k1}
+   3e7:	62 f2 fd 29 91 2c 25 	vpgatherqq 0x0(,%ymm4,1),%ymm5{%k1}
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x8.c; allowlisted_gather=3 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS q15361n256/ntt_avx512.S
+RESULT: FAIL (CT violation)
+
+## backend=avx512 mode=256 cc=gcc opt=-O3 xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x8.c; allowlisted_gather=37 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS q61441n512/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=256 cc=gcc opt=-Os xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c; allowlisted_public_div=2
+PASS fips202x8.c; allowlisted_gather=3 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary)); allowlisted_public_div=2
+PASS q61441n512/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=256 cc=clang opt=-O3 xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x8.c; allowlisted_gather=50 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS q61441n512/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=256 cc=clang opt=-Os xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+FAIL sampler.c: forbidden CT mnemonics
+    d3:	62 b2 7d 2b 91 0c 2a 	vpgatherqd (%rdx,%ymm13,1),%xmm1{%k3}
+    e3:	62 b2 7d 2b 91 14 32 	vpgatherqd (%rdx,%ymm14,1),%xmm2{%k3}
+   109:	62 b2 7d 2b 91 04 35 	vpgatherqd 0x4(,%ymm14,1),%xmm0{%k3}
+   13f:	62 a2 7d 2b 91 14 2d 	vpgatherqd 0x4(,%ymm13,1),%xmm18{%k3}
+   172:	62 b2 7d 2b 91 14 35 	vpgatherqd 0x8(,%ymm14,1),%xmm2{%k3}
+   1a5:	62 32 7d 2b 91 34 2d 	vpgatherqd 0x8(,%ymm13,1),%xmm14{%k3}
+FAIL sampler_u.c: forbidden CT mnemonics
+   352:	62 f2 fd 29 90 1c 12 	vpgatherdq (%rdx,%xmm2,1),%ymm3{%k1}
+   3e7:	62 f2 fd 29 91 2c 25 	vpgatherqq 0x0(,%ymm4,1),%ymm5{%k1}
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x8.c; allowlisted_gather=3 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS q61441n512/ntt_avx512.S
+RESULT: FAIL (CT violation)
+
+## backend=avx512 mode=512 cc=gcc opt=-O3 xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x8.c; allowlisted_gather=37 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS q59393n1024/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=512 cc=gcc opt=-Os xof=sha3 variant=default
+cc_version: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c; allowlisted_public_div=2
+PASS fips202x8.c; allowlisted_gather=3 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary)); allowlisted_public_div=2
+PASS q59393n1024/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=512 cc=clang opt=-O3 xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+PASS sampler.c
+PASS sampler_u.c
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x8.c; allowlisted_gather=50 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS q59393n1024/ntt_avx512.S
+RESULT: PASS
+
+## backend=avx512 mode=512 cc=clang opt=-Os xof=sha3 variant=default
+cc_version: Ubuntu clang version 14.0.0-1ubuntu1.1
+FAIL sampler.c: forbidden CT mnemonics
+    d3:	62 b2 7d 2b 91 0c 2a 	vpgatherqd (%rdx,%ymm13,1),%xmm1{%k3}
+    e3:	62 b2 7d 2b 91 14 32 	vpgatherqd (%rdx,%ymm14,1),%xmm2{%k3}
+   109:	62 b2 7d 2b 91 04 35 	vpgatherqd 0x4(,%ymm14,1),%xmm0{%k3}
+   13f:	62 a2 7d 2b 91 14 2d 	vpgatherqd 0x4(,%ymm13,1),%xmm18{%k3}
+   172:	62 b2 7d 2b 91 14 35 	vpgatherqd 0x8(,%ymm14,1),%xmm2{%k3}
+   1a5:	62 32 7d 2b 91 34 2d 	vpgatherqd 0x8(,%ymm13,1),%xmm14{%k3}
+FAIL sampler_u.c: forbidden CT mnemonics
+   352:	62 f2 fd 29 90 1c 12 	vpgatherdq (%rdx,%xmm2,1),%ymm3{%k1}
+   3e7:	62 f2 fd 29 91 2c 25 	vpgatherqq 0x0(,%ymm4,1),%ymm5{%k1}
+PASS approx_exp.c
+PASS approx_log.c
+PASS irs.c
+PASS rans.c
+PASS polyvec.c
+PASS poly.c
+PASS packing.c
+PASS reduce.c
+PASS rounding.c
+PASS sign.c
+PASS poly_ntt.c
+PASS symmetric.c
+PASS fips202.c
+PASS fips202x8.c; allowlisted_gather=3 (public SHAKE lane pointers/offsets only (SECRET_PUBLIC_AUDIT NTT Boundary))
+PASS q59393n1024/ntt_avx512.S
+RESULT: FAIL (CT violation)
+
+CT_VERDICT: VIOLATION
+BUILD_VERDICT: OK
+OVERALL: FAIL
+

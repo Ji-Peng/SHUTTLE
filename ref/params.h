@@ -337,17 +337,26 @@
 #    define SK_SIZE_EXPECT 7104
 #endif
 
-/* CRYPTO_BYTES: PLACEHOLDER (MS-A6) for the rANS-variable signature upper
- * bound returned by sig_get_sn_len_bytes().  P10 pins RANS_RESERVED_BYTES
- * so this covers the 2^-35 per-stream overflow tail; until then we use the
- * spec-table sig-size targets (1005/2155/4552) rounded up with generous
- * head-room.  The realized signature length is <= CRYPTO_BYTES. */
+/* CRYPTO_BYTES: the rANS-variable signature length bound returned by
+ * sig_get_sn_len_bytes().  P10 pins RANS_RESERVED_BYTES (the 2^-35
+ * per-stream overflow reserve), so the realized compact signature is the
+ * FIXED length SIG_PACKED_BYTES = CHALLENGESEEDBYTES + 2 +
+ * RANS_RESERVED_BYTES
+ *                      + POLYZ_LO_PACKEDBYTES
+ *                    = 1183 / 2417 / 5001  (computed by tools/SigSize.py).
+ * These EXCEED the spec-table targets 1005/2155/4552 because the
+ * source-law entropy of (Q0,Qs,h) plus the raw low bits already exceeds
+ * those targets (even the Shannon floor is ~1115/2316/4866 B): the table
+ * values are ASPIRATIONAL pending M4 empirical re-validation (MS-A6, Open
+ * Q3).  We round SIG_PACKED_BYTES up to a 64-byte multiple for head-room;
+ * pack_sig static-asserts SIG_PACKED_BYTES <= CRYPTO_BYTES.  Realized sig
+ * length == SIG_PACKED_BYTES <= CRYPTO_BYTES. */
 #if SHUTTLE_MODE == 128
-#    define CRYPTO_BYTES 1152 /* placeholder >= 1005 target (MS-A6) */
+#    define CRYPTO_BYTES 1216 /* >= SIG_PACKED_BYTES 1183 (MS-A6) */
 #elif SHUTTLE_MODE == 256
-#    define CRYPTO_BYTES 2304 /* placeholder >= 2155 target (MS-A6) */
+#    define CRYPTO_BYTES 2432 /* >= SIG_PACKED_BYTES 2417 (MS-A6) */
 #elif SHUTTLE_MODE == 512
-#    define CRYPTO_BYTES 4736 /* placeholder >= 4552 target (MS-A6) */
+#    define CRYPTO_BYTES 5056 /* >= SIG_PACKED_BYTES 5001 (MS-A6) */
 #endif
 
 /* ============================================================= *

@@ -15,6 +15,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "test/prof.h" /* PROF_SQ -- ((void)0) unless PROF_RAND defined */
 #include "xof.h"
 
 #if defined(SHA3_MODE)
@@ -40,6 +41,7 @@ void xof128_init(xof_ctx *ctx, const uint8_t *seed, size_t seed_len)
 
 void xof128_squeeze(xof_ctx *ctx, uint8_t *out, size_t out_len)
 {
+    PROF_SQ(out_len); /* randomness accounting (PROF_RAND only) */
     shake128_squeeze(out, out_len, ctx); /* incremental, rate-buffered */
 }
 
@@ -51,6 +53,7 @@ void xof256_init(xof_ctx *ctx, const uint8_t *seed, size_t seed_len)
 
 void xof256_squeeze(xof_ctx *ctx, uint8_t *out, size_t out_len)
 {
+    PROF_SQ(out_len); /* randomness accounting (PROF_RAND only) */
     shake256_squeeze(out, out_len, ctx);
 }
 
@@ -80,6 +83,7 @@ void xof256_squeeze(xof_ctx *ctx, uint8_t *out, size_t out_len)
      * only ever request whole bytes, so the MSB-first high-bit masking of
      * the last byte inside get_random_number never fires on this plumbing
      * path (K3). */
+    PROF_SQ(out_len); /* randomness accounting (PROF_RAND only) */
     (void)get_random_number(ctx, out, (unsigned long long)out_len * 8u);
 }
 

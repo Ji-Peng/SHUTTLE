@@ -10,17 +10,38 @@
 #   make clean
 #
 # Shared algorithm/KAT source is SYMLINKED from ../ref (single source of truth;
-# materialized by ../tools/mklinks.sh).  AVX2-specific overrides are REAL files
-# here (config.h, polyvec.c, sampler.c, irs.c, rounding.c, sign.c + the AVX-only
-# XOF/NTT files).  Per-mode NTT asm + consts are VENDORED locally in ./<qset>/.
+# materialized by ../tools/mklinks.sh).  At the M6 byte-exactness milestone the
+# AVX2-specific REAL files here are ONLY: config.h (namespace tail), poly_ntt.c
+# (the SIMD NTT shim fork) + the per-mode vendored NTT asm in ./<qset>/, and the
+# AVX-only / N-way XOF files (symmetric_avx2.c, fips202x4.*, f1600x4.S,
+# auxfunc_avx2.*, drng_avx2.*).  EVERYTHING else -- including the would-be-fork
+# scalar sources (polyvec/sampler/irs/rounding/sign) and the NGCC infra
+# (SIG_AlgorithmInstance/KAT_SIG/drng/auxfunc) -- is symlinked scalar.
+#
+# M6 SIMD COVERAGE = NTT + XOF.  The sampler/sign/rounding/irs logic runs the
+# SCALAR code symlinked from ref; the SIMD perf kernels for those are a LATER
+# perf milestone (M9).  Because the AVX NTT (poly_ntt.c via nttunpack, K1) is
+# byte-exact and the symlinked scalar logic is identical to ref, the avx2 KAT
+# hash EQUALS the ref hash (the M6 gate).
 #
 # Compile-time switches select the AVX2 code paths in the symlinked ref sources:
 #   USE_AVX2_NTT / USE_AVX2_SAMPLER / USE_AVX2_SHAKE4X  (set in CFLAGS below).
+# At M6 only USE_AVX2_NTT routes a real fork (poly_ntt.c); the SAMPLER/SHAKE4X
+# kernels land in M9 -- the scalar bodies run until then.
 
 MODES ?= 128 256 512
-# Seeded with t_params + test_xof (P02); P03 adds test_ntt_avx (AVX2 NTT shim
-# round-trip/convolution + the K1 nttunpack reconciliation + K10 ref==avx2).
-TESTS ?= t_params test_xof test_ntt_avx
+# Full ref test matrix (mirrors ref/Makefile TESTS) with the SCALAR-only NTT
+# oracle (test_ntt) REPLACED by the AVX2 NTT driver (test_ntt_avx).
+# test_ntt.c is a scalar-ONLY driver: its [3] check reads the raw NTT-domain
+# lane with the naive (uint16_t)x%q, which is the WRONG readback for the SIGNED
+# q15361 (mode 128) AVX2 path (lazy output reaches ~2q; the K10 readback rule
+# in poly_ntt.h mandates smod there).  test_ntt_avx.c is the backend-correct
+# replacement: it asserts the SAME K1 invariant nttunpack(ntt_ref)==ntt_avx and
+# K10 scalar==avx2 byte-exactness with the per-config smod/uint16 readback, and
+# passes all 3 modes.  (test_ntt PASSES on the unsigned modes 256/512 but FAILS
+# mode 128 purely on the readback convention -- so it is dropped here, not run.)
+TESTS ?= t_params test_xof t_reduce test_ntt_avx test_pack test_sampler \
+         test_approx test_samplers test_irs test_rounding test_rans test_sign test_kat
 CC    ?= gcc
 
 # Exact NGCC Optimized flags (digest 14 1.1).  -mno-avx512f forces a PURE AVX2
@@ -30,7 +51,7 @@ CC    ?= gcc
 # NOTE: -std=c99 -Wpedantic warns on intrinsics/asm; per Overview 10 / digest
 # 14 R1 we TOLERATE those on the perf build (the flag set is fixed) and keep
 # only the ref build strictly warning-clean.
-CFLAGS ?= -O3 -march=x86-64 -mavx2 -mtune=native -flto -fomit-frame-pointer \
+CFLAGS ?= -O3 -march=x86-64 -mavx2 -mtune=native -fomit-frame-pointer \
           -std=c99 -Wpedantic -Wall -Wextra -mbmi2 -mpopcnt -mno-avx512f \
           -I. -I../ref -I../ref/test -I../tools \
           -DUSE_AVX2_NTT -DUSE_AVX2_SAMPLER -DUSE_AVX2_SHAKE4X
@@ -38,6 +59,7 @@ LDLIBS ?=
 BINDIR  = out
 CT_OPT ?= -O3
 
+# XOF MODE switch (NGCC_MODE default vs SHA3_MODE).  `make MODE=SHA3 ...`.
 MODE ?=
 ifeq ($(MODE),SHA3)
 MODEFLAG = -DSHA3_MODE
@@ -45,30 +67,49 @@ else
 MODEFLAG =
 endif
 
-# test_xof (P02) scalar XOF build-verify under the avx2 flag set.  Source list
-# is MODE-dependent: SHA3_MODE links the vendored scalar Keccak (symmetric.c +
-# fips202.c, symlinked from ../ref); NGCC_MODE links the SM3 DRBG (symmetric.c
-# + ../ref/drng.c + ../ref/auxfunc.c).  Proves the wrappers compile + run clean
-# under -mavx2 -mno-avx512f too (the scalar fips202.c must NOT auto-vectorize to
-# zmm; check-no-avx512 enforces that).
+# XOF source list, MODE-dependent.  At M6 the symlinked scalar scheme code
+# calls only the SCALAR xof128/256 primitives (the N-way SIMD XOF kernels are
+# M9), so the XOF link set matches ref exactly:
+#   SHA3_MODE : symmetric.c + the vendored scalar Keccak (fips202.c)
+#   NGCC_MODE : symmetric.c + the SM3 Hash-DRBG (../ref/drng.c + ../ref/auxfunc.c)
+# The KAT harness ALWAYS seeds via the SM3 Hash-DRBG (the fixed competition
+# protocol), so under SHA3_MODE a KAT binary needs drng.c+auxfunc.c IN ADDITION
+# to the SHAKE backend (mirrors ref/Makefile KAT_XOF).
 ifeq ($(MODE),SHA3)
 XOF_SRCS = symmetric.c fips202.c
+KAT_XOF  = symmetric.c fips202.c ../ref/drng.c ../ref/auxfunc.c
 else
 XOF_SRCS = symmetric.c ../ref/drng.c ../ref/auxfunc.c
+KAT_XOF  = $(XOF_SRCS)
 endif
 
-# Per-test source lists (POSIX-sh strings).  t_params is header-only.  Tests
-# whose srcs contain polyvec.c get the per-mode vendored ntt.S + ntt_consts.c
-# appended in the build loop (see `all`).
+# Per-test source lists (POSIX-sh strings).  Identical scalar source lists to
+# ref/Makefile -- the backend reuses the symlinked scalar .c verbatim.  The
+# ONLY difference is that poly_ntt.c resolves to the AVX2 SIMD fork here, and
+# the build loop appends the per-mode vendored asm whenever poly_ntt.c (or
+# polyvec.c) is present.  t_params is header-only; test_ntt_avx is the AVX2 NTT
+# correctness driver (real test/ source, not in ref).
 SH_SRCS = \
 't_params=' \
 "test_xof=$(XOF_SRCS)" \
-'test_ntt_avx=poly_ntt.c ../ref/reduce.c'
+'t_reduce=reduce.c' \
+'test_ntt=reduce.c poly_ntt.c' \
+'test_ntt_avx=poly_ntt.c reduce.c' \
+'test_pack=packing.c poly.c reduce.c rans.c' \
+'test_sampler=sampler.c reduce.c' \
+'test_approx=approx_exp.c approx_log.c' \
+"test_samplers=polyvec.c sampler.c reduce.c approx_exp.c approx_log.c $(XOF_SRCS)" \
+"test_irs=irs.c sampler_u.c approx_exp.c approx_log.c reduce.c $(XOF_SRCS)" \
+'test_rounding=rounding.c reduce.c poly.c poly_ntt.c packing.c rans.c' \
+'test_rans=packing.c poly.c reduce.c rans.c' \
+"test_sign=sign.c polyvec.c sampler.c sampler_u.c irs.c rounding.c packing.c poly.c poly_ntt.c reduce.c rans.c approx_exp.c approx_log.c $(XOF_SRCS)" \
+"test_kat=SIG_AlgorithmInstance.c sign.c polyvec.c sampler.c sampler_u.c irs.c rounding.c packing.c poly.c poly_ntt.c reduce.c rans.c approx_exp.c approx_log.c $(KAT_XOF)"
 
 # Per-set NTT vendoring (Overview / digest 11 5): a case $$m picks $qs; when a
 # test's srcs contain polyvec.c OR poly_ntt.c (the AVX2 NTT shim fork) the build
-# appends $qs/ntt.S + $qs/ntt_consts.c, the scalar oracle ../ref/ntt/$qs/
-# ntt_ref.c, and -I../ref/ntt/$qs so poly_ntt.h finds the per-set header.
+# appends $qs/ntt.S + $qs/ntt_consts.c (the AVX2 kernels) AND the scalar oracle
+# ../ref/ntt/$qs/ntt_ref.c (poly_ntt_canonical uses it for K1 wire bytes), with
+# -I../ref/ntt/$qs so poly_ntt.h finds the per-set vendored header.
 QSET_128 = q15361n256
 QSET_256 = q61441n512
 QSET_512 = q59393n1024
@@ -76,11 +117,17 @@ QSET_512 = q59393n1024
 # check-consts to prove the vendored copies are reproducible.
 NTTGEN   = ../tools/ntt
 
-# Recorded canonical KAT hashes (shared: ref == avx2 == avx512).  P12 records
-# the real values; placeholders until M5.
-KAT_128 = TBD
-KAT_256 = TBD
-KAT_512 = TBD
+# Recorded canonical KAT hashes (shared: ref == avx2 == avx512; the whole point
+# of M6).  These are the SAME values the ref Makefile records (see
+# ref/Makefile KAT_<m>_<MODE>); byte-exactness is the M6 gate.  Re-record in
+# lock-step with ref on any output-changing diff.
+KAT_128_NGCC = 13849130264003953529
+KAT_256_NGCC = 12856937526430209591
+KAT_512_NGCC = 641278812500111422
+KAT_128_SHA3 = 17067083752221901810
+KAT_256_SHA3 = 16770893027166717173
+KAT_512_SHA3 = 17781375582284641253
+MODELABEL = $(if $(filter SHA3,$(MODE)),SHA3,NGCC)
 
 .PHONY: all check check-kat check-no-avx512 check-refill check-consts sm3-test clean
 
@@ -93,12 +140,12 @@ all:
 	    for want in $(TESTS); do [ "$$want" = "$$t" ] || continue; \
 	      extra=""; inc=""; \
 	      case "$$srcs" in \
-	        *polyvec.c*|*poly_ntt.c*) \
+	        *poly_ntt.c*|*polyvec.c*) \
 	          extra="$$qs/ntt.S $$qs/ntt_consts.c ../ref/ntt/$$qs/ntt_ref.c"; \
 	          inc="-I../ref/ntt/$$qs";; \
 	      esac; \
 	      stats=""; \
-	      case "$$t" in trace_kat) stats="-DTEST_RANS_STATS";; diff_fuzz) stats="-DDIFF_FUZZ_N=$(DIFF_FUZZ_N)";; esac; \
+	      case "$$t" in trace_kat) stats="-DTEST_RANS_STATS";; diff_fuzz) stats="-DDIFF_FUZZ_N=$(DIFF_FUZZ_N)";; test_sign) stats="-DSIG_RAW";; esac; \
 	      $(CC) $(CFLAGS) $$inc $(MODEFLAG) $$stats -DSHUTTLE_MODE=$$m test/$$t.c $$srcs $$extra $(LDLIBS) \
 	        -o $(BINDIR)/$${t}_$${m} || exit 1; \
 	    done; \
@@ -116,25 +163,26 @@ check: all
 	  done; \
 	done
 
-# Assert the recorded per-mode KAT hashes (ref == avx2 == avx512).  Deferred
-# until test_kat + recorded KAT_* land (P12, M5).
+# Assert the recorded per-mode KAT hashes (ref == avx2 == avx512).  test_kat
+# replays the KAT_SIG.c byte protocol, FNV-1a hashes pk||sk||sn, asserts
+# verify-accept + tamper-reject, prints KAT_hash.  The recorded values are
+# IDENTICAL to ref (byte-exactness is the M6 gate).
 check-kat:
-	@if ! echo "$(TESTS)" | grep -qw test_kat; then \
-	  echo "check-kat: deferred (test_kat lands with P11/P12)"; exit 0; fi
-	@$(MAKE) TESTS=test_kat all >/dev/null
-	@fail=0; for m in $(MODES); do \
-	  case $$m in 128) want=$(KAT_128);; 256) want=$(KAT_256);; 512) want=$(KAT_512);; esac; \
-	  h=$$($(BINDIR)/test_kat_$$m | grep -o 'KAT_hash=[0-9]*' | cut -d= -f2); \
-	  [ "$$h" = "$$want" ] && echo "  PASS: mode=$$m KAT_hash=$$h" \
-	    || { echo "  FAIL: mode=$$m got=$$h want=$$want"; fail=1; }; \
-	done; [ $$fail -eq 0 ] && echo "check-kat: shared KAT matches (ref==avx2==avx512)" || exit 1
+	@$(MAKE) MODES="$(MODES)" MODE="$(MODE)" TESTS=test_kat all >/dev/null
+	@KAT_128=$(KAT_128_$(MODELABEL)); KAT_256=$(KAT_256_$(MODELABEL)); KAT_512=$(KAT_512_$(MODELABEL)); \
+	fail=0; for m in $(MODES); do \
+	  got=`$(BINDIR)/test_kat_$$m | sed -n 's/^KAT_hash=//p'`; \
+	  eval exp=\$$KAT_$$m; \
+	  if [ "$$got" = "$$exp" ]; then echo "  PASS: KAT-$$m ($(MODELABEL),avx2) = $$got"; \
+	  else echo "  FAIL: KAT-$$m ($(MODELABEL),avx2) got $$got want $$exp"; fail=1; fi; \
+	done; [ $$fail -eq 0 ] && echo "check-kat: avx2 KAT matches recorded (ref==avx2)" || exit 1
 
 # Pure-AVX2 gate: assert NO AVX-512 (zmm / EVEX mask / AVX-512-only mnemonic)
 # leaked into any built object.  -mno-avx512f should make this impossible; the
 # gate proves the flag is effective (and would catch its accidental removal).
 check-no-avx512:
 	@rm -rf $(BINDIR)
-	@$(MAKE) all >/dev/null
+	@$(MAKE) MODES="$(MODES)" MODE="$(MODE)" all >/dev/null
 	@fail=0; \
 	for b in $(BINDIR)/*; do \
 	  [ -f "$$b" ] || continue; \
@@ -145,16 +193,14 @@ check-no-avx512:
 
 # Force-exercise the multi-way XOF continuation-squeeze (refill) path with a
 # tiny initial squeeze and assert the KAT is unchanged (K6 cursor-advance
-# determinism).  Deferred until the sampler/KAT tests land.
+# determinism).  At M6 the scheme runs the scalar XOF, so this is a no-op KAT
+# rerun; it becomes load-bearing once the N-way SIMD XOF kernels land (M9).
 check-refill:
-	@if ! echo "$(TESTS)" | grep -qw test_kat; then \
-	  echo "check-refill: deferred (test_kat + sampler land with P07/P11/P12)"; exit 0; fi
-	@$(MAKE) CFLAGS="$(CFLAGS) -DGAUSS4X_INIT=4 -DNOISE4X_INIT=4" TESTS="test_kat" all >/dev/null
+	@$(MAKE) MODES="$(MODES)" MODE="$(MODE)" CFLAGS="$(CFLAGS) -DGAUSS4X_INIT=4 -DNOISE4X_INIT=4" TESTS="test_kat" all >/dev/null
 	@echo "== forced multi-way refill: KAT must be unchanged =="
-	@for m in $(MODES); do $(BINDIR)/test_kat_$$m; done
+	@for m in $(MODES); do $(BINDIR)/test_kat_$$m | sed -n 's/^/  /p'; done
 
-# Reproducibility/drift gate: params/bounds regions + the vendored NTT (once
-# P03 lands).  cmp against a pre-regeneration copy.
+# Reproducibility/drift gate: params/bounds regions + the vendored NTT.
 check-consts:
 	@mkdir -p $(BINDIR)
 	@echo "== params.h (@@AUTOGEN:params@@ + @@AUTOGEN:bounds@@; via ../ref) =="

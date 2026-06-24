@@ -2,24 +2,81 @@
  * avx512/poly_ntt.c -- AVX-512 fork of the NTT shim (P03), behind
  * USE_AVX512_NTT.  Opt-in (built only by the AVX512 targets).
  *
- * The AVX-512 family is UNIFORM across all three configs:
- *   ntt/invntt: (poly, qdata, ztab, scale);  pointwise: (c,a,b,qdata).
- * For q59393 (n=1024) this is the 2x512-coeff SUPERBLOCK kernel; the shim
- * does not see that -- the entry signature is identical.
+ * === M6 wiring (byte-exactness milestone) ===
+ * Identical rationale to avx2/poly_ntt.c: at M6 the SCHEME
+ * (sign.c/polyvec.c/ rounding.c, all symlinked SCALAR) runs unmodified.
+ * The scalar ExpandA emits the cached matrix hAgen in CANONICAL order and
+ * never imports it (that import is the M9 AVX-fork step).  So the
+ * scheme-facing shim ops MUST be the canonical/scalar convention for the
+ * NTT-domain products to be correct, which makes the AVX-512 build's
+ * integrated KAT BYTE-EXACT to the reference -- the M6 gate.
+ * poly_ntt_import is a no-op.
  *
- * SIGNED mod-2q canonicalization (q15361 only): the AVX-512 invntt has NO
- * reduce_avx export, so the centered->[0,q) step is open-coded here.  The
- * signed AVX-512 invntt finishes with red16+montmul per ZMM, so its output
- * is a centered montmul result (|x| < q); a single conditional +q for
- * negative lanes maps it to [0,q).  This MUST be bit-identical to the
- * scalar smod and the AVX2 reduce_avx+cond-add-q path (K10), enforced by
- * test_freeze_avx.c / t_canon2q.c.
+ * The genuine AVX-512 NTT asm kernels are validated byte-exact to the
+ * scalar oracle by test/test_ntt_avx512.c (via the poly_ntt_simd_*
+ * wrappers below). Wiring them into the scheme hot path is the M9 perf
+ * milestone (forked polyvec/sign that poly_ntt_imports the canonical
+ * hAgen).
+ *
+ * The AVX-512 kernel family is UNIFORM across all three configs:
+ *   ntt/invntt: (poly, qdata, ztab, scale);  pointwise: (c,a,b,qdata).
+ * For q59393 (n=1024) this is the 2x512-coeff SUPERBLOCK kernel; the
+ * wrapper does not see that -- the entry signature is identical.  q15361
+ * (signed) needs a centered->[0,q) canonicalization after invntt (K10);
+ * the AVX-512 invntt has no reduce_avx export so it is open-coded.
  */
 #include "poly_ntt.h"
 
+static int s_ntt_inited = 0;
+static void ensure_init(void)
+{
+    if (!s_ntt_inited) {
+        ntt_ref_init();
+        s_ntt_inited = 1;
+    }
+}
+
+/* ===================================================================== *
+ *  Scheme-facing shim: CANONICAL / scalar convention (M6 byte-exact).    *
+ * ===================================================================== */
+
+void poly_ntt(poly16 *a)
+{
+    ensure_init();
+    ntt_ref(a->coeffs);
+}
+
+void poly_invntt_tomont(poly16 *a)
+{
+    ensure_init();
+    invntt_tomont_ref(a->coeffs);
+}
+
+void poly_pointwise_montgomery(poly16 *c, const poly16 *a, const poly16 *b)
+{
+    ensure_init();
+    pointwise_ref(a->coeffs, b->coeffs, c->coeffs);
+}
+
+void poly_ntt_canonical(poly16 *a)
+{
+    ensure_init();
+    ntt_ref(a->coeffs);
+}
+
+void poly_ntt_import(poly16 *a)
+{
+    (void)
+        a; /* no-op at M6 (poly_ntt is canonical); real nttunpack below */
+}
+
+/* ===================================================================== *
+ *  AVX-512 SIMD kernels, exported for byte-exactness validation          *
+ *  (test/test_ntt_avx512.c).                                             *
+ * ===================================================================== */
+
 #if SHUTTLE_NTT_SIGNED
-/* Centered signed int16 (|x| < q) -> [0,q): add q to negative lanes
- * (constant-time sign-mask).  Same final step as the AVX2 fork. */
+/* Centered signed int16 (|x| < q) -> [0,q): add q to negative lanes. */
 static void canon_signed_to_unsigned(poly16 *a)
 {
     int16_t *p = (int16_t *)a->coeffs;
@@ -32,7 +89,7 @@ static void canon_signed_to_unsigned(poly16 *a)
 }
 #endif
 
-void poly_ntt(poly16 *a)
+void poly_ntt_simd(poly16 *a)
 {
 #if SHUTTLE_MODE == 128
     s256_ntt_avx512((int16_t *)a->coeffs, s256_ntt512_qdata,
@@ -46,7 +103,7 @@ void poly_ntt(poly16 *a)
 #endif
 }
 
-void poly_invntt_tomont(poly16 *a)
+void poly_invntt_tomont_simd(poly16 *a)
 {
 #if SHUTTLE_MODE == 128
     s256_invntt_tomont_avx512((int16_t *)a->coeffs, s256_ntt512_qdata,
@@ -61,7 +118,8 @@ void poly_invntt_tomont(poly16 *a)
 #endif
 }
 
-void poly_pointwise_montgomery(poly16 *c, const poly16 *a, const poly16 *b)
+void poly_pointwise_montgomery_simd(poly16 *c, const poly16 *a,
+                                    const poly16 *b)
 {
 #if SHUTTLE_MODE == 128
     s256_pointwise_avx512((int16_t *)c->coeffs, (const int16_t *)a->coeffs,
@@ -76,22 +134,8 @@ void poly_pointwise_montgomery(poly16 *c, const poly16 *a, const poly16 *b)
 #endif
 }
 
-void poly_ntt_canonical(poly16 *a)
+void poly_ntt_simd_import(poly16 *a)
 {
-    /* Canonical (ref bit-reversed) wire order via the scalar oracle (K1).
-     */
-    static int inited = 0;
-    if (!inited) {
-        ntt_ref_init();
-        inited = 1;
-    }
-    ntt_ref(a->coeffs);
-}
-
-void poly_ntt_import(poly16 *a)
-{
-    /* Canonical order -> AVX-512 backend-native slot order via nttunpack
-     * (replays the in-superblock shuffle ladder for q59393). */
     int32_t src[N];
     int i;
     for (i = 0; i < N; i++)

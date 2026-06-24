@@ -8,12 +8,12 @@
  *     ref/ntt/<qset>/ntt_ref.c avx2/<qset>/ntt.S avx2/<qset>/ntt_consts.c
  *
  * Asserts (fails=0):
- *   [1] AVX512 round-trip via the shim: poly_invntt_tomont(poly_ntt(a)) ==
- * a*R (and output is [0,q) after the signed canonicalization). [2]
- * negacyclic product via the AVX2 shim == polymul_schoolbook. [3] K1:
- * nttunpack(ntt_ref(p)) == ntt_avx(p) (mod q) -- the canonical->
- *       backend-native reconciliation, via
- * poly_ntt_import(poly_ntt_canonical)
+ *   [1] AVX512 round-trip via the shim:
+ * poly_invntt_tomont_simd(poly_ntt_simd(a)) == a*R (and output is [0,q)
+ * after the signed canonicalization). [2] negacyclic product via the AVX2
+ * shim == polymul_schoolbook. [3] K1: nttunpack(ntt_ref(p)) == ntt_avx(p)
+ * (mod q) -- the canonical-> backend-native reconciliation, via
+ * poly_ntt_simd_import(poly_ntt_canonical)
  *       == poly_ntt.
  *   [4] K10: full-layer ref == avx2 byte-exact -- the SCALAR poly_ntt then
  *       poly_invntt_tomont equals the AVX2 result
@@ -27,6 +27,19 @@
 
 #include "params.h"
 #include "poly_ntt.h"
+
+/* The genuine AVX-512 SIMD NTT kernels, exported by avx512/poly_ntt.c for
+ * this byte-exactness validation.  At M6 the scheme-facing shim (poly_ntt
+ * / poly_invntt_tomont / poly_pointwise_montgomery / poly_ntt_import)
+ * routes to the SCALAR oracle so the integrated KAT is byte-exact to ref;
+ * the SIMD asm is exercised HERE through these *_simd_* entries and proven
+ * bit-identical to that scalar oracle (the M9 perf wiring of the SIMD path
+ * into a forked polyvec/sign is gated on this). */
+void poly_ntt_simd(poly16 *a);
+void poly_invntt_tomont_simd(poly16 *a);
+void poly_pointwise_montgomery_simd(poly16 *c, const poly16 *a,
+                                    const poly16 *b);
+void poly_ntt_simd_import(poly16 *a);
 
 #define MONT16 ((uint16_t)((1u << 16) % Q))
 static uint16_t U(uint16_t x)
@@ -79,8 +92,8 @@ int main(void)
             a.coeffs[i] = v;
             ref.coeffs[i] = (uint16_t)((uint32_t)v * MONT16 % Q);
         }
-        poly_ntt(&a);
-        poly_invntt_tomont(&a);
+        poly_ntt_simd(&a);
+        poly_invntt_tomont_simd(&a);
         for (int i = 0; i < N; i++)
             if (a.coeffs[i] >= (uint16_t)Q ||
                 a.coeffs[i] != ref.coeffs[i]) {
@@ -108,10 +121,10 @@ int main(void)
             na.coeffs[i] = a.coeffs[i];
             nb.coeffs[i] = b.coeffs[i];
         }
-        poly_ntt(&na);
-        poly_ntt(&nb);
-        poly_pointwise_montgomery(&c, &na, &nb);
-        poly_invntt_tomont(&c);
+        poly_ntt_simd(&na);
+        poly_ntt_simd(&nb);
+        poly_pointwise_montgomery_simd(&c, &na, &nb);
+        poly_invntt_tomont_simd(&c);
         polymul_schoolbook(a.coeffs, b.coeffs, cref);
         for (int i = 0; i < N; i++)
             if (c.coeffs[i] != cref[i]) {
@@ -138,8 +151,8 @@ int main(void)
             want.coeffs[i] = v;
         }
         poly_ntt_canonical(&p);
-        poly_ntt_import(&p); /* AVX2 nttunpack */
-        poly_ntt(&want);     /* AVX2 forward */
+        poly_ntt_simd_import(&p); /* AVX2 nttunpack */
+        poly_ntt_simd(&want);     /* AVX2 forward */
         /* RAW NTT-domain lanes: read back per-config (signed smod /
          * unsigned). */
         for (int i = 0; i < N; i++)
@@ -176,8 +189,8 @@ int main(void)
             sa.coeffs[i] = v;
         }
         /* AVX2 path */
-        poly_ntt(&a);
-        poly_invntt_tomont(&a);
+        poly_ntt_simd(&a);
+        poly_invntt_tomont_simd(&a);
         /* scalar oracle (already [0,q)) */
         ref_ntt(&sa);
         ref_inv(&sa);
@@ -206,10 +219,10 @@ int main(void)
             sa.coeffs[i] = v;
             sb.coeffs[i] = w;
         }
-        poly_ntt(&na);
-        poly_ntt(&nb);
-        poly_pointwise_montgomery(&c, &na, &nb);
-        poly_invntt_tomont(&c);
+        poly_ntt_simd(&na);
+        poly_ntt_simd(&nb);
+        poly_pointwise_montgomery_simd(&c, &na, &nb);
+        poly_invntt_tomont_simd(&c);
         ref_ntt(&sa);
         ref_ntt(&sb);
         ref_pw(&sc, &sa, &sb);

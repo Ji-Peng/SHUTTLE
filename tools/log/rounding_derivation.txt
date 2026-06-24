@@ -1,0 +1,23 @@
+gen_rounding.py -- CompressY ties-away magic reciprocals
+Exhaustively verified exact for 0 <= |v| < 2^20 = 1048576.
+Kernel: qabs = (2*|v|*RECIP + ROUND_BIAS) >> SHIFT
+        == round_half_away(|v|, alpha) = floor((2|v|+alpha)/(2 alpha))
+
+=== SHUTTLE-128 ===
+  alpha_1 = 90: RECIP=1491309 SHIFT=28 ROUND_BIAS=134217810  (2*alpha=180)
+  alpha_S = 10: RECIP=838861 SHIFT=24 ROUND_BIAS=8388610  (2*alpha=20)
+  alpha_E = 5: RECIP=838861 SHIFT=23 ROUND_BIAS=4194305  (2*alpha=10)
+  alpha_h = 1024: LOG2_ALPHA_H = 10
+
+=== SHUTTLE-256 ===
+  alpha_1 = 135: RECIP=1988411 SHIFT=29 ROUND_BIAS=268435485  (2*alpha=270)
+  alpha_S = 5: RECIP=838861 SHIFT=23 ROUND_BIAS=4194305  (2*alpha=10)
+  alpha_E = 5: RECIP=838861 SHIFT=23 ROUND_BIAS=4194305  (2*alpha=10)
+  alpha_h = 1024: LOG2_ALPHA_H = 10
+
+=== SHUTTLE-512 ===
+  alpha_1 = 144: RECIP=233017 SHIFT=26 ROUND_BIAS=33554448  (2*alpha=288)
+  alpha_S = 3: RECIP=699051 SHIFT=22 ROUND_BIAS=2097153  (2*alpha=6)
+  alpha_E = 3: RECIP=699051 SHIFT=22 ROUND_BIAS=2097153  (2*alpha=6)
+  alpha_h = 2048: LOG2_ALPHA_H = 11
+

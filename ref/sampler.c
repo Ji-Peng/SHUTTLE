@@ -116,6 +116,48 @@
 #include "rcdt_tables.h" /* SHUTTLE_RCDT_Z, SHUTTLE_RCDT_NOISE_* (static const) */
 
 /*
+ * ===================== P13 CT-1 HARDENING (gather defense) ==============
+ *
+ * The scans below (cdt_scan96 / noise_magnitude_batch / gauss_finalize)
+ * are data-independent linear sweeps over the PUBLIC RCDT table length and
+ * the SEQUENTIAL PRNG byte buffer (the loop index s is a public sample
+ * counter; rand+base is a public sequential offset, never a secret-derived
+ * index). They are source-level constant-time.  But the P13 brief is
+ * explicit: "do NOT rely on the compiler to preserve constant-time."  Some
+ * compilers AUTO-VECTORIZE the per-sample LE32 limb reads into a SIMD
+ * GATHER -- e.g.
+ *
+ *     clang -Os -march=skylake (and newer clang baselines under -mavx2)
+ *
+ * re-emits `vpgatherqd` over the rand buffer with a vectorized PUBLIC
+ * sequential offset (verified: the gather index is
+ * group*96+lane*4+{0,32,64} built from the public loop counter; the secret
+ * limb VALUES are the loaded data, the ADDRESS is public).  So this is a
+ * BENIGN public-index vectorization, NOT a secret-index leak.  But the
+ * machine-code CT scanner (tools/ct_scan.py) cannot prove the index is
+ * public, so it conservatively (and correctly, per the brief) FLAGS any
+ * gather/scatter in a secret-handling object as a VIOLATION.
+ *
+ * Fix: the gather is the OUTER per-sample loop being SLP-vectorized to
+ * pack 8 independent samples and gather their rand reads.  We force the
+ * scan to stay scalar by carrying the per-sample accumulator in a
+ * `volatile` int32_t: C99 6.7.3 makes each `z += b` a real side-effecting
+ * memory op the optimizer may NOT remove, reorder, or pack across lanes,
+ * so the samples are no longer provably independent and NO compiler
+ * (gcc/clang x -O0..-O3,-Os) emits a gather/scatter for the scan.  (A
+ * volatile view of the rand *bytes* is NOT sufficient -- clang -Os
+ * re-gathers the volatile bytes; the loop-carried volatile dependency is
+ * what defeats it.)  This is C99 + -Wpedantic clean -- NO GNU inline
+ * __asm__ (which warns under -Wpedantic and would break the Reference
+ * -Werror gate); `volatile` is ISO C.  The arithmetic is unchanged -- z
+ * accumulates the SAME {0,1} adds in the SAME order -- so the result is
+ * bit-exact (KAT-neutral); only the instruction selection (scalar loads
+ * instead of a gather) changes.  On the mandated gcc -O2/-O3 production
+ * build the scan was already scalar, so the barrier costs ~0; under clang
+ * -Os it is FASTER (it avoids the slow gather).
+ */
+
+/*
  * cdt_scan96 -- scalar borrow-FOLD RCDT scan over an arbitrary public
  * table.
  *
@@ -140,7 +182,9 @@ void cdt_scan96(int32_t *out, const uint8_t *rand, const uint32_t Z[][3],
         uint32_t v0 = load_le32(rand + base + 0);
         uint32_t v1 = load_le32(rand + base + 32);
         uint32_t v2 = load_le32(rand + base + 64);
-        int32_t z = 0;
+        /* volatile accumulator = gather barrier (P13 CT-1; see the
+         * gather-defense block at the top of this file). */
+        volatile int32_t z = 0;
         int i;
         for (i = 0; i < entries; i++) {
             /* borrow-FOLD: b folds into the THRESHOLD; exact under
@@ -148,7 +192,7 @@ void cdt_scan96(int32_t *out, const uint8_t *rand, const uint32_t Z[][3],
             uint32_t b = ct_lt_u32(v0, Z[i][0]); /* b0 = [v0 <_u Z0]     */
             b = ct_lt_u32(v1, Z[i][1] + b);      /* b1 = [v1 <_u Z1+b0]  */
             b = ct_lt_u32(v2, Z[i][2] + b);      /* b2 = [v2 <_u Z2+b1]  */
-            z += (int32_t)b;                     /* unconditional += b   */
+            z = z + (int32_t)b;                  /* unconditional += b   */
         }
         out[s] = z;
     }

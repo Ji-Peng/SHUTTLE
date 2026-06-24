@@ -1,0 +1,7 @@
+# C-oracle build artifacts (rebuilt by the xcheck / m4 drivers)
+xcheck_dump_*
+rans_oracle_*
+sampler_oracle_*
+m4_dump_*
+__pycache__/
+*.pyc

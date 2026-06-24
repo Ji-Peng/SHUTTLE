@@ -42,6 +42,10 @@
 #    define crypto_sign_verify SHUTTLE_NAMESPACE(verify)
 #    define crypto_sign SHUTTLE_NAMESPACE(sign)
 #    define crypto_sign_open SHUTTLE_NAMESPACE(open)
+/* P11 internal xi/rnd-driven entries + keygen-attempt diagnostic */
+#    define crypto_sign_keypair_xi SHUTTLE_NAMESPACE(keypair_xi)
+#    define crypto_sign_signature_rnd SHUTTLE_NAMESPACE(signature_rnd)
+#    define shuttle_last_keygen_attempts SHUTTLE_NAMESPACE(last_keygen_attempts)
 
 /* ---- unified XOF wrappers (symmetric.{c,h}, xof.h; P02) ---- */
 #    define xof128_init SHUTTLE_NAMESPACE(xof128_init)
@@ -127,8 +131,32 @@
 #    define gauss_stream_chunk SHUTTLE_NAMESPACE(gauss_stream_chunk)
 #    define gauss_finalize SHUTTLE_NAMESPACE(gauss_finalize)
 /* ---- P08 irs / sampler_u group: appended by 08 ---- */
+#    define sampler_u SHUTTLE_NAMESPACE(sampler_u)
+#    define sampler_u_x2 SHUTTLE_NAMESPACE(sampler_u_x2)
+#    define reject_sample SHUTTLE_NAMESPACE(reject_sample)
+
 /* ---- P09 rounding group: appended by 09 ---- */
-/* ---- P10 rans group: appended by 10 ---- */
+#    define lsb_coeff SHUTTLE_NAMESPACE(lsb_coeff)
+#    define lift_to_mod2q_coeff SHUTTLE_NAMESPACE(lift_to_mod2q_coeff)
+#    define poly_lift_to_mod2q SHUTTLE_NAMESPACE(poly_lift_to_mod2q)
+#    define compress_y SHUTTLE_NAMESPACE(compress_y)
+#    define stretch_s SHUTTLE_NAMESPACE(stretch_s)
+#    define roundB_update_s2 SHUTTLE_NAMESPACE(roundB_update_s2)
+#    define mat_mul_2q SHUTTLE_NAMESPACE(mat_mul_2q)
+#    define mat_mul_z1_2q SHUTTLE_NAMESPACE(mat_mul_z1_2q)
+#    define highbits_reduced SHUTTLE_NAMESPACE(highbits_reduced)
+#    define hbvalue SHUTTLE_NAMESPACE(hbvalue)
+#    define make_hint SHUTTLE_NAMESPACE(make_hint)
+#    define use_hint SHUTTLE_NAMESPACE(use_hint)
+#    define recon_comY0p SHUTTLE_NAMESPACE(recon_comY0p)
+#    define poly_array_sqnorm SHUTTLE_NAMESPACE(poly_array_sqnorm)
+#    define keygen_norm_ok SHUTTLE_NAMESPACE(keygen_norm_ok)
+#    define response_norm_ok SHUTTLE_NAMESPACE(response_norm_ok)
+
+/* ---- P10 rans group: appended by 10 (engine entry points; pack_sig{,_raw}
+ * already declared in the P04 packing group above) ---- */
+#    define shuttle_rans_encode SHUTTLE_NAMESPACE(rans_encode)
+#    define shuttle_rans_decode SHUTTLE_NAMESPACE(rans_decode)
 
 #endif /* !DISABLE_NAMESPACE */
 #endif /* SHUTTLE_NAMESPACE_H */

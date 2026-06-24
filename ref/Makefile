@@ -22,7 +22,8 @@
 MODES ?= 128 256 512
 # Seeded with t_params + test_xof (P02); P03 adds t_reduce + test_ntt;
 # P04 adds test_pack (poly arith + all (de)serialization).
-TESTS ?= t_params test_xof t_reduce test_ntt test_pack test_sampler test_approx test_samplers
+TESTS ?= t_params test_xof t_reduce test_ntt test_pack test_sampler test_approx test_samplers \
+         test_irs test_rounding test_rans test_sign test_kat
 CC    ?= gcc
 
 # Exact NGCC Reference flags (digest 14 1.1): pure ISO C99, NO asm/intrinsics,
@@ -49,8 +50,14 @@ endif
 # The MODE-selected list is injected below ($(XOF_SRCS)).
 ifeq ($(MODE),SHA3)
 XOF_SRCS = symmetric.c fips202.c
+# The NGCC KAT harness (SIG_AlgorithmInstance.c / KAT_SIG.c / test_kat) ALWAYS
+# seeds via the SM3 Hash-DRBG drng_algorithm (the fixed competition protocol),
+# independent of the scheme's xof MODE.  So a KAT binary under SHA3_MODE needs
+# drng.c+auxfunc.c (seeding) IN ADDITION to the SHAKE xof backend.
+KAT_XOF = symmetric.c fips202.c drng.c auxfunc.c
 else
 XOF_SRCS = symmetric.c drng.c auxfunc.c
+KAT_XOF = $(XOF_SRCS)
 endif
 
 SH_SRCS = \
@@ -58,10 +65,15 @@ SH_SRCS = \
 "test_xof=$(XOF_SRCS)" \
 't_reduce=reduce.c' \
 'test_ntt=reduce.c poly_ntt.c' \
-'test_pack=packing.c poly.c reduce.c' \
+'test_pack=packing.c poly.c reduce.c rans.c' \
 'test_sampler=sampler.c reduce.c' \
 'test_approx=approx_exp.c approx_log.c' \
-"test_samplers=polyvec.c sampler.c reduce.c approx_exp.c approx_log.c $(XOF_SRCS)"
+"test_samplers=polyvec.c sampler.c reduce.c approx_exp.c approx_log.c $(XOF_SRCS)" \
+"test_irs=irs.c sampler_u.c approx_exp.c approx_log.c reduce.c $(XOF_SRCS)" \
+'test_rounding=rounding.c reduce.c poly.c poly_ntt.c packing.c rans.c' \
+'test_rans=packing.c poly.c reduce.c rans.c' \
+"test_sign=sign.c polyvec.c sampler.c sampler_u.c irs.c rounding.c packing.c poly.c poly_ntt.c reduce.c rans.c approx_exp.c approx_log.c $(XOF_SRCS)" \
+"test_kat=SIG_AlgorithmInstance.c sign.c polyvec.c sampler.c sampler_u.c irs.c rounding.c packing.c poly.c poly_ntt.c reduce.c rans.c approx_exp.c approx_log.c $(KAT_XOF)"
 
 # Per-set NTT vendoring wiring (P03): the per-mode scalar NTT lives under
 # ntt/<qset>/.  A test whose source list contains poly_ntt.c (the scalar shim)
@@ -99,7 +111,7 @@ all:
 	        *poly_ntt.c*|*polyvec.c*) extra="ntt/$$qs/ntt_ref.c"; inc="-Intt/$$qs";; \
 	      esac; \
 	      stats=""; \
-	      case "$$t" in trace_kat) stats="-DTEST_RANS_STATS";; diff_fuzz) stats="-DDIFF_FUZZ_N=$(DIFF_FUZZ_N)";; esac; \
+	      case "$$t" in trace_kat) stats="-DTEST_RANS_STATS";; diff_fuzz) stats="-DDIFF_FUZZ_N=$(DIFF_FUZZ_N)";; test_sign) stats="-DSIG_RAW";; esac; \
 	      $(CC) $(CFLAGS) $$inc $(MODEFLAG) $$stats -DSHUTTLE_MODE=$$m test/$$t.c $$srcs $$extra $(LDLIBS) \
 	        -o $(BINDIR)/$${t}_$${m} || exit 1; \
 	    done; \
@@ -122,8 +134,10 @@ check: all
 # per-qset tools/ntt/<qset>/gen_ntt.py -- there is no gen_zetas.py).
 tables:
 	cd ../tools && python3 gen_params.py && python3 gen_bounds.py \
-	  && python3 gen_rcdt.py && python3 gen_approx_exp_poly.py && python3 gen_approx_log_poly.py
-	@echo "tables: regenerated params + bounds + rcdt + approx_exp + approx_log (later plans append their generators)"
+	  && python3 gen_rcdt.py && python3 gen_approx_exp_poly.py && python3 gen_approx_log_poly.py \
+	  && python3 gen_irs_consts.py && python3 gen_rounding.py \
+	  && python3 gen_rans_tables.py && python3 SigSize.py
+	@echo "tables: regenerated params + bounds + rcdt + approx + irs + rounding + rans"
 
 # Reproducible-constants drift gate (SEPARATE from `tables`).  Back up each
 # generated header, re-run its generator, cmp against the committed bytes, FAIL
@@ -171,7 +185,19 @@ check-consts:
 	  && $(BINDIR)/vlog >/dev/null 2>&1 && echo "  PASS: ApproxLog >= 57-bit + monotone + pin + CT-scan + x2==scalar" \
 	  || { echo "  FAIL: ApproxLog precision gate"; exit 1; }
 	@rm -f $(BINDIR)/vexp $(BINDIR)/vlog
-	@echo "check-consts: all P01 + P03 + P05 + P06 constants reproducible"
+	@echo "== irs.c (gen_irs_consts.py) + rounding_consts.h (gen_rounding.py) + rans.h (gen_rans_tables.py+SigSize.py) =="
+	@cp irs.c $(BINDIR)/irs.bak; cp ../tools/rounding_consts.h $(BINDIR)/rnd.bak; cp rans.h $(BINDIR)/rans.bak
+	@( cd ../tools && python3 gen_irs_consts.py >/dev/null 2>&1 && python3 gen_rounding.py >/dev/null 2>&1 \
+	     && python3 gen_rans_tables.py >/dev/null 2>&1 && python3 SigSize.py >/dev/null 2>&1 ) \
+	  || { echo "  FAIL: P08/P09/P10 generator error"; exit 1; }
+	@cmp -s irs.c $(BINDIR)/irs.bak && echo "  PASS: irs.c (2r^2 ln2 const) reproducible" \
+	  || { echo "  FAIL: irs.c drift"; exit 1; }
+	@cmp -s ../tools/rounding_consts.h $(BINDIR)/rnd.bak && echo "  PASS: rounding_consts.h reproducible" \
+	  || { echo "  FAIL: rounding_consts.h drift"; exit 1; }
+	@cmp -s rans.h $(BINDIR)/rans.bak && echo "  PASS: rans.h (rANS tables + reserve) reproducible" \
+	  || { echo "  FAIL: rans.h drift"; exit 1; }
+	@rm -f $(BINDIR)/irs.bak $(BINDIR)/rnd.bak $(BINDIR)/rans.bak
+	@echo "check-consts: all P01 + P03 + P05 + P06 + P08 + P09 + P10 constants reproducible"
 
 # Reference warning gate: the ref build MUST be clean under -Werror -Wpedantic
 # (the hard NGCC "no warnings" expectation for Reference_Implementation).
@@ -192,6 +218,28 @@ check-warn:
 	  done; \
 	done
 	@echo "check-warn: ref builds clean under -Werror -Wpedantic -Wall -Wextra"
+
+# KAT regression lock (P12 / M5).  test_kat replays the KAT_SIG.c byte protocol,
+# FNV-1a hashes the pk||sk||sn transcript, asserts verify-accept + tamper-reject,
+# prints KAT_hash.  These are the production rANS-path hashes (test_kat builds
+# WITHOUT -DSIG_RAW).  Re-record on any output-changing diff (samplers/encoding).
+# RAW-path hashes (for -DSIG_RAW debugging) are kept in tools/pyref/README.md.
+KAT_128_NGCC = 13849130264003953529
+KAT_256_NGCC = 12856937526430209591
+KAT_512_NGCC = 641278812500111422
+KAT_128_SHA3 = 17067083752221901810
+KAT_256_SHA3 = 16770893027166717173
+KAT_512_SHA3 = 17781375582284641253
+MODELABEL = $(if $(filter SHA3,$(MODE)),SHA3,NGCC)
+check-kat: all
+	@KAT_128=$(KAT_128_$(MODELABEL)); KAT_256=$(KAT_256_$(MODELABEL)); KAT_512=$(KAT_512_$(MODELABEL)); \
+	for m in $(MODES); do \
+	  got=`$(BINDIR)/test_kat_$$m | sed -n 's/^KAT_hash=//p'`; \
+	  eval exp=\$$KAT_$$m; \
+	  if [ "$$got" = "$$exp" ]; then echo "  PASS: KAT-$$m ($(MODELABEL)) = $$got"; \
+	  else echo "  FAIL: KAT-$$m ($(MODELABEL)) got $$got want $$exp"; exit 1; fi; \
+	done
+	@echo "check-kat: recorded KAT hashes reproduce ($(MODELABEL), rANS path)"
 
 # End-to-end keygen/sign/verify cycle benchmark (scalar reference).  The sign
 # source list lands with P11; the target is wired now so it is ready.

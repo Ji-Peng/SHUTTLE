@@ -18,6 +18,7 @@
 
 #include "params.h"
 #include "poly.h"
+#include "rans.h"
 
 /* ceil(q / alpha_b): the legal value range [0, CEIL_Q_ALPHA_B) of a packed
  * pk field b1 = b/alpha_b.  Reproducible closed form of (q, alpha_b):
@@ -329,4 +330,297 @@ int unpack_com(poly *comY_h, poly *comY_0,
         fail |= ct_range_reject(comY_0->coeffs[k], 0, 1);
 
     return fail ? -1 : 0;
+}
+
+/* ====================================================================== *
+ *  Signature serialization (sigEncode / sigDecode)  -- P10               *
+ * ====================================================================== *
+ *
+ *  Symbol counts (logical order Q0 ++ Qs ++ h, polynomial-major then
+ *  coefficient-major): the z0 block is the FIRST poly of z1; the z_s block
+ * is the next ELL polys; the hint is EM polys.  z1 has Z1LEN = 1 + ELL
+ * polys.
+ */
+#define SIG_NQ0 ((size_t)N)       /* z0 quotients: 1 poly       */
+#define SIG_NQS ((size_t)ELL * N) /* z_s quotients: ELL polys   */
+#define SIG_NH ((size_t)EM * N)   /* hint: EM polys             */
+#define SIG_NTOT (SIG_NQ0 + SIG_NQS + SIG_NH)
+
+/* sig_split_z: the signed-arithmetic block-adaptive peel.
+ *   head = z >> b  (arithmetic shift = floor(z / 2^b) for negative z too);
+ *   low  = z & (2^b - 1)  (always in [0, 2^b));
+ * reconstruction z = (head << b) | low = 2^b*head + low, NO modular
+ * reduction (Description.tex:2364-2369; decode condition 2). */
+static inline void sig_split_z(int32_t z, int b, int32_t *head,
+                               int32_t *low)
+{
+    *head = z >> b; /* arithmetic shift */
+    *low = z & ((1 << b) - 1);
+}
+
+static inline int32_t sig_join_z(int32_t head, int32_t low, int b)
+{
+    return (head << b) | low; /* = 2^b*head + low, no mod */
+}
+
+/* pack_sig_zlow / unpack_sig_zlow: the raw low-bit body R, LSB-first per
+ * the PolyToBytes convention (P04).  Each poly's N coeffs contribute b low
+ * bits. A 64-bit accumulator handles b up to 7 with margin (b0=2, b_s<=7).
+ */
+static void pack_sig_zlow(uint8_t *out, const poly *z1i, int b)
+{
+    const uint32_t mask = (1u << b) - 1u;
+    uint64_t acc = 0;
+    int accbits = 0;
+    size_t outpos = 0;
+    for (int k = 0; k < N; k++) {
+        int32_t head, low;
+        sig_split_z(z1i->coeffs[k], b, &head, &low);
+        acc |= (uint64_t)((uint32_t)low & mask) << accbits;
+        accbits += b;
+        while (accbits >= 8) {
+            out[outpos++] = (uint8_t)acc;
+            acc >>= 8;
+            accbits -= 8;
+        }
+    }
+    if (accbits > 0)
+        out[outpos] = (uint8_t)acc;
+}
+
+/* Reconstruct z1i->coeffs from the already-decoded heads (in z1i) + the b
+ * low bits.  The head was placed in z1i by the rANS decode; this
+ * multiplies it back in.  Low part is in [0,2^b) by construction (an
+ * unsigned b-bit field), so NO modular reduction is needed (decode
+ * condition 2). */
+static void unpack_sig_zlow(poly *z1i, const uint8_t *in, int b)
+{
+    const uint32_t mask = (1u << b) - 1u;
+    uint64_t acc = 0;
+    int accbits = 0;
+    size_t inpos = 0;
+    for (int k = 0; k < N; k++) {
+        while (accbits < b) {
+            acc |= (uint64_t)in[inpos++] << accbits;
+            accbits += 8;
+        }
+        int32_t low = (int32_t)((uint32_t)acc & mask);
+        acc >>= b;
+        accbits -= b;
+        z1i->coeffs[k] = sig_join_z(z1i->coeffs[k], low, b);
+    }
+}
+
+static void sig_clear_outputs(poly z1[Z1LEN], poly h[EM])
+{
+    memset(z1, 0, (size_t)Z1LEN * sizeof z1[0]);
+    memset(h, 0, (size_t)EM * sizeof h[0]);
+}
+
+/* ---- RAW path (M3 validation; un-rANS'd) ---- */
+void pack_sig_raw(uint8_t *sig, const uint8_t seedC[CHALLENGESEEDBYTES],
+                  const poly z1[Z1LEN], const poly h[EM])
+{
+    uint8_t *p = sig;
+    int i, k;
+    memcpy(p, seedC, CHALLENGESEEDBYTES);
+    p += CHALLENGESEEDBYTES;
+    /* z1: 2 bytes/coeff, little-endian signed int16 (centered coeffs fit).
+     */
+    for (i = 0; i < Z1LEN; i++) {
+        for (k = 0; k < N; k++) {
+            int16_t v = (int16_t)z1[i].coeffs[k];
+            p[2 * k] = (uint8_t)((uint16_t)v & 0xff);
+            p[2 * k + 1] = (uint8_t)(((uint16_t)v >> 8) & 0xff);
+        }
+        p += SIG_RAW_Z1_PACKEDBYTES;
+    }
+    /* hint: d_h-bit fields (in [0,H_h) by construction). */
+    for (i = 0; i < EM; i++) {
+        poly_to_bytes(p, &h[i], DH_BITS);
+        p += SIG_RAW_H_PACKEDBYTES;
+    }
+}
+
+int unpack_sig_raw(uint8_t seedC[CHALLENGESEEDBYTES], poly z1[Z1LEN],
+                   poly h[EM], const uint8_t *sig)
+{
+    const uint8_t *p = sig;
+    int i, k;
+    uint32_t fail = 0;
+    memcpy(seedC, p, CHALLENGESEEDBYTES);
+    p += CHALLENGESEEDBYTES;
+    for (i = 0; i < Z1LEN; i++) {
+        for (k = 0; k < N; k++) {
+            uint16_t u =
+                (uint16_t)p[2 * k] | ((uint16_t)p[2 * k + 1] << 8);
+            z1[i].coeffs[k] = (int32_t)(int16_t)u;
+        }
+        p += SIG_RAW_Z1_PACKEDBYTES;
+    }
+    /* hint: decode d_h-bit fields, RANGE-CHECK each into [0,H_h) (K14:
+     * never reduce mod H_h -- range-CHECK then reject). */
+    for (i = 0; i < EM; i++) {
+        bytes_to_poly(&h[i], p, DH_BITS);
+        for (k = 0; k < N; k++)
+            fail |= ct_range_reject(h[i].coeffs[k], 0, (int32_t)HH - 1);
+        p += SIG_RAW_H_PACKEDBYTES;
+    }
+    if (fail) {
+        sig_clear_outputs(z1, h);
+        return -1;
+    }
+    return 0;
+}
+
+/* ---- Production path (M4; rANS com + raw z-low) ---- */
+/* Gather the merged symbol arrays from (z1, h): Q0 from z1[0], Qs from
+ * z1[1..ELL], hint from h[0..EM-1]. */
+static void sig_gather_symbols(const poly z1[Z1LEN], const poly h[EM],
+                               int32_t *q0, int32_t *qs, int32_t *hh)
+{
+    int i, k;
+    for (k = 0; k < N; k++) {
+        int32_t head, low;
+        sig_split_z(z1[0].coeffs[k], RANS_B0, &head, &low);
+        q0[k] = head;
+    }
+    for (i = 0; i < ELL; i++)
+        for (k = 0; k < N; k++) {
+            int32_t head, low;
+            sig_split_z(z1[i + 1].coeffs[k], RANS_BS, &head, &low);
+            qs[(size_t)i * N + k] = head;
+        }
+    for (i = 0; i < EM; i++)
+        for (k = 0; k < N; k++)
+            hh[(size_t)i * N + k] = h[i].coeffs[k];
+}
+
+int pack_sig(uint8_t *sig, const uint8_t seedC[CHALLENGESEEDBYTES],
+             const poly z1[Z1LEN], const poly h[EM])
+{
+    uint8_t *p = sig;
+    int i;
+    int32_t q0[SIG_NQ0], qs[SIG_NQS], hh[SIG_NH];
+
+    /* (1) seedC verbatim prefix (MS-A5). */
+    memcpy(p, seedC, CHALLENGESEEDBYTES);
+    p += CHALLENGESEEDBYTES;
+
+    /* (2) rlen field + reserved com region. */
+    uint8_t *lenp = p;
+    p += 2;
+    uint8_t *rp = p;
+
+    sig_gather_symbols(z1, h, q0, qs, hh);
+    size_t rlen;
+    if (shuttle_rans_encode(rp, &rlen, RANS_RESERVED_BYTES, q0, qs, hh,
+                            SIG_NQ0, SIG_NQS, SIG_NH) != 0)
+        return -2; /* out-of-support / overflow: signer retries (K4). */
+    /* Zero the padding tail [rlen, RESERVED) so every signature byte is
+     * authenticated (the verifier requires it zero -> no malleability). */
+    memset(rp + rlen, 0, RANS_RESERVED_BYTES - rlen);
+    lenp[0] = (uint8_t)(rlen & 0xff);
+    lenp[1] = (uint8_t)((rlen >> 8) & 0xff);
+    p += RANS_RESERVED_BYTES;
+
+    /* (3) raw low-bit body R: z0 block (b0), then z_s block (b_s). */
+    pack_sig_zlow(p, &z1[0], RANS_B0);
+    p += RANS_Z0_LO_PACKEDBYTES;
+    for (i = 0; i < ELL; i++) {
+        pack_sig_zlow(p, &z1[i + 1], RANS_BS);
+        p += (RANS_ZS_LO_PACKEDBYTES / ELL);
+    }
+
+    _Static_assert(SIG_PACKED_BYTES <= CRYPTO_BYTES,
+                   "compact signature must fit in CRYPTO_BYTES");
+    _Static_assert(RANS_ZS_LO_PACKEDBYTES % ELL == 0,
+                   "z_s low-bit body must split evenly across ELL polys "
+                   "(N*b_s multiple of 8)");
+    return 0;
+}
+
+int unpack_sig(uint8_t seedC[CHALLENGESEEDBYTES], poly z1[Z1LEN],
+               poly h[EM], const uint8_t *sig)
+{
+    const uint8_t *p = sig;
+    int i;
+    int32_t q0[SIG_NQ0], qs[SIG_NQS], hh[SIG_NH];
+    uint8_t recom[RANS_RESERVED_BYTES];
+    uint32_t fail = 0;
+
+    /* (1) seedC verbatim. */
+    memcpy(seedC, p, CHALLENGESEEDBYTES);
+    p += CHALLENGESEEDBYTES;
+
+    /* (2) rlen + reserved com region.  Outer-container checks (rANS.tex
+     * "outer format"): rlen <= RESERVED, and every padding byte zero. */
+    size_t rlen = (size_t)p[0] | ((size_t)p[1] << 8);
+    p += 2;
+    const uint8_t *rp = p;
+    if (rlen > RANS_RESERVED_BYTES) {
+        sig_clear_outputs(z1, h);
+        return -1;
+    }
+    for (size_t pad = rlen; pad < (size_t)RANS_RESERVED_BYTES; pad++)
+        if (rp[pad] != 0) {
+            sig_clear_outputs(z1, h);
+            return -1;
+        }
+
+    /* (2b) canonical rANS decode (initial-state range / full consume /
+     * terminal state == L). */
+    if (shuttle_rans_decode(q0, qs, hh, SIG_NQ0, SIG_NQS, SIG_NH, rp,
+                            rlen) != 0) {
+        sig_clear_outputs(z1, h);
+        return -1;
+    }
+    p += RANS_RESERVED_BYTES;
+
+    /* (3) place decoded heads into z1, hint into h.  Per-block SUPPORT is
+     * already guaranteed by the SLOT lookup (decoded quotient lands in
+     * [LO, LO+N)); we additionally RANGE-CHECK the hint into [0,H_h) (K14:
+     * range-CHECK then reject, NEVER mod H_h). */
+    for (int k = 0; k < N; k++)
+        z1[0].coeffs[k] = q0[k];
+    for (i = 0; i < ELL; i++)
+        for (int k = 0; k < N; k++)
+            z1[i + 1].coeffs[k] = qs[(size_t)i * N + k];
+    for (i = 0; i < EM; i++)
+        for (int k = 0; k < N; k++) {
+            int32_t v = hh[(size_t)i * N + k];
+            fail |= ct_range_reject(v, 0, (int32_t)HH - 1);
+            h[i].coeffs[k] = v;
+        }
+    if (fail) {
+        sig_clear_outputs(z1, h);
+        return -1;
+    }
+
+    /* (4) raw low-bit body R: reconstruct z = 2^b*head + low. */
+    unpack_sig_zlow(&z1[0], p, RANS_B0);
+    p += RANS_Z0_LO_PACKEDBYTES;
+    for (i = 0; i < ELL; i++) {
+        unpack_sig_zlow(&z1[i + 1], p, RANS_BS);
+        p += (RANS_ZS_LO_PACKEDBYTES / ELL);
+    }
+
+    /* (5) byte-for-byte RE-ENCODE check (the SHUTTLE injectivity addition,
+     * K15): re-encode the recovered (z1,hint) and require the com bytes to
+     * match the input exactly.  A decoded triple that re-encodes to a
+     * different byte string would be a malleable alias.  Together with the
+     * padding-zero + terminal-state checks this makes sigDecode injective.
+     */
+    {
+        int32_t r0[SIG_NQ0], rs[SIG_NQS], rh[SIG_NH];
+        size_t relen;
+        sig_gather_symbols(z1, h, r0, rs, rh);
+        if (shuttle_rans_encode(recom, &relen, RANS_RESERVED_BYTES, r0, rs,
+                                rh, SIG_NQ0, SIG_NQS, SIG_NH) != 0 ||
+            relen != rlen || memcmp(recom, rp, rlen) != 0) {
+            sig_clear_outputs(z1, h);
+            return -1;
+        }
+    }
+    return 0;
 }

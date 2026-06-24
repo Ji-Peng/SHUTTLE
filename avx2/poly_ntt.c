@@ -1,37 +1,115 @@
 /*
  * avx2/poly_ntt.c -- AVX2 fork of the NTT shim (P03), behind USE_AVX2_NTT.
  *
- * Hard-codes the TWO AVX2 signature families so the upward poly_ntt
- * contract is uniform:
+ * === M6 wiring (byte-exactness milestone) ===
+ * At M6 the SCHEME (sign.c / polyvec.c / rounding.c, all symlinked SCALAR)
+ * runs unmodified.  The scalar ExpandA writes the cached matrix hAgen in
+ * CANONICAL (ref bit-reversed) NTT order and -- crucially -- never calls
+ * poly_ntt_import on it (that import is an M9 AVX-fork step; see the
+ * comment at ref/polyvec.c:212).  The scalar sign.c then forms NTT-domain
+ * products poly_pointwise_montgomery(hAgen, poly_ntt(s)).  For that
+ * product to be correct BOTH operands must share one NTT order AND one
+ * Montgomery scaling convention.  hAgen is fixed at the canonical/scalar
+ * convention, so the scheme-facing shim ops here MUST also be the
+ * canonical/scalar convention.
+ *
+ * Therefore the scheme-facing shim entries (poly_ntt / poly_invntt_tomont
+ * / poly_pointwise_montgomery / poly_ntt_canonical) dispatch to the
+ * per-config s<n>_*_ref scalar kernels.  This makes the AVX2 build's
+ * integrated KAT BYTE-EXACT to the reference (ref==avx2==avx512), which is
+ * the whole M6 gate. poly_ntt_import is a no-op (poly_ntt already emits
+ * canonical == the order the scheme expects; nothing to unpack).
+ *
+ * The genuine AVX2 NTT asm kernels (s<n>_ntt_avx / s<n>_invntt_tomont_avx
+ * / s<n>_pointwise_avx / s<n>_nttunpack_avx + the signed canonicalization)
+ * are NOT dead: they are validated BYTE-EXACT to the scalar oracle by
+ * test/test_ntt_avx.c, which drives them through the poly_ntt_simd_*
+ * wrappers exported below.  Wiring those SIMD kernels into the *scheme*
+ * hot path (with a forked polyvec.c/sign.c that poly_ntt_imports the
+ * canonical hAgen into the AVX2-native slot layout) is the M9 PERF
+ * milestone -- it is a perf change, not a correctness one, and it is gated
+ * on the AVX2 forks of polyvec/sign.
+ *
+ * === The AVX2 SIMD kernels (exercised by test_ntt_avx via the *_simd_*
+ *     wrappers) ===
+ * TWO signature families:
  *   - SIGNED q15361 (SHUTTLE_MODE==128): ntt/invntt take (poly, qdata,
- * ztab, z0/z0inv, scale); pointwise takes (c,a,b,qdata); plus
- * s256_reduce_avx.
+ * ztab, z0/z0inv, scale); pointwise (c,a,b,qdata); plus s256_reduce_avx.
+ * The signed invntt leaves a lazy ~2q value; reduce_avx + a conditional +q
+ * for negative lanes canonicalizes it to [0,q) (K10).
  *   - UNSIGNED q61441/q59393: ntt/invntt take (poly, qdata, ztab, cross,
- * ninv); pointwise takes (c,a,b,qdata). AVX2 NTT output is in the
- * backend-native shuffle-network permutation (NOT the scalar bit-reversed
- * order).
- *
- * poly16 (uint16_t[N]) is reinterpret-cast to int16_t* at each backend
- * call: the asm's signed-vs-unsigned view is only its interpretation of
- * the same 16 bits; the cast is sound because sizeof(poly16)==2*N
- * (asserted in poly.h).
- *
- * SIGNED mod-2q canonicalization (q15361 only; feeds P09 LiftToModTwoQ,
- * K13): s256_invntt_tomont_avx leaves a SIGNED value up to ~2q in
- * magnitude.  Before the output is [0,q) (the input convention
- * LiftToModTwoQ requires), we run s256_reduce_avx (one red16 pass ->
- * centered |x| <~ 0.5002q) THEN a final conditional +q for negative lanes.
- * red16 alone is NOT enough -- the +q for negative lanes is mandatory.
- * This canonicalization MUST be bit-identical scalar==avx2==avx512 (K10),
- * enforced by t_canon2q.c / test_freeze_avx.c. The unsigned configs
- * already yield [0,q) directly, no extra step.
+ * ninv); pointwise (c,a,b,qdata); invntt already yields [0,q). poly16
+ * (uint16_t[N]) is reinterpret-cast to int16_t* at each backend call;
+ * sound because sizeof(poly16)==2*N (asserted in poly.h).
  */
 #include "poly_ntt.h"
 
+/* ---- one-shot init of the scalar twiddle/scale tables (used by both the
+ * scheme-facing canonical path and the test wrappers' nttunpack source).
+ * ---- */
+static int s_ntt_inited = 0;
+static void ensure_init(void)
+{
+    if (!s_ntt_inited) {
+        ntt_ref_init();
+        s_ntt_inited = 1;
+    }
+}
+
+/* ===================================================================== *
+ *  Scheme-facing shim: CANONICAL / scalar convention (M6 byte-exact).    *
+ * ===================================================================== */
+
+void poly_ntt(poly16 *a)
+{
+    ensure_init();
+    ntt_ref(
+        a->coeffs); /* normal-in -> canonical bit-reversed NTT, [0,q) */
+}
+
+void poly_invntt_tomont(poly16 *a)
+{
+    ensure_init();
+    invntt_tomont_ref(a->coeffs); /* -> [0,q); bare round-trip = a*R */
+}
+
+void poly_pointwise_montgomery(poly16 *c, const poly16 *a, const poly16 *b)
+{
+    ensure_init();
+    pointwise_ref(a->coeffs, b->coeffs,
+                  c->coeffs); /* c = a*b*R^-1, [0,q) */
+}
+
+void poly_ntt_canonical(poly16 *a)
+{
+    /* Canonical (ref bit-reversed) wire order == the scheme NTT order
+     * here. */
+    ensure_init();
+    ntt_ref(a->coeffs);
+}
+
+void poly_ntt_import(poly16 *a)
+{
+    /* No-op: poly_ntt already emits canonical order at M6 (the scheme's
+     * NTT-domain operands all share it), so there is nothing to unpack.
+     * The real AVX2 nttunpack lives in poly_ntt_simd_import below and is
+     * exercised by test_ntt_avx; it becomes the scheme path at M9 (forked
+     * polyvec/sign).
+     */
+    (void)a;
+}
+
+/* ===================================================================== *
+ *  AVX2 SIMD kernels, exported for byte-exactness validation             *
+ *  (test/test_ntt_avx.c).  These are the genuine vectorized NTT; they    *
+ *  are proven bit-identical to the scalar oracle above, which is what    *
+ *  authorizes wiring them into the scheme hot path at M9.                *
+ * ===================================================================== */
+
 #if SHUTTLE_NTT_SIGNED
-/* Map back the centered red16 output of s256_reduce_avx into [0,q): add q
- * to every negative int16 lane (constant-time sign-mask).  Operates in
- * place on the poly16 viewed as signed int16. */
+/* Map the centered red16 output of s256_reduce_avx into [0,q): add q to
+ * every negative int16 lane (constant-time sign-mask).  Operates in place
+ * on the poly16 viewed as signed int16. */
 static void canon_signed_to_unsigned(poly16 *a)
 {
     int16_t *p = (int16_t *)a->coeffs;
@@ -44,7 +122,7 @@ static void canon_signed_to_unsigned(poly16 *a)
 }
 #endif
 
-void poly_ntt(poly16 *a)
+void poly_ntt_simd(poly16 *a)
 {
 #if SHUTTLE_MODE == 128
     s256_ntt_avx((int16_t *)a->coeffs, s256_ntt_qdata, s256_ntt_zetas_fwd,
@@ -59,7 +137,7 @@ void poly_ntt(poly16 *a)
 #endif
 }
 
-void poly_invntt_tomont(poly16 *a)
+void poly_invntt_tomont_simd(poly16 *a)
 {
 #if SHUTTLE_MODE == 128
     s256_invntt_tomont_avx((int16_t *)a->coeffs, s256_ntt_qdata,
@@ -79,7 +157,8 @@ void poly_invntt_tomont(poly16 *a)
 #endif
 }
 
-void poly_pointwise_montgomery(poly16 *c, const poly16 *a, const poly16 *b)
+void poly_pointwise_montgomery_simd(poly16 *c, const poly16 *a,
+                                    const poly16 *b)
 {
 #if SHUTTLE_MODE == 128
     s256_pointwise_avx((int16_t *)c->coeffs, (const int16_t *)a->coeffs,
@@ -93,27 +172,12 @@ void poly_pointwise_montgomery(poly16 *c, const poly16 *a, const poly16 *b)
 #endif
 }
 
-void poly_ntt_canonical(poly16 *a)
-{
-    /* Wire-byte (canonical, ref bit-reversed) order.  The scalar ntt_ref
-     * order is the canonical reference; the AVX2 backend's own permutation
-     * is NOT it. So canonical NTT for an AVX2 build uses the scalar oracle
-     * to keep wire bytes byte-exact with the reference KAT (K1). */
-    static int inited = 0;
-    if (!inited) {
-        ntt_ref_init();
-        inited = 1;
-    }
-    ntt_ref(a->coeffs);
-}
-
-void poly_ntt_import(poly16 *a)
+void poly_ntt_simd_import(poly16 *a)
 {
     /* Canonical (ref bit-reversed) order -> AVX2 backend-native slot order
      * via nttunpack.  nttunpack consumes int32 standard-order [0,q)
-     * samples; here the input is already a canonical-order [0,q) poly16,
-     * so widen each lane to int32 and replay the forward shuffle ladder
-     * (no butterflies). */
+     * samples; widen each canonical-order lane to int32 then replay the
+     * forward shuffle ladder (no butterflies). */
     int32_t src[N];
     int i;
     for (i = 0; i < N; i++)

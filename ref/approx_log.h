@@ -124,15 +124,158 @@
 #endif
 
 /*
+ * ===================== P13 CT-1 HARDENING (gather defense) ==============
+ *
+ * The frozen kernel's full-table scan (shuttle_log_fetch_row and the fused
+ * scan in shuttle_log2_frac_q62_x2, tools/approx_log_poly.h) is a
+ * data-independent OR-mask sweep over kShuttleLogPoly[j][k].  It is
+ * source-level constant-time -- the secret segment index `sel` feeds ONLY
+ * the equality masks, never a load address; every call touches all
+ * SEGMENTS*(DEGREE+1) entries.  But "source-level CT" is NOT the gate
+ * (P13: "do NOT rely on the compiler to preserve constant-time").  Some
+ * compilers AUTO-VECTORIZE this contiguous masked sweep into a SIMD
+ * GATHER: e.g.
+ *
+ *     clang -Os -march=skylake (and newer clang baselines under -mavx2)
+ *
+ * re-emits `vpgatherdq`/`vpgatherqq` over the *public* table base + a
+ * *compile-time-constant* index vector (verified: gather base = .rodata
+ * kShuttleLogPoly, index = constant column-stride vector; the secret `sel`
+ * stays in the vpand mask).  The address is provably public, so this is a
+ * BENIGN public-index vectorization -- NOT a secret-index leak.  But the
+ * machine-code CT scanner (tools/ct_scan.py) cannot prove the index is
+ * public, so it conservatively (and correctly, per the brief) FLAGS any
+ * gather/scatter in a secret-handling object as a VIOLATION.
+ *
+ * Fix: the SamplerU caller must use a scan whose table reads are real,
+ * non-coalescable memory ops the vectorizer will NOT fold into a gather.
+ * The frozen autogen body (tools/approx_log_poly.h) is byte-pinned and
+ * must not be edited, so we OVERRIDE the two project-namespace entry
+ * points HERE with gather-hardened twins.  They reuse the frozen
+ * primitives shuttle_log_eqmask / shuttle_log_mulhi and the frozen table
+ * kShuttleLogPoly with the IDENTICAL loop order, mask, Horner accumulation
+ * and rounding -- so they are BIT-EXACT to the frozen kernel
+ * (KAT-neutral). The ONLY difference is that the table is read through a
+ * `volatile`- qualified pointer, which makes each access a side-effecting
+ * memory op: C99 6.7.3 forbids the optimizer from coalescing it into a
+ * gather (or eliding it), so NO compiler (gcc/clang x -O0..-O3,-Os) emits
+ * a gather/scatter for the scan.  This is C99 + -Wpedantic clean -- it
+ * uses NO GNU inline __asm__ (which warns under -Wpedantic and would break
+ * the Reference -Werror gate); `volatile` is ISO C.
+ *
+ * Like the frozen kernel, the hardened twins use GNU __int128
+ * accumulators, so this block reuses the SAME documented P06 -Wpedantic
+ * suppression.
+ */
+#if defined(__GNUC__) || defined(__clang__)
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wpedantic"
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+#    define SHUTTLE_LOG_CT_INLINE \
+        static inline __attribute__((always_inline))
+#else
+#    define SHUTTLE_LOG_CT_INLINE static inline
+#endif
+
+/* Gather-hardened twin of shuttle_log_fetch_row: the table is read through
+ * a const-volatile pointer so the masked sweep stays a linear scan. */
+SHUTTLE_LOG_CT_INLINE void shuttle_log_fetch_row_ct(
+    uint32_t sel, int64_t c[SHUTTLE_LOG_POLY_DEGREE + 1])
+{
+    const volatile int64_t *t =
+        (const volatile int64_t *)&kShuttleLogPoly[0][0];
+    int k;
+    uint32_t j;
+    for (k = 0; k <= SHUTTLE_LOG_POLY_DEGREE; k++)
+        c[k] = 0;
+    for (j = 0; j < SHUTTLE_LOG_POLY_SEGMENTS; j++) {
+        uint64_t m = shuttle_log_eqmask(j, sel); /* all-ones iff j==sel */
+        for (k = 0; k <= SHUTTLE_LOG_POLY_DEGREE; k++)
+            c[k] |=
+                (int64_t)(m &
+                          (uint64_t)t[(uint32_t)j *
+                                          (SHUTTLE_LOG_POLY_DEGREE + 1) +
+                                      (uint32_t)k]);
+    }
+}
+
+/* Gather-hardened twin of shuttle_log2_frac_q62: identical Horner over the
+ * hardened fetch (bit-exact; only the table-read instruction selection
+ * differs). */
+SHUTTLE_LOG_CT_INLINE int64_t shuttle_log2_frac_q62_ct(uint32_t j,
+                                                       uint64_t x_q64)
+{
+    int64_t c[SHUTTLE_LOG_POLY_DEGREE + 1];
+    __int128 acc;
+    int k;
+    shuttle_log_fetch_row_ct(j, c);
+    acc = c[SHUTTLE_LOG_POLY_DEGREE];
+    for (k = SHUTTLE_LOG_POLY_DEGREE - 1; k >= 0; k--)
+        acc = (__int128)c[k] + (__int128)shuttle_log_mulhi(acc, x_q64);
+    return (int64_t)acc;
+}
+
+/* Gather-hardened twin of shuttle_log2_frac_q62_x2: the fused per-column
+ * scan reads the table through a const-volatile pointer.  Same loop order
+ * / mask / accumulation as the frozen kernel -> bit-exact, KAT-neutral. */
+SHUTTLE_LOG_CT_INLINE void shuttle_log2_frac_q62_x2_ct(
+    const uint32_t sel[2], const uint64_t x_q64[2], int64_t out[2])
+{
+    const volatile int64_t *t =
+        (const volatile int64_t *)&kShuttleLogPoly[0][0];
+    uint64_t M0[SHUTTLE_LOG_POLY_SEGMENTS], M1[SHUTTLE_LOG_POLY_SEGMENTS];
+    int64_t h0 = 0, h1 = 0;
+    __int128 a0, a1;
+    uint32_t j;
+    int k;
+    for (j = 0; j < SHUTTLE_LOG_POLY_SEGMENTS; j++) {
+        M0[j] = shuttle_log_eqmask(j, sel[0]);
+        M1[j] = shuttle_log_eqmask(j, sel[1]);
+    }
+    for (j = 0; j < SHUTTLE_LOG_POLY_SEGMENTS; j++) {
+        int64_t v =
+            (int64_t)t[(uint32_t)j * (SHUTTLE_LOG_POLY_DEGREE + 1) +
+                       (uint32_t)SHUTTLE_LOG_POLY_DEGREE];
+        h0 |= (int64_t)(M0[j] & (uint64_t)v);
+        h1 |= (int64_t)(M1[j] & (uint64_t)v);
+    }
+    a0 = h0;
+    a1 = h1;
+    for (k = SHUTTLE_LOG_POLY_DEGREE - 1; k >= 0; k--) {
+        int64_t c0 = 0, c1 = 0;
+        for (j = 0; j < SHUTTLE_LOG_POLY_SEGMENTS; j++) {
+            int64_t v =
+                (int64_t)t[(uint32_t)j * (SHUTTLE_LOG_POLY_DEGREE + 1) +
+                           (uint32_t)k];
+            c0 |= (int64_t)(M0[j] & (uint64_t)v);
+            c1 |= (int64_t)(M1[j] & (uint64_t)v);
+        }
+        a0 = (__int128)c0 + (__int128)shuttle_log_mulhi(a0, x_q64[0]);
+        a1 = (__int128)c1 + (__int128)shuttle_log_mulhi(a1, x_q64[1]);
+    }
+    out[0] = (int64_t)a0;
+    out[1] = (int64_t)a1;
+}
+
+#undef SHUTTLE_LOG_CT_INLINE
+
+#if defined(__GNUC__) || defined(__clang__)
+#    pragma GCC diagnostic pop
+#endif
+
+/*
  * Re-export under the project namespace (namespace.h renames at compile
- * time, P06-T5).  Macro aliases keep the static-inline kernel inlinable
- * into the caller.
+ * time, P06-T5).  The aliases point at the gather-hardened twins above
+ * (see the P13 CT-1 block) so the SamplerU caller never compiles to a
+ * gather; the hardened twins are bit-exact to the frozen kernel.
  */
 #define approx_log2_frac_q62 \
-    shuttle_log2_frac_q62 /* (uint32 j, uint64 x_q64) -> int64 Q62 */
-#define approx_log2_frac_q62_x2                                    \
-    shuttle_log2_frac_q62_x2 /* (const uint32 sel[2], const uint64 \
-                                x_q64[2], int64 out[2]) */
+    shuttle_log2_frac_q62_ct /* (uint32 j, uint64 x_q64) -> int64 Q62 */
+#define approx_log2_frac_q62_x2                                       \
+    shuttle_log2_frac_q62_x2_ct /* (const uint32 sel[2], const uint64 \
+                                   x_q64[2], int64 out[2]) */
 
 /*
  * Compile-time guards pinning the integration contract (Overview 12.6: the

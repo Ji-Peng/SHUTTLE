@@ -1,0 +1,25 @@
+# SHUTTLE TIMECOP suppression file (variable-latency smoke).
+#
+# The signing smoke (tools/timecop/run_sign_smoke.sh) gates ONLY on the
+# KyberSlash variable-latency property: a secret (undefined) operand reaching a
+# variable-latency instruction (div/mod/...). Secret-dependent CONTROL FLOW is
+# out of scope here -- it is owned by the object-code constant-time scan
+# (ct_scan_matrix.sh / tools/ct_scan.py) and the statistical dudect-sign
+# harness. SHUTTLE's sampler / ApproxExp / ApproxLog / IRS / packing code uses
+# branchless constant-time idioms (the 96-bit cdt_scan96 full-table scan, masked
+# selects, ct_lt_u32/ct_sel_i32/ct_is_zero_u32) that GCC -O2/-O3 lowers to
+# cmov/setcc; Memcheck reports each secret-conditioned cmov as "Conditional jump
+# or move depends on uninitialised value". We suppress ONLY that error kind
+# (Memcheck:Cond).
+#
+# We deliberately do NOT suppress Memcheck:Value: the patched Valgrind records a
+# variable-latency hit as an Err_Value (same kind as a plain use-of-uninitialised
+# value), so a blanket Value suppression would blind the gate. The smoke greps
+# for the "Variable-latency instruction operand" message so residual Value
+# reports (declassified output + branchless CT helpers) cannot mask a real leak.
+{
+   shuttle-intentional-constant-time-cmov
+   Memcheck:Cond
+   fun:*
+   ...
+}

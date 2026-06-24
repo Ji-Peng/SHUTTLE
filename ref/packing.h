@@ -149,4 +149,56 @@ void pack_com(uint8_t out[ENCODECOM_BYTES], const poly *comY_h,
 int unpack_com(poly *comY_h, poly *comY_0,
                const uint8_t in[ENCODECOM_BYTES]);
 
+/* ---------------------------------------------------------------------- *
+ *  Signature (sigEncode / sigDecode) -- P10, the rANS wire format        *
+ * ---------------------------------------------------------------------- *
+ *  The signature canonically encodes the triple (seedC, z1, hint).  z2 is
+ *  NOT transmitted (recovered via the hint).  TWO physical paths:
+ *
+ *   - RAW path (M3 milestone): seedC || z1 (2 bytes/coeff) || hint
+ *     (d_h bits/coeff, range-checked).  Un-rANS'd; validates Sign/Verify
+ *     BEFORE the rANS tables are finalized.  Fixed-length
+ * SIG_RAW_PACKED_BYTES.
+ *
+ *   - Production path (M4): seedC || rlen(2B LE) || rANS-com (zero-padded
+ * to RANS_RESERVED_BYTES) || R (z-low body).  The normative byte order
+ *     (MS-A5): seedC moved to the FRONT as the fixed-length prefix (the
+ *     verifier reads it verbatim first), then the rlen+reserve container,
+ * then the low-bit body R.  This is a documented deviation from the spec's
+ *     literal com||R||seedC (recorded in Modify-Spec MS-A5).  Fixed-length
+ *     SIG_PACKED_BYTES.
+ *
+ *  The canonical decode (K15) enforces, after zeroing outputs on any
+ * reject: (1) rlen <= RANS_RESERVED_BYTES and every padding byte in [rlen,
+ * RANS_RESERVED_BYTES) is zero; (2) the rANS stream is canonical
+ * (initial-state range / full consumption / terminal state == L --
+ * shuttle_rans_decode); (3) every retained quotient is in its block
+ * support, every low part in [0,2^b); z = 2^b Q + R with NO modular
+ * reduction; (4) every decoded hint is ALREADY in [0,H_h) (range-CHECK
+ * then reject, NEVER mod H_h -- K14); (5) re-encoding the recovered
+ * (z1,hint) reproduces the com bytes byte-for-byte (the SHUTTLE
+ * injectivity addition). Together: sigDecode o sigEncode = id and
+ * sigDecode injective on the accepted set => SUF-CMA encoding injectivity
+ * (K15).
+ */
+
+/* RAW (un-rANS'd) packers (M3).  pack_sig_raw never fails. */
+void pack_sig_raw(uint8_t *sig, const uint8_t seedC[CHALLENGESEEDBYTES],
+                  const poly z1[Z1LEN], const poly h[EM]);
+/* unpack_sig_raw: range-checks each hint into [0,H_h) (K14); returns 0 on
+ * success, -1 on an out-of-range hint (outputs zeroed on reject). */
+int unpack_sig_raw(uint8_t seedC[CHALLENGESEEDBYTES], poly z1[Z1LEN],
+                   poly h[EM], const uint8_t *sig);
+
+/* Production (rANS) packers (M4).  pack_sig returns 0 on success, -2 if
+ * the rANS encode runs out of support or overflows the reserve (=> Sign
+ * restart, K4).  sig must have room for SIG_PACKED_BYTES (<=
+ * CRYPTO_BYTES). */
+int pack_sig(uint8_t *sig, const uint8_t seedC[CHALLENGESEEDBYTES],
+             const poly z1[Z1LEN], const poly h[EM]);
+/* unpack_sig: the full canonical decode (K14/K15).  Returns 0 on success,
+ * -1 on ANY non-canonical condition (outputs zeroed on reject). */
+int unpack_sig(uint8_t seedC[CHALLENGESEEDBYTES], poly z1[Z1LEN],
+               poly h[EM], const uint8_t *sig);
+
 #endif /* SHUTTLE_PACKING_H */
