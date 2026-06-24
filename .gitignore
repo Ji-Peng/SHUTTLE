@@ -12,3 +12,11 @@ test/*.txt
 
 # Local explore/scratch output.
 ref/explore/*.log
+
+# CT-scan / dudect / bench intermediate objects & artifacts (regenerable).
+*/test/.ct_scan_objs/
+test/.ct_scan_objs/
+*.o
+*.a
+massif.out*
+*.massif
