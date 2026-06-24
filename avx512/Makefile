@@ -113,7 +113,8 @@ KAT_256_SHA3 = 16770893027166717173
 KAT_512_SHA3 = 17781375582284641253
 MODELABEL = $(if $(filter SHA3,$(MODE)),SHA3,NGCC)
 
-.PHONY: all check check-kat check-refill check-consts sm3-test clean
+.PHONY: all check check-kat check-refill check-consts sm3-test \
+        speed speed_txt profile profile_txt clean
 
 all:
 	@mkdir -p $(BINDIR)
@@ -204,6 +205,64 @@ sm3-test:
 	@$(CC) -O3 -std=c99 -Wall -Wextra $(SM3_AVX512) -I../ref \
 	   test_drng_avx512.c drng_avx512.c auxfunc_avx512.c ../ref/drng.c -o $(BINDIR)/sm3_test_drng_avx512 2>/dev/null \
 	   && $(BINDIR)/sm3_test_drng_avx512 || echo "sm3-test(drng): build deferred (P02 sources)"
+
+# ===================================================================== #
+#  Speed / profile benchmarks (mirror the `all` per-mode build: $qs ->   #
+#  AVX-512 vendored NTT asm + scalar oracle + the N-way XOF kernels,      #
+#  since polyvec.c is in the scheme source list).  The sig_* drivers seed #
+#  via the SM3 Hash-DRBG exactly like the KAT harness, so $(KAT_XOF) is   #
+#  used (drng.c+auxfunc.c even under SHA3_MODE).                          #
+# ===================================================================== #
+SCHEME_SRC = SIG_AlgorithmInstance.c sign.c polyvec.c sampler.c sampler_u.c irs.c \
+             rounding.c packing.c poly.c poly_ntt.c reduce.c rans.c approx_exp.c approx_log.c
+SPEED_SRCS   = $(SCHEME_SRC)
+PROFILE_SRCS = $(SCHEME_SRC)
+# Extra cc flags for the bench drivers ONLY (e.g. -DBENCH_SIGN_RUNS=N -DNV=N
+# -DNGCC_ITERS=N to shrink the run for quick/CI evidence); empty by default.
+SPEED_EXTRA ?=
+
+MACHINFO = printf ' date    : '; date -u '+%Y-%m-%dT%H:%M:%SZ'; \
+           printf ' kernel  : '; uname -sr; \
+           printf ' cpu     : '; ( lscpu 2>/dev/null | sed -n 's/^Model name:[[:space:]]*//p' | head -1 || grep -m1 'model name' /proc/cpuinfo | sed 's/.*: //' ); \
+           printf ' cc      : '; $(CC) --version | head -1; \
+           printf ' cflags  : %s\n' '$(CFLAGS)'
+
+speed:
+	@mkdir -p $(BINDIR)
+	@for m in $(MODES); do \
+	  case $$m in 128) qs=$(QSET_128);; 256) qs=$(QSET_256);; 512) qs=$(QSET_512);; esac; \
+	  $(CC) $(CFLAGS) -I../ref/ntt/$$qs $(MODEFLAG) -DSHUTTLE_MODE=$$m $(SPEED_EXTRA) \
+	    test/speed_sign.c test/cpucycles.c $(SPEED_SRCS) $(KAT_XOF) \
+	    $$qs/ntt_avx512.S $$qs/ntt_consts_avx512.c ../ref/ntt/$$qs/ntt_ref.c $(NWAY_XOF) \
+	    $(LDLIBS) -o $(BINDIR)/speed_sign_$$m || exit 1; \
+	  $(BINDIR)/speed_sign_$$m; echo; \
+	done
+
+speed_txt:
+	@{ echo "=== SHUTTLE  avx512/  end-to-end speed (tail/median rdtsc cycles, speed_sign) ==="; \
+	   $(MACHINFO); \
+	   echo " stability metrics: p25/p50/p75/p90/p99 percentiles; StQ1/StQ2/StQ3 stabilized quartiles;"; \
+	   echo "   stddev / cv (stddev/avg); outlier_count(>p50*1.5); p90/p50 & p99/p50 tail ratios."; \
+	   echo; echo "-- AVX-512 backend --"; } > test/speed.txt
+	@$(MAKE) --no-print-directory speed >> test/speed.txt
+	@echo "wrote test/speed.txt"; cat test/speed.txt
+
+profile:
+	@mkdir -p $(BINDIR)
+	@for m in $(MODES); do \
+	  case $$m in 128) qs=$(QSET_128);; 256) qs=$(QSET_256);; 512) qs=$(QSET_512);; esac; \
+	  $(CC) $(CFLAGS) -DPROF_TIME -DPROF_RAND -I../ref/ntt/$$qs $(MODEFLAG) -DSHUTTLE_MODE=$$m \
+	    test/speed_profile.c test/prof.c $(PROFILE_SRCS) $(KAT_XOF) \
+	    $$qs/ntt_avx512.S $$qs/ntt_consts_avx512.c ../ref/ntt/$$qs/ntt_ref.c $(NWAY_XOF) \
+	    $(LDLIBS) -o $(BINDIR)/speed_profile_$$m || exit 1; \
+	  $(BINDIR)/speed_profile_$$m; echo; \
+	done
+
+profile_txt:
+	@{ echo "=== SHUTTLE  avx512/  per-component profile (cycles/op, make profile) ==="; \
+	   $(MACHINFO); echo; echo "-- AVX-512 backend --"; } > test/profiling.txt
+	@$(MAKE) --no-print-directory profile >> test/profiling.txt
+	@echo "wrote test/profiling.txt"
 
 clean:
 	rm -rf $(BINDIR)

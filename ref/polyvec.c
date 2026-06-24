@@ -42,6 +42,7 @@
 
 #include "approx_exp.h" /* approx_exp_accept_q64_x4, approx_exp_accept_q64 */
 #include "rcdt_tables.h" /* SHUTTLE_RCDT_Z, SHUTTLE_RCDT_NOISE_* */
+#include "test/prof.h" /* PT_G_SHAKE/BASESAMP/APPROXEXP/FINAL -- ((void)0) unless PROF_TIME */
 
 /* ===================================================================== *
  *  Local little-endian byte helpers (data-independent schedule)         *
@@ -414,7 +415,11 @@ void gauss_stream_chunk(gauss_stream *gs, int32_t *dst, size_t count)
     /* (1) up-front sign bits (one per OUTPUT sample in this chunk). */
     memset(signs, 0,
            sizeof(signs)); /* pad zero for the AVX512 LE64 window */
-    gs_ensure(gs, signbytes);
+    {
+        PROF_START(t_sh0);
+        gs_ensure(gs, signbytes);
+        PROF_STOP(PT_G_SHAKE, t_sh0);
+    }
     memcpy(signs, gs->buf + gs->pos, signbytes);
     gs->pos += signbytes;
 
@@ -426,38 +431,54 @@ void gauss_stream_chunk(gauss_stream *gs, int32_t *dst, size_t count)
         const uint8_t *yp, *tailp;
         int j;
 
-        gs_ensure(gs, MINIBATCH_RAND_BYTES);
+        {
+            PROF_START(t_sh);
+            gs_ensure(gs, MINIBATCH_RAND_BYTES);
+            PROF_STOP(PT_G_SHAKE, t_sh);
+        }
         /* magnitude x via RCDT_Z (grouped 96B/8-sample layout) */
-        sampler_sigma2(x, gs->buf + gs->pos);
+        {
+            PROF_START(t_bs);
+            sampler_sigma2(x, gs->buf + gs->pos);
+            PROF_STOP(PT_G_BASESAMP, t_bs);
+        }
         yp = gs->buf + gs->pos + SIGMA_S_RAND_BYTES;
         for (j = 0; j < GAUSS_BATCH; j++)
             yv[j] = (int32_t)yp[j]; /* Y_BITS=8: plain byte copy */
         /* p_hat = approx_exp accept threshold, 8 groups of 4 (x4 batch).
          */
-        for (j = 0; j < GAUSS_BATCH; j += 4) {
-            int xi[4], yi[4];
-            uint64_t po[4];
-            int g;
-            for (g = 0; g < 4; g++) {
-                xi[g] = (int)x[j + g];
-                yi[g] = (int)yv[j + g];
+        {
+            PROF_START(t_ae);
+            for (j = 0; j < GAUSS_BATCH; j += 4) {
+                int xi[4], yi[4];
+                uint64_t po[4];
+                int g;
+                for (g = 0; g < 4; g++) {
+                    xi[g] = (int)x[j + g];
+                    yi[g] = (int)yv[j + g];
+                }
+                approx_exp_accept_q64_x4(xi, yi, po);
+                for (g = 0; g < 4; g++)
+                    phat[j + g] = po[g];
             }
-            approx_exp_accept_q64_x4(xi, yi, po);
-            for (g = 0; g < 4; g++)
-                phat[j + g] = po[g];
+            PROF_STOP(PT_G_APPROXEXP, t_ae);
         }
         tailp = gs->buf + gs->pos + SIGMA_S_RAND_BYTES + Y_RAND_BYTES;
-        for (j = 0; j < GAUSS_BATCH; j++) {
-            int32_t r;
-            uint32_t sgn;
-            size_t idx = coefcnt; /* OUTPUT index of the NEXT accept */
-            sgn = (uint32_t)(signs[idx >> 3] >> (idx & 7)) & 1u;
-            if (gauss_finalize(&r, x[j], yv[j], phat[j],
-                               tailp + (size_t)j * GAUSS_RAND_BYTES,
-                               sgn)) {
-                if (coefcnt < count)
-                    dst[coefcnt++] = r;
+        {
+            PROF_START(t_fin);
+            for (j = 0; j < GAUSS_BATCH; j++) {
+                int32_t r;
+                uint32_t sgn;
+                size_t idx = coefcnt; /* OUTPUT index of the NEXT accept */
+                sgn = (uint32_t)(signs[idx >> 3] >> (idx & 7)) & 1u;
+                if (gauss_finalize(&r, x[j], yv[j], phat[j],
+                                   tailp + (size_t)j * GAUSS_RAND_BYTES,
+                                   sgn)) {
+                    if (coefcnt < count)
+                        dst[coefcnt++] = r;
+                }
             }
+            PROF_STOP(PT_G_FINAL, t_fin);
         }
         gs->pos += MINIBATCH_RAND_BYTES; /* WHOLE tail consumed (K6/K8) */
     }

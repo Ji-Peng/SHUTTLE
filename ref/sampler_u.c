@@ -22,6 +22,7 @@
 
 #include "approx_log.h" /* approx_log2_frac_q62{,_x2} (P06 kernel) */
 #include "params.h"
+#include "test/prof.h" /* PT_SAMPLERU / PT_APPROXLOG -- ((void)0) unless PROF_TIME */
 
 /* Compile-time pins of the SamplerU byte/bit schedule (K3). */
 _Static_assert(KAPPA_A == 80,
@@ -136,15 +137,23 @@ sampler_u_res sampler_u(xof_ctx *ctx)
     uint32_t j;
     uint64_t xq;
 
-    xof256_squeeze(ctx, rho_a,
-                   SAMPLER_U_RHO_A_BYTES); /* 10 exponent bytes  */
-    xof256_squeeze(ctx, rho_b,
-                   SAMPLER_U_RHO_B_BYTES); /* 8 mantissa bytes   */
+    {
+        PROF_START(t_su);
+        xof256_squeeze(ctx, rho_a,
+                       SAMPLER_U_RHO_A_BYTES); /* 10 exponent bytes  */
+        xof256_squeeze(ctx, rho_b,
+                       SAMPLER_U_RHO_B_BYTES); /* 8 mantissa bytes   */
 
-    r.a = clz80_msb_first(rho_a) + 1u; /* a in {1..81} */
-    m = mantissa57_msb_first(rho_b);   /* m in {0..2^57-1}   */
-    mantissa_split(m, &j, &xq);
-    r.frac_q62 = approx_log2_frac_q62(j, xq); /* log2(b) in Q62 */
+        r.a = clz80_msb_first(rho_a) + 1u; /* a in {1..81} */
+        m = mantissa57_msb_first(rho_b);   /* m in {0..2^57-1}   */
+        mantissa_split(m, &j, &xq);
+        PROF_STOP(PT_SAMPLERU, t_su);
+    }
+    {
+        PROF_START(t_al);
+        r.frac_q62 = approx_log2_frac_q62(j, xq); /* log2(b) in Q62 */
+        PROF_STOP(PT_APPROXLOG, t_al);
+    }
     return r;
 }
 

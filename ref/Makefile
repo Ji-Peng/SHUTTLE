@@ -241,21 +241,30 @@ check-kat: all
 	done
 	@echo "check-kat: recorded KAT hashes reproduce ($(MODELABEL), rANS path)"
 
-# End-to-end keygen/sign/verify cycle benchmark (scalar reference).  The sign
-# source list lands with P11; the target is wired now so it is ready.
-SPEED_SRCS =
+# The full scheme source list driving the sig_* interface (SIG_AlgorithmInstance
+# is the NGCC adapter; the XOF backend is appended MODE-dependently as $(KAT_XOF)
+# -- the speed/profile drivers seed via the SM3 Hash-DRBG exactly like the KAT
+# harness, so they need drng.c+auxfunc.c even under SHA3_MODE).
+SCHEME_SRC = SIG_AlgorithmInstance.c sign.c polyvec.c sampler.c sampler_u.c irs.c \
+             rounding.c packing.c poly.c poly_ntt.c reduce.c rans.c approx_exp.c approx_log.c
+SPEED_SRCS   = $(SCHEME_SRC)
+PROFILE_SRCS = $(SCHEME_SRC)
+# Extra cc flags for the bench drivers ONLY (e.g. -DBENCH_SIGN_RUNS=N -DNV=N
+# -DNGCC_ITERS=N to shrink the run for quick/CI evidence); empty by default.
+SPEED_EXTRA ?=
+
+# End-to-end keygen/sign/verify cycle benchmark (scalar reference).  Mirrors the
+# `all` target's per-mode build (qs select -> -Intt/$$qs + ntt/$$qs/ntt_ref.c).
 .PHONY: speed
 speed:
 	@mkdir -p $(BINDIR)
-	@if [ -z "$(SPEED_SRCS)" ] || [ ! -f test/speed_sign.c ]; then \
-	  echo "speed: deferred (test/speed_sign.c + the sign source list land with P11)"; \
-	else \
-	  for m in $(MODES); do \
-	    $(CC) $(CFLAGS) $(MODEFLAG) -DSHUTTLE_MODE=$$m test/speed_sign.c $(SPEED_SRCS) test/cpucycles.c \
-	      $(LDLIBS) -o $(BINDIR)/speed_sign_$$m || exit 1; \
-	    $(BINDIR)/speed_sign_$$m; echo; \
-	  done; \
-	fi
+	@for m in $(MODES); do \
+	  case $$m in 128) qs=$(QSET_128);; 256) qs=$(QSET_256);; 512) qs=$(QSET_512);; esac; \
+	  $(CC) $(CFLAGS) -Intt/$$qs $(MODEFLAG) -DSHUTTLE_MODE=$$m $(SPEED_EXTRA) \
+	    test/speed_sign.c test/cpucycles.c $(SPEED_SRCS) $(KAT_XOF) ntt/$$qs/ntt_ref.c \
+	    $(LDLIBS) -o $(BINDIR)/speed_sign_$$m || exit 1; \
+	  $(BINDIR)/speed_sign_$$m; echo; \
+	done
 
 # Human-readable machine-info preamble shared by speed_txt / profile_txt.
 MACHINFO = printf ' date    : '; date -u '+%Y-%m-%dT%H:%M:%SZ'; \
@@ -274,20 +283,19 @@ speed_txt:
 	@$(MAKE) --no-print-directory speed >> test/speed.txt
 	@echo "wrote test/speed.txt"; cat test/speed.txt
 
-# Per-component time + randomness profile of crypto_sign (lands with P11/P14).
-PROFILE_SRCS =
+# Per-component time + randomness profile of crypto_sign (-DPROF_TIME
+# -DPROF_RAND; the prof.c TU supplies the counters + report).  Same per-mode
+# build as `speed`, plus test/prof.c.
 .PHONY: profile
 profile:
 	@mkdir -p $(BINDIR)
-	@if [ -z "$(PROFILE_SRCS)" ] || [ ! -f test/speed_profile.c ]; then \
-	  echo "profile: deferred (test/speed_profile.c + the sign source list land with P11/P14)"; \
-	else \
-	  for m in $(MODES); do \
-	    $(CC) $(CFLAGS) -DPROF_TIME -DPROF_RAND $(MODEFLAG) -DSHUTTLE_MODE=$$m \
-	      test/speed_profile.c $(PROFILE_SRCS) $(LDLIBS) -o $(BINDIR)/speed_profile_$$m || exit 1; \
-	    $(BINDIR)/speed_profile_$$m; echo; \
-	  done; \
-	fi
+	@for m in $(MODES); do \
+	  case $$m in 128) qs=$(QSET_128);; 256) qs=$(QSET_256);; 512) qs=$(QSET_512);; esac; \
+	  $(CC) $(CFLAGS) -DPROF_TIME -DPROF_RAND -Intt/$$qs $(MODEFLAG) -DSHUTTLE_MODE=$$m \
+	    test/speed_profile.c test/prof.c $(PROFILE_SRCS) $(KAT_XOF) ntt/$$qs/ntt_ref.c \
+	    $(LDLIBS) -o $(BINDIR)/speed_profile_$$m || exit 1; \
+	  $(BINDIR)/speed_profile_$$m; echo; \
+	done
 
 profile_txt:
 	@{ echo "=== SHUTTLE  ref/  per-component profile (cycles/op, make profile) ==="; \

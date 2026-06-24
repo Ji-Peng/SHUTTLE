@@ -45,6 +45,7 @@
 
 #include "approx_exp.h" /* approx_exp_accept_q64_x4, approx_exp_accept_q64 */
 #include "rcdt_tables.h" /* SHUTTLE_RCDT_Z, SHUTTLE_RCDT_NOISE_* */
+#include "test/prof.h" /* PT_G_SHAKE/BASESAMP/APPROXEXP/FINAL -- ((void)0) unless PROF_TIME */
 
 #if defined(USE_AVX2_SAMPLER) && defined(__AVX2__)
 #    include <immintrin.h>
@@ -696,7 +697,11 @@ void gauss_stream_chunk(gauss_stream *gs, int32_t *dst, size_t count)
 
     memset(signs, 0,
            sizeof(signs)); /* pad zero for the AVX512 LE64 window */
-    gs_ensure(gs, signbytes);
+    {
+        PROF_START(t_sh0);
+        gs_ensure(gs, signbytes);
+        PROF_STOP(PT_G_SHAKE, t_sh0);
+    }
     memcpy(signs, gs->buf + gs->pos, signbytes);
     gs->pos += signbytes;
 
@@ -707,35 +712,51 @@ void gauss_stream_chunk(gauss_stream *gs, int32_t *dst, size_t count)
         const uint8_t *yp, *tailp;
         int j;
 
-        gs_ensure(gs, MINIBATCH_RAND_BYTES);
-        sampler_sigma2(x, gs->buf + gs->pos);
+        {
+            PROF_START(t_sh);
+            gs_ensure(gs, MINIBATCH_RAND_BYTES);
+            PROF_STOP(PT_G_SHAKE, t_sh);
+        }
+        {
+            PROF_START(t_bs);
+            sampler_sigma2(x, gs->buf + gs->pos);
+            PROF_STOP(PT_G_BASESAMP, t_bs);
+        }
         yp = gs->buf + gs->pos + SIGMA_S_RAND_BYTES;
         for (j = 0; j < GAUSS_BATCH; j++)
             yv[j] = (int32_t)yp[j]; /* Y_BITS=8: plain byte copy */
-        for (j = 0; j < GAUSS_BATCH; j += 4) {
-            int xi[4], yi[4];
-            uint64_t po[4];
-            int g;
-            for (g = 0; g < 4; g++) {
-                xi[g] = (int)x[j + g];
-                yi[g] = (int)yv[j + g];
+        {
+            PROF_START(t_ae);
+            for (j = 0; j < GAUSS_BATCH; j += 4) {
+                int xi[4], yi[4];
+                uint64_t po[4];
+                int g;
+                for (g = 0; g < 4; g++) {
+                    xi[g] = (int)x[j + g];
+                    yi[g] = (int)yv[j + g];
+                }
+                approx_exp_accept_q64_x4(xi, yi, po);
+                for (g = 0; g < 4; g++)
+                    phat[j + g] = po[g];
             }
-            approx_exp_accept_q64_x4(xi, yi, po);
-            for (g = 0; g < 4; g++)
-                phat[j + g] = po[g];
+            PROF_STOP(PT_G_APPROXEXP, t_ae);
         }
         tailp = gs->buf + gs->pos + SIGMA_S_RAND_BYTES + Y_RAND_BYTES;
-        for (j = 0; j < GAUSS_BATCH; j++) {
-            int32_t r;
-            uint32_t sgn;
-            size_t idx = coefcnt; /* OUTPUT index of the NEXT accept */
-            sgn = (uint32_t)(signs[idx >> 3] >> (idx & 7)) & 1u;
-            if (gauss_finalize(&r, x[j], yv[j], phat[j],
-                               tailp + (size_t)j * GAUSS_RAND_BYTES,
-                               sgn)) {
-                if (coefcnt < count)
-                    dst[coefcnt++] = r;
+        {
+            PROF_START(t_fin);
+            for (j = 0; j < GAUSS_BATCH; j++) {
+                int32_t r;
+                uint32_t sgn;
+                size_t idx = coefcnt; /* OUTPUT index of the NEXT accept */
+                sgn = (uint32_t)(signs[idx >> 3] >> (idx & 7)) & 1u;
+                if (gauss_finalize(&r, x[j], yv[j], phat[j],
+                                   tailp + (size_t)j * GAUSS_RAND_BYTES,
+                                   sgn)) {
+                    if (coefcnt < count)
+                        dst[coefcnt++] = r;
+                }
             }
+            PROF_STOP(PT_G_FINAL, t_fin);
         }
         gs->pos += MINIBATCH_RAND_BYTES; /* WHOLE tail consumed (K6/K8) */
     }
@@ -764,7 +785,11 @@ void sample_y(poly y[KVEC], const uint8_t seedY[SEEDBYTES])
         if (gss) {
             for (t = 0; t < XOF_STREAMS; t++)
                 gauss_stream_init(&gss[t], DS_SAMPLE_Y, seedY, t);
-            gs_batch_first_fill(gss);
+            {
+                PROF_START(t_nway);
+                gs_batch_first_fill(gss); /* N-way XOF first fill */
+                PROF_STOP(PT_G_SHAKE, t_nway);
+            }
             for (t = 0; t < XOF_STREAMS; t++)
                 gauss_stream_chunk(&gss[t], ybar + (size_t)t * wy, wy);
             free(gss);

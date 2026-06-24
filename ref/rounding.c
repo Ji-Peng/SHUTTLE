@@ -23,6 +23,7 @@
 #include "poly_ntt.h" /* poly_ntt / poly_invntt_tomont / pointwise */
 #include "reduce.h"   /* reduce_mod_2q / freeze / reduce32 */
 #include "rounding_consts.h" /* RCP_ALPHA_* / SH_ROUND_* / ROUND_BIAS_* / LOG2_ALPHA_H */
+#include "test/prof.h" /* PT_NTT_FWD/PW/INV -- ((void)0) unless PROF_TIME */
 
 /* ====================================================================== *
  *  Internal helpers (all static, all branchless / no idiv on secret data)
@@ -239,6 +240,40 @@ static void compute_t(poly *t, const poly16 *bh_i,
         t->coeffs[k] = (int32_t)th.coeffs[k];
 }
 
+/* compute_t with the NTT pointwise (PT_NTT_PW) / inverse (PT_NTT_INV)
+ * sub-buckets timed.  Only mat_mul_2q (the Sign commitment, PT_COMMIT)
+ * uses this probed variant, so PT_NTT_* stay disjoint children of
+ * PT_COMMIT; the shared (un-probed) compute_t still serves mat_mul_z1_2q
+ * (Verify / Sign norm-reconstruction, PT_NORMCHECK / PT_VF_MATMUL).  The
+ * probes are ((void)0) unless PROF_TIME, so the data path is identical. */
+static void compute_t_prof(poly *t, const poly16 *bh_i,
+                           const poly16 Ahat[EM * ELL], const poly16 *x0h,
+                           const poly16 xsh[ELL], int i)
+{
+    poly16 acc, prod, th;
+    unsigned k;
+    int j;
+    {
+        PROF_START(t_pw);
+        poly_pointwise_montgomery(&acc, bh_i, x0h);
+        for (k = 0; k < N; ++k)
+            acc.coeffs[k] = subm16(0, acc.coeffs[k]); /* -bhat_i . x0 */
+        for (j = 0; j < ELL; ++j) {
+            poly_pointwise_montgomery(&prod, &Ahat[i * ELL + j], &xsh[j]);
+            poly16_add(&acc, &acc, &prod);
+        }
+        PROF_STOP(PT_NTT_PW, t_pw);
+    }
+    th = acc;
+    {
+        PROF_START(t_inv);
+        poly_invntt_tomont(&th); /* -> [0,q) (LiftToModTwoQ-ready) */
+        PROF_STOP(PT_NTT_INV, t_inv);
+    }
+    for (k = 0; k < N; ++k)
+        t->coeffs[k] = (int32_t)th.coeffs[k];
+}
+
 void mat_mul_2q(poly comY[EM], const poly yp[KVEC], const poly16 bhat[EM],
                 const poly16 Ahat[EM * ELL])
 {
@@ -250,13 +285,17 @@ void mat_mul_2q(poly comY[EM], const poly yp[KVEC], const poly16 bhat[EM],
     int i, j;
     unsigned k;
 
-    poly_to_ntt_dom(&x0h, &yp[0]);
-    for (j = 0; j < ELL; ++j)
-        poly_to_ntt_dom(&xsh[j], &yp[1 + j]);
+    {
+        PROF_START(t_fwd);
+        poly_to_ntt_dom(&x0h, &yp[0]);
+        for (j = 0; j < ELL; ++j)
+            poly_to_ntt_dom(&xsh[j], &yp[1 + j]);
+        PROF_STOP(PT_NTT_FWD, t_fwd);
+    }
 
     for (i = 0; i < EM; ++i) {
         poly t;
-        compute_t(&t, &bhat[i], Ahat, &x0h, xsh, i);
+        compute_t_prof(&t, &bhat[i], Ahat, &x0h, xsh, i);
         /* + the e-block (the 2*I_m contribution becomes a direct add of
          * the e-block compressed coeff in the q-domain), then freeze to
          * [0,q). */
