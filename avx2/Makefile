@@ -54,7 +54,8 @@ CC    ?= gcc
 CFLAGS ?= -O3 -march=x86-64 -mavx2 -mtune=native -fomit-frame-pointer \
           -std=c99 -Wpedantic -Wall -Wextra -mbmi2 -mpopcnt -mno-avx512f \
           -I. -I../ref -I../ref/test -I../tools \
-          -DUSE_AVX2_NTT -DUSE_AVX2_SAMPLER -DUSE_AVX2_SHAKE4X
+          -DUSE_AVX2_NTT -DUSE_AVX2_SAMPLER -DUSE_AVX2_SHAKE4X \
+          -DUSE_AVX2_XOF_NWAY
 LDLIBS ?=
 BINDIR  = out
 CT_OPT ?= -O3
@@ -78,9 +79,19 @@ endif
 ifeq ($(MODE),SHA3)
 XOF_SRCS = symmetric.c fips202.c
 KAT_XOF  = symmetric.c fips202.c ../ref/drng.c ../ref/auxfunc.c
+# N-way (4-way SHAKE) XOF kernels used by the M9 ExpandA/ExpandS/SampleY
+# batched refills (USE_AVX2_XOF_NWAY).  Appended whenever polyvec.c links.
+# symmetric_avx2.c = the xof*_avx2_* wrappers; fips202x4.c + f1600x4.S = the
+# 4-way Keccak.  (Scalar fips202.c already in XOF_SRCS for the constants.)
+NWAY_XOF = symmetric_avx2.c fips202x4.c f1600x4.S
 else
 XOF_SRCS = symmetric.c ../ref/drng.c ../ref/auxfunc.c
 KAT_XOF  = $(XOF_SRCS)
+# N-way (8-way SM3) XOF kernels for the M9 batched refills.  symmetric_avx2.c
+# = the xof*_avx2_* wrappers; drng_avx2.c = the 8-way SM3 Hash-DRBG;
+# auxfunc_avx2.c = the 8-way SM3 core it calls.  (Scalar drng.c/auxfunc.c
+# already in XOF_SRCS for the seeding DRBG.)
+NWAY_XOF = symmetric_avx2.c drng_avx2.c auxfunc_avx2.c
 endif
 
 # Per-test source lists (POSIX-sh strings).  Identical scalar source lists to
@@ -143,6 +154,9 @@ all:
 	        *poly_ntt.c*|*polyvec.c*) \
 	          extra="$$qs/ntt.S $$qs/ntt_consts.c ../ref/ntt/$$qs/ntt_ref.c"; \
 	          inc="-I../ref/ntt/$$qs";; \
+	      esac; \
+	      case "$$srcs" in \
+	        *polyvec.c*) extra="$$extra $(NWAY_XOF)";; \
 	      esac; \
 	      stats=""; \
 	      case "$$t" in trace_kat) stats="-DTEST_RANS_STATS";; diff_fuzz) stats="-DDIFF_FUZZ_N=$(DIFF_FUZZ_N)";; test_sign) stats="-DSIG_RAW";; esac; \

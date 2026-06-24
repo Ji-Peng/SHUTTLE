@@ -156,8 +156,12 @@ XOF_SRCS = {
 # AVX N-way XOF additions (the scalar XOF lives in REF_SRCS+XOF_SRCS; these are
 # the backend-specific N-way kernels that also touch secret-seeded state).
 AVX2_EXTRA = {
-    "ngcc": ["auxfunc_avx2.c", "drng_avx2.c"],
-    "sha3": ["fips202x4.c", "f1600x4.S"],
+    # symmetric_avx2.c = the xof*_avx2_* lane-batched wrappers (M9 ExpandA/
+    # ExpandS/SampleY N-way refills); pure pointer marshaling over the N-way
+    # kernels, but it sits on the secret-seeded ExpandS/SampleY path so we
+    # scan it too.
+    "ngcc": ["symmetric_avx2.c", "auxfunc_avx2.c", "drng_avx2.c"],
+    "sha3": ["symmetric_avx2.c", "fips202x4.c", "f1600x4.S"],
 }
 AVX512_EXTRA = {
     "ngcc": ["auxfunc_avx512.c", "drng_avx512.c"],

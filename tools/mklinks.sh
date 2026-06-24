@@ -47,17 +47,19 @@ ref="$root/ref"
 # scalar -- they are NOT in this skip set.
 # is_fork <filename> <backend>: true (return 0) iff <filename> is a REAL fork
 # in <backend>/ and must NOT be symlinked from ref/.  Most forks are common to
-# all backends; the M9 SIMD sampler perf forks (sampler.c, polyvec.c) currently
-# exist ONLY for avx2, so they are backend-gated -- avx512 keeps the scalar
-# symlink until its own SIMD fork lands (a follow-on; do not touch avx512 now).
+# all backends; the M9 SIMD sampler perf forks (sampler.c, polyvec.c) exist for
+# BOTH the avx2 and avx512 SIMD backends (each carries its own width-specific
+# kernel), so they are backend-gated to {avx2,avx512}.
 is_fork() {
     backend="$2"
-    # M9 SIMD sampler perf forks (avx2 ONLY at present): sampler.c routes the
-    # 96-bit RCDT scan (cdt_scan96) through the AVX2 8-way borrow-fold kernel,
-    # and polyvec.c routes the ExpandA uniform-reject scan through a 16-wide
-    # AVX2 reject + BMI2 compaction.  Both are guarded by -DUSE_AVX2_SAMPLER and
-    # are BYTE-EXACT to the scalar ref (KAT-locked).
-    if [ "$backend" = "avx2" ]; then
+    # M9 SIMD sampler perf forks (avx2 + avx512): sampler.c routes the 96-bit
+    # RCDT scan (cdt_scan96) through a SIMD borrow-fold kernel (avx2 = 8-way
+    # flip-to-signed; avx512 = 16-way native unsigned vpcmpltud), and polyvec.c
+    # routes the ExpandA uniform-reject scan through a vectorized reject +
+    # compaction (avx2 = 16-wide + BMI2 pdep/pext; avx512 = 32-wide + vpcompressw).
+    # Both are guarded by -DUSE_AVX2_SAMPLER / -DUSE_AVX512_SAMPLER and are
+    # BYTE-EXACT to the scalar ref (KAT-locked).
+    if [ "$backend" = "avx2" ] || [ "$backend" = "avx512" ]; then
         case "$1" in
         sampler.c | polyvec.c) return 0 ;;
         esac

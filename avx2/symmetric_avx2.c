@@ -41,31 +41,32 @@
 /* 4-lane SHAKE squeeze with a buffered final partial block.  out[k]
  * receives out_len bytes for lane k.  We squeeze whole rate blocks
  * straight into the destination, then one extra block into a scratch row
- * to copy the tail. */
-static void shakex4_squeeze_buffered(uint8_t *const out[4], size_t out_len,
-                                     keccakx4_state *st, unsigned int rate,
-                                     void (*sqblk)(uint8_t *, uint8_t *,
-                                                   uint8_t *, uint8_t *,
-                                                   size_t,
-                                                   keccakx4_state *))
-{
-    size_t nblocks = out_len / rate;
-    size_t off = nblocks * rate;
-    size_t tail = out_len - off;
-    uint8_t t0[SHAKE128_RATE], t1[SHAKE128_RATE];
-    uint8_t t2[SHAKE128_RATE], t3[SHAKE128_RATE];
-
-    if (nblocks) {
-        sqblk(out[0], out[1], out[2], out[3], nblocks, st);
-    }
-    if (tail) {
-        sqblk(t0, t1, t2, t3, 1, st);
-        memcpy(out[0] + off, t0, tail);
-        memcpy(out[1] + off, t1, tail);
-        memcpy(out[2] + off, t2, tail);
-        memcpy(out[3] + off, t3, tail);
-    }
-}
+ * to copy the tail.
+ *
+ * RATE is a COMPILE-TIME CONSTANT (SHAKE128_RATE / SHAKE256_RATE), passed
+ * as a template parameter through the SHAKEX4_SQUEEZE_BODY macro so the
+ * `out_len / RATE` becomes a constant-divisor multiply-shift rather than a
+ * hardware `div`.  out_len is the (public) squeeze length, never secret, so
+ * the divide would be safe regardless -- but keeping it a constant divisor
+ * keeps the constant-time scanner (tools/ct_scan.py) clean now that this TU
+ * sits on the secret-seeded ExpandS/SampleY path (M9). */
+#    define SHAKEX4_SQUEEZE_BODY(out, out_len, st, RATE, SQBLK)        \
+        do {                                                          \
+            size_t nblocks_ = (out_len) / (RATE);                     \
+            size_t off_ = nblocks_ * (RATE);                          \
+            size_t tail_ = (out_len) - off_;                          \
+            uint8_t b0_[RATE], b1_[RATE], b2_[RATE], b3_[RATE];       \
+            if (nblocks_)                                             \
+                SQBLK((out)[0], (out)[1], (out)[2], (out)[3],         \
+                      nblocks_, (st));                                \
+            if (tail_) {                                              \
+                SQBLK(b0_, b1_, b2_, b3_, 1, (st));                   \
+                memcpy((out)[0] + off_, b0_, tail_);                  \
+                memcpy((out)[1] + off_, b1_, tail_);                  \
+                memcpy((out)[2] + off_, b2_, tail_);                  \
+                memcpy((out)[3] + off_, b3_, tail_);                  \
+            }                                                         \
+        } while (0)
 
 void xof128_avx2_init(xof_ctx_avx2 *ctx,
                       const uint8_t *const seed[XOF_LANES_AVX2],
@@ -79,8 +80,8 @@ void xof128_avx2_squeeze(xof_ctx_avx2 *ctx,
                          uint8_t *const out[XOF_LANES_AVX2],
                          size_t out_len)
 {
-    shakex4_squeeze_buffered(out, out_len, ctx, SHAKE128_RATE,
-                             shake128x4_squeezeblocks);
+    SHAKEX4_SQUEEZE_BODY(out, out_len, ctx, SHAKE128_RATE,
+                         shake128x4_squeezeblocks);
 }
 
 void xof256_avx2_init(xof_ctx_avx2 *ctx,
@@ -95,8 +96,8 @@ void xof256_avx2_squeeze(xof_ctx_avx2 *ctx,
                          uint8_t *const out[XOF_LANES_AVX2],
                          size_t out_len)
 {
-    shakex4_squeeze_buffered(out, out_len, ctx, SHAKE256_RATE,
-                             shake256x4_squeezeblocks);
+    SHAKEX4_SQUEEZE_BODY(out, out_len, ctx, SHAKE256_RATE,
+                         shake256x4_squeezeblocks);
 }
 
 #else /* NGCC_MODE: 8-way SM3 DRBG ====================================== \
