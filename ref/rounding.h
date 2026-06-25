@@ -178,6 +178,27 @@ void mat_mul_z1_2q(poly comY_tilde[EM], const poly z1[Z1LEN],
                    const poly *c, const poly16 bhat[EM],
                    const poly16 Ahat[EM * ELL]);
 
+/* KeyGen b-product (alg:keygen-internal step 5):
+ *   b_0 = agen + iNTT(hAgen o NTT(s)) + e   (mod q, per pk poly i).
+ *
+ *   s[ELL]            : the secret s vector (signed scheme-domain poly).
+ *   hAgen[EM*ELL]     : the A-hat matrix, NTT-domain CANONICAL order,
+ *                       indexed [i*ELL+j] (as produced by ExpandA).
+ *   agen[EM]          : the a_gen vector ([0,q) poly16).
+ *   e[EM]             : the error e vector (signed scheme-domain poly).
+ *   b0[EM]            : output, each coeff freeze'd to [0,q).
+ *
+ * Shares the rounding.c NTT machinery: the scalar (ref) build uses the
+ * canonical poly_ntt / poly_pointwise_montgomery / poly_invntt_tomont;
+ * the avx2/avx512 forks route through the SIMD NTT kernels (poly_ntt_simd
+ * / poly_pointwise_montgomery_simd / poly_invntt_tomont_simd, with the
+ * canonical hAgen imported into backend-native order via
+ * poly_ntt_simd_import), byte-exact to the scalar oracle by the same
+ * argument as mat_mul_2q. */
+void keygen_bproduct(poly b0[EM], const poly16 agen[EM],
+                     const poly16 hAgen[EM * ELL], const poly s[ELL],
+                     const poly e[EM]);
+
 /* ---------------------------------------------------------------------- *
  *  highbits / hint (alg:makehint, alg:usehint LIVE mod-q) *
  * ----------------------------------------------------------------------

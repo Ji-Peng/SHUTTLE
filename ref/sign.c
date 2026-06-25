@@ -231,14 +231,12 @@ static int keygen_from_xi(uint8_t *pk, uint8_t *sk,
     poly s1s2[ELL + EM]; /* aliased: s = s1s2[0..ELL), e = s1s2[ELL..) */
     poly *s = s1s2;
     poly *e = s1s2 + ELL;
-    poly shat[ELL]; /* NTT(s) per s poly, stored as int32 */
     poly b0[EM];
     poly b[EM];
     poly ep[EM];
     poly stretched[KVEC];
     uint8_t tr[CHALLENGESEEDBYTES];
-    int i, j;
-    unsigned k;
+    int j;
 
     for (iter = 0; iter < SIGN_MAX_ITER; ++iter) {
         kappa += 1; /* increment BEFORE use: first attempt kappa=1 */
@@ -266,40 +264,13 @@ static int keygen_from_xi(uint8_t *pk, uint8_t *sk,
         }
         PROF_CTX(PC_OTHER);
 
-        /* Step 5: b_0 = a_gen + iNTT(A-hat_gen o NTT(s)) + e (mod q). */
+        /* Step 5: b_0 = a_gen + iNTT(A-hat_gen o NTT(s)) + e (mod q).
+         * Routed through rounding.c keygen_bproduct: the scalar (ref) build
+         * runs the canonical NTT oracle; the avx2/avx512 forks route the
+         * matrix-vector product through the SIMD NTT (byte-exact). */
         {
         PROF_START(t_kgb);
-        for (j = 0; j < ELL; ++j) {
-            poly16 sh;
-            for (k = 0; k < N; ++k)
-                sh.coeffs[k] = (uint16_t)freeze(s[j].coeffs[k]);
-            poly_ntt(&sh);
-            for (k = 0; k < N; ++k)
-                shat[j].coeffs[k] = (int32_t)sh.coeffs[k];
-        }
-        for (i = 0; i < EM; ++i) {
-            poly16 acc, prod, th;
-            for (j = 0; j < ELL; ++j) {
-                poly16 sj;
-                for (k = 0; k < N; ++k)
-                    sj.coeffs[k] = (uint16_t)shat[j].coeffs[k];
-                if (j == 0)
-                    poly_pointwise_montgomery(&acc, &hAgen[i * ELL + 0],
-                                              &sj);
-                else {
-                    poly_pointwise_montgomery(&prod, &hAgen[i * ELL + j],
-                                              &sj);
-                    poly16_add(&acc, &acc, &prod);
-                }
-            }
-            th = acc;
-            poly_invntt_tomont(&th); /* -> (A_gen.s)_i in [0,q) */
-            for (k = 0; k < N; ++k) {
-                int32_t v = (int32_t)agen[i].coeffs[k] +
-                            (int32_t)th.coeffs[k] + e[i].coeffs[k];
-                b0[i].coeffs[k] = freeze(v); /* [0,q) */
-            }
-        }
+        keygen_bproduct(b0, agen, hAgen, s, e);
         PROF_STOP(PT_KG_BPRODUCT, t_kgb);
         }
 

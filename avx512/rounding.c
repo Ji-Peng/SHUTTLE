@@ -75,7 +75,6 @@
  * SHIFT-INVARIANT so CompressY(y+StretchS(x)) = CompressY(y)+x holds for every
  * divisor; ties-away broke that identity on even divisors.
  */
-#include "rounding.h"
 
 #include <stdint.h>
 
@@ -84,6 +83,15 @@
 #include "reduce.h"   /* reduce_mod_2q / freeze / reduce32 */
 #include "rounding_consts.h" /* RCP_ALPHA_* / SH_ROUND_* / ROUND_BIAS_* / LOG2_ALPHA_H */
 #include "test/prof.h" /* PT_NTT_FWD/PW/INV -- ((void)0) unless PROF_TIME */
+
+/* A few scalar static folds are live only on the non-SIMD (#else) path;
+ * the SIMD fork replaces them with their simd_* mirror.  Mark them so the
+ * SIMD build does not warn (-Wunused-function). */
+#if defined(__GNUC__) || defined(__clang__)
+#    define SHUTTLE_MAYBE_UNUSED __attribute__((unused))
+#else
+#    define SHUTTLE_MAYBE_UNUSED
+#endif
 
 /* ====================================================================== *
  *  SIMD NTT entry points: the genuine vectorized kernels exported by
@@ -100,6 +108,11 @@ void poly_invntt_tomont_simd(poly16 *a);
 void poly_pointwise_montgomery_simd(poly16 *c, const poly16 *a,
                                     const poly16 *b);
 void poly_ntt_simd_import(poly16 *a);
+/* SIMD (ymm/zmm) lane-wise mirrors of the scalar reduce/center/hint folds
+ * used to vectorize the freeze-glue / use_hint / norm loops below.  Every
+ * helper is bit-exact to its reduce.c / rounding.c scalar counterpart, so
+ * the avx2/avx512 forks stay byte-exact to ref. */
+#    include "simd_red.h"
 #endif
 
 /* ====================================================================== *
@@ -160,8 +173,9 @@ static int32_t bmodpm_q(int32_t a)
 }
 
 /* addmod_Hh: reduce x in [0, 2*H_h) to [0, H_h) by ONE masked subtract.
- * Used where x = h + floor(./alpha_h) is known to be < 2*H_h. */
-static int32_t addmod_Hh(int32_t x)
+ * Used where x = h + floor(./alpha_h) is known to be < 2*H_h.  (Scalar
+ * use_hint path only; the SIMD fork uses simd_addmod_Hh.) */
+SHUTTLE_MAYBE_UNUSED static int32_t addmod_Hh(int32_t x)
 {
     int32_t mge = -(int32_t)(x >= (int32_t)HH);
     return x - (mge & (int32_t)HH);
@@ -171,8 +185,9 @@ static int32_t addmod_Hh(int32_t x)
  * masked add (x<0 -> +H_h).  Used for highbits(.)-highbits(.) in MakeHint
  * (both operands in [0,H_h), so the difference is in (-H_h, H_h)).  This
  * is a FOLD of an in-range value (range-check), never a general `% H_h`.
+ * (Scalar make_hint path only; the SIMD fork uses simd_centermod_Hh.)
  */
-static int32_t centermod_Hh(int32_t x)
+SHUTTLE_MAYBE_UNUSED static int32_t centermod_Hh(int32_t x)
 {
     int32_t mlt = (x >> 31); /* -1 if x<0, else 0 (x in (-H_h, H_h)) */
     return x + (mlt & (int32_t)HH);
@@ -295,12 +310,18 @@ void roundB_update_s2(poly pkb[EM], poly ep[EM], const poly pkb0[EM],
  * expects.  (Scalar build: poly_ntt, canonical order.) */
 static void poly_to_ntt_dom(poly16 *out, const poly *in)
 {
+#ifdef SHUTTLE_ROUNDING_SIMD
+    unsigned k;
+    /* Vectorized freeze + int32->uint16 pack (16 coeffs / iteration).
+     * Bit-exact to the scalar (uint16_t)freeze: each lane is freeze in
+     * [0,q) < 2^16, so the pack is lossless. */
+    for (k = 0; k < N; k += 16)
+        simd_freeze_pack(&out->coeffs[k], &in->coeffs[k]);
+    poly_ntt_simd(out); /* -> AVX backend-native NTT order */
+#else
     unsigned i;
     for (i = 0; i < N; ++i)
         out->coeffs[i] = (uint16_t)freeze(in->coeffs[i]);
-#ifdef SHUTTLE_ROUNDING_SIMD
-    poly_ntt_simd(out); /* -> AVX backend-native NTT order */
-#else
     poly_ntt(out);
 #endif
 }
@@ -359,15 +380,17 @@ static void compute_t(poly *t, const poly16 *bh_i,
     poly16 acc, prod, th;
     unsigned k;
     int j;
+    (void)k; /* unused in the SIMD path (vectorized loops below) */
 #ifdef SHUTTLE_ROUNDING_SIMD
     poly_pointwise_montgomery_simd(&acc, bh_i, x0h);
     simd_pw_canon(&acc); /* signed config: centered (-q,q) -> [0,q) */
+    simd_poly16_negate(acc.coeffs, N); /* -bhat_i . x0 (elemwise) */
 #else
     poly_pointwise_montgomery(&acc, bh_i, x0h);
-#endif
     for (k = 0; k < N; ++k)
         acc.coeffs[k] =
             subm16(0, acc.coeffs[k]); /* -bhat_i . x0 (elemwise) */
+#endif
     for (j = 0; j < ELL; ++j) {
 #ifdef SHUTTLE_ROUNDING_SIMD
         poly_pointwise_montgomery_simd(&prod, &Ahat_native[i * ELL + j],
@@ -382,11 +405,12 @@ static void compute_t(poly *t, const poly16 *bh_i,
     th = acc;
 #ifdef SHUTTLE_ROUNDING_SIMD
     poly_invntt_tomont_simd(&th); /* -> [0,q) (canonicalized internally) */
+    simd_widen_u16_to_i32(t->coeffs, th.coeffs, N);
 #else
     poly_invntt_tomont(&th); /* -> [0,q) (LiftToModTwoQ-ready) */
-#endif
     for (k = 0; k < N; ++k)
         t->coeffs[k] = (int32_t)th.coeffs[k];
+#endif
 }
 
 /* compute_t with the NTT pointwise (PT_NTT_PW) / inverse (PT_NTT_INV)
@@ -402,16 +426,18 @@ static void compute_t_prof(poly *t, const poly16 *bh_i,
     poly16 acc, prod, th;
     unsigned k;
     int j;
+    (void)k; /* unused in the SIMD path (vectorized loops below) */
     {
         PROF_START(t_pw);
 #ifdef SHUTTLE_ROUNDING_SIMD
         poly_pointwise_montgomery_simd(&acc, bh_i, x0h);
         simd_pw_canon(&acc); /* signed config: centered (-q,q) -> [0,q) */
+        simd_poly16_negate(acc.coeffs, N); /* -bhat_i . x0 */
 #else
         poly_pointwise_montgomery(&acc, bh_i, x0h);
-#endif
         for (k = 0; k < N; ++k)
             acc.coeffs[k] = subm16(0, acc.coeffs[k]); /* -bhat_i . x0 */
+#endif
         for (j = 0; j < ELL; ++j) {
 #ifdef SHUTTLE_ROUNDING_SIMD
             poly_pointwise_montgomery_simd(
@@ -436,8 +462,12 @@ static void compute_t_prof(poly *t, const poly16 *bh_i,
 #endif
         PROF_STOP(PT_NTT_INV, t_inv);
     }
+#ifdef SHUTTLE_ROUNDING_SIMD
+    simd_widen_u16_to_i32(t->coeffs, th.coeffs, N);
+#else
     for (k = 0; k < N; ++k)
         t->coeffs[k] = (int32_t)th.coeffs[k];
+#endif
 }
 
 void mat_mul_2q(poly comY[EM], const poly yp[KVEC], const poly16 bhat[EM],
@@ -477,6 +507,36 @@ void mat_mul_2q(poly comY[EM], const poly yp[KVEC], const poly16 bhat[EM],
     for (i = 0; i < EM; ++i) {
         poly t;
         compute_t_prof(&t, &bhat_n[i], Ahat_n, &x0h, xsh, i);
+#ifdef SHUTTLE_ROUNDING_SIMD
+        /* Fused SIMD glue: t += e-block, freeze to [0,q), then the mod-2q
+         * lift.  v = 2*t (+ q*parity(y'_0) when i==0), reduced to [0,2q)
+         * by one masked conditional subtract.  Bit-exact to the scalar
+         * sequence below (simd_freeze == freeze; the parity AND / cmp /
+         * mask-sub mirror the scalar ops). */
+        {
+            const simdv vone = simdv_set1(1);
+            const simdv vq = simdv_set1((int)Q);
+            const simdv vdq = simdv_set1((int)DQ);
+            for (k = 0; k < N; k += SIMD_W) {
+                simdv tv = simdv_add(simdv_load(&t.coeffs[k]),
+                                     simdv_load(&yp[1 + ELL + i].coeffs[k]));
+                tv = simd_freeze(tv);                 /* [0,q)           */
+                simdv v = simdv_add(tv, tv);          /* 2*t, [0,2q)     */
+                if (i == 0) {
+                    /* RAW parity of y'_0 (signed): par = coeff & 1; v +=
+                     * q*par.  & 1 on the two's-complement int32 is the true
+                     * low bit, matching the scalar yp[0]&1. */
+                    simdv par =
+                        simdv_and(simdv_load(&yp[0].coeffs[k]), vone);
+                    v = simdv_add(v, simdv_mullo(vq, par));
+                }
+                /* v in [0,3q): v -= ((DQ-1-v)>>31) & DQ. */
+                simdv neg = simdv_srai(simdv_sub(simdv_sub(vdq, vone), v), 31);
+                v = simdv_sub(v, simdv_and(neg, vdq));
+                simdv_store(&comY[i].coeffs[k], v);
+            }
+        }
+#else
         /* + the e-block (the 2*I_m contribution becomes a direct add of
          * the e-block compressed coeff in the q-domain), then freeze to
          * [0,q). */
@@ -501,6 +561,7 @@ void mat_mul_2q(poly comY[EM], const poly yp[KVEC], const poly16 bhat[EM],
             v -= ((DQ - 1 - v) >> 31) & DQ;
             comY[i].coeffs[k] = v;
         }
+#endif
     }
 }
 
@@ -535,6 +596,33 @@ void mat_mul_z1_2q(poly comY_tilde[EM], const poly z1[Z1LEN],
         poly t;
         compute_t(&t, &bhat_n[i], Ahat_n, &z0h, zsh,
                   i); /* t = -bhat_i.z0 + (Ahat.zs)_i, already [0,q) */
+#ifdef SHUTTLE_ROUNDING_SIMD
+        /* SIMD lift: v = 2*t (+ q*parity(z0) - q*parity(c) when i==0),
+         * reduced to [0,2q) by one masked conditional ADD then one masked
+         * conditional SUBTRACT.  Bit-exact to the scalar sequence below. */
+        {
+            const simdv vone = simdv_set1(1);
+            const simdv vq = simdv_set1((int)Q);
+            const simdv vdq = simdv_set1((int)DQ);
+            for (k = 0; k < N; k += SIMD_W) {
+                simdv tv = simdv_load(&t.coeffs[k]);
+                simdv v = simdv_add(tv, tv); /* 2*t */
+                if (i == 0) {
+                    simdv pz =
+                        simdv_and(simdv_load(&z1[0].coeffs[k]), vone);
+                    simdv pc = simdv_and(simdv_load(&c->coeffs[k]), vone);
+                    v = simdv_add(v, simdv_mullo(vq, pz));
+                    v = simdv_sub(v, simdv_mullo(vq, pc));
+                }
+                /* +DQ if v<0 -> [0,3q) */
+                v = simdv_add(v, simdv_and(simdv_srai(v, 31), vdq));
+                /* -DQ if v>=DQ -> [0,2q) */
+                simdv neg = simdv_srai(simdv_sub(simdv_sub(vdq, vone), v), 31);
+                v = simdv_sub(v, simdv_and(neg, vdq));
+                simdv_store(&comY_tilde[i].coeffs[k], v);
+            }
+        }
+#else
         for (k = 0; k < N; ++k) {
             int32_t v = 2 * t.coeffs[k];
             if (i == 0) {
@@ -551,6 +639,80 @@ void mat_mul_z1_2q(poly comY_tilde[EM], const poly z1[Z1LEN],
             v -= ((DQ - 1 - v) >> 31) & DQ; /* -DQ if v>=DQ -> [0,2q)  */
             comY_tilde[i].coeffs[k] = v;
         }
+#endif
+    }
+}
+
+void keygen_bproduct(poly b0[EM], const poly16 agen[EM],
+                     const poly16 hAgen[EM * ELL], const poly s[ELL],
+                     const poly e[EM])
+{
+    /* b_0 = agen + iNTT(hAgen o NTT(s)) + e   (mod q).  Same SIMD-NTT
+     * machinery as mat_mul_2q: the canonical hAgen is imported ONCE into
+     * backend-native slot order (nttunpack, shuffle-only); the fresh secret
+     * s is forward-transformed via the SIMD NTT into native order; the
+     * pointwise/accumulate/invntt then stay within native order.  Byte-exact
+     * to the scalar oracle by the same argument as mat_mul_2q (validated by
+     * test_ntt_avx512). */
+    poly16 shat[ELL];
+    int i, j;
+    unsigned k;
+#ifdef SHUTTLE_ROUNDING_SIMD
+    /* Import the canonical hAgen into native order ONCE (hoisted out of the
+     * EM row loop). */
+    poly16 hAgen_n[EM * ELL];
+    for (i = 0; i < EM * ELL; ++i)
+        import_cached(&hAgen_n[i], &hAgen[i]);
+#else
+    const poly16 *hAgen_n = hAgen;
+#endif
+
+    /* NTT(s_j) ONCE per j, reused across all EM rows (shat widening hoisted
+     * out of the i-loop). */
+    for (j = 0; j < ELL; ++j)
+        poly_to_ntt_dom(&shat[j], &s[j]);
+
+    for (i = 0; i < EM; ++i) {
+        poly16 acc, prod, th;
+        for (j = 0; j < ELL; ++j) {
+#ifdef SHUTTLE_ROUNDING_SIMD
+            poly_pointwise_montgomery_simd(&prod, &hAgen_n[i * ELL + j],
+                                           &shat[j]);
+            simd_pw_canon(&prod); /* signed config: centered -> [0,q) */
+#else
+            poly_pointwise_montgomery(&prod, &hAgen_n[i * ELL + j],
+                                      &shat[j]);
+#endif
+            if (j == 0)
+                acc = prod;
+            else
+                poly16_add(&acc, &acc, &prod);
+        }
+        th = acc;
+#ifdef SHUTTLE_ROUNDING_SIMD
+        poly_invntt_tomont_simd(&th); /* -> [0,q) (canonicalized) */
+        /* Vectorized glue: v = agen + th + e, freeze to [0,q).  simd_freeze
+         * == scalar freeze; the int32 widen of the uint16 th/agen lanes is
+         * lossless (both in [0,q) < 2^16). */
+        {
+            int32_t agw[N], thw[N];
+            simd_widen_u16_to_i32(agw, agen[i].coeffs, N);
+            simd_widen_u16_to_i32(thw, th.coeffs, N);
+            for (k = 0; k < N; k += SIMD_W) {
+                simdv v =
+                    simdv_add(simdv_load(&agw[k]), simdv_load(&thw[k]));
+                v = simdv_add(v, simdv_load(&e[i].coeffs[k]));
+                simdv_store(&b0[i].coeffs[k], simd_freeze(v));
+            }
+        }
+#else
+        poly_invntt_tomont(&th); /* -> (hAgen.s)_i in [0,q) */
+        for (k = 0; k < N; ++k) {
+            int32_t v = (int32_t)agen[i].coeffs[k] +
+                        (int32_t)th.coeffs[k] + e[i].coeffs[k];
+            b0[i].coeffs[k] = freeze(v); /* [0,q) */
+        }
+#endif
     }
 }
 
@@ -583,6 +745,20 @@ void make_hint(poly h[EM], const poly comY[EM], const poly z2[EM])
     int p;
     unsigned i;
     for (p = 0; p < EM; ++p) {
+#ifdef SHUTTLE_ROUNDING_SIMD
+        /* SIMD over the inner N coeffs.  Lane-wise mirror: wt =
+         * reduce_mod_2q(w - 2*z2), hb = highbits(w) - highbits(wt), then
+         * centermod_Hh. */
+        for (i = 0; i < N; i += SIMD_W) {
+            simdv w = simdv_load(&comY[p].coeffs[i]);
+            simdv z2v = simdv_load(&z2[p].coeffs[i]);
+            simdv wt = simd_reduce_mod_2q(
+                simdv_sub(w, simdv_slli(z2v, 1))); /* w - 2*z2 */
+            simdv hb = simdv_sub(simd_highbits_reduced(w),
+                                 simd_highbits_reduced(wt));
+            simdv_store(&h[p].coeffs[i], simd_centermod_Hh(hb));
+        }
+#else
         for (i = 0; i < N; ++i) {
             int32_t w = comY[p].coeffs[i]; /* in [0,2q)              */
             /* comY_tilde = (comY - 2*z2) mod 2q.  2*z2 can be negative /
@@ -596,6 +772,7 @@ void make_hint(poly h[EM], const poly comY[EM], const poly z2[EM])
             /* hb in (-H_h, H_h): fold into [0,H_h) with one masked add. */
             h[p].coeffs[i] = centermod_Hh(hb);
         }
+#endif
     }
 }
 
@@ -605,6 +782,26 @@ void use_hint(poly comY_h[EM], poly z2p[EM], const poly h[EM],
     int p;
     unsigned i;
     for (p = 0; p < EM; ++p) {
+#ifdef SHUTTLE_ROUNDING_SIMD
+        /* SIMD over the inner N coeffs (SIMD_W int32 / vector).  Lane-wise
+         * mirror of the scalar body: highbits_reduced + addmod_Hh fold,
+         * then alpha_h*cyh + c0, then ((.)-wt)>>1 centered mod q.  c0 =
+         * comY0p only for p==0 (j kills the rest), else 0. */
+        const simdv valpha = simdv_set1((int)ALPHA_H);
+        for (i = 0; i < N; i += SIMD_W) {
+            simdv wt = simdv_load(&comY_tilde[p].coeffs[i]);
+            simdv c0 = (p == 0) ? simdv_load(&comY0p->coeffs[i])
+                                : simdv_setzero();
+            simdv hb = simd_highbits_reduced(wt);
+            simdv cyh = simd_addmod_Hh(
+                simdv_add(simdv_load(&h[p].coeffs[i]), hb));
+            simdv_store(&comY_h[p].coeffs[i], cyh);
+            simdv app = simdv_add(simdv_mullo(valpha, cyh), c0);
+            simdv even = simdv_sub(app, wt);
+            simdv z2 = simd_bmodpm_q(simdv_srai(even, 1)); /* arith /2 */
+            simdv_store(&z2p[p].coeffs[i], z2);
+        }
+#else
         for (i = 0; i < N; ++i) {
             int32_t wt = comY_tilde[p].coeffs[i]; /* in [0,2q)        */
             /* comY0p is LSB(z0-c)*j: only the FIRST poly slot is nonzero;
@@ -625,6 +822,7 @@ void use_hint(poly comY_h[EM], poly z2p[EM], const poly h[EM],
             int32_t even = app - wt;
             z2p[p].coeffs[i] = bmodpm_q(even >> 1); /* arithmetic /2 */
         }
+#endif
     }
 }
 

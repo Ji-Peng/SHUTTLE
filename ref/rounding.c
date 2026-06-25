@@ -364,6 +364,46 @@ void mat_mul_z1_2q(poly comY_tilde[EM], const poly z1[Z1LEN],
     }
 }
 
+void keygen_bproduct(poly b0[EM], const poly16 agen[EM],
+                     const poly16 hAgen[EM * ELL], const poly s[ELL],
+                     const poly e[EM])
+{
+    /* b_0 = agen + iNTT(hAgen o NTT(s)) + e   (mod q).  Scalar oracle:
+     * canonical poly_ntt / poly_pointwise_montgomery / poly_invntt_tomont,
+     * mirroring the prior in-line sign.c loop exactly.  shat[j] = NTT(s_j)
+     * is computed ONCE here (in [0,q) poly16, no int32 round-trip) and
+     * reused across all EM rows. */
+    poly16 shat[ELL];
+    int i, j;
+    unsigned k;
+
+    for (j = 0; j < ELL; ++j) {
+        for (k = 0; k < N; ++k)
+            shat[j].coeffs[k] = (uint16_t)freeze(s[j].coeffs[k]);
+        poly_ntt(&shat[j]);
+    }
+    for (i = 0; i < EM; ++i) {
+        poly16 acc, prod, th;
+        for (j = 0; j < ELL; ++j) {
+            if (j == 0)
+                poly_pointwise_montgomery(&acc, &hAgen[i * ELL + 0],
+                                          &shat[0]);
+            else {
+                poly_pointwise_montgomery(&prod, &hAgen[i * ELL + j],
+                                          &shat[j]);
+                poly16_add(&acc, &acc, &prod);
+            }
+        }
+        th = acc;
+        poly_invntt_tomont(&th); /* -> (hAgen.s)_i in [0,q) */
+        for (k = 0; k < N; ++k) {
+            int32_t v = (int32_t)agen[i].coeffs[k] +
+                        (int32_t)th.coeffs[k] + e[i].coeffs[k];
+            b0[i].coeffs[k] = freeze(v); /* [0,q) */
+        }
+    }
+}
+
 /* ====================================================================== *
  *  highbits / hint (alg:makehint, alg:usehint LIVE mod-q) *
  * ======================================================================

@@ -620,20 +620,23 @@ static void gs_batch_first_fill(gauss_stream gss[XOF_STREAMS])
 /* ===================================================================== *
  *  ExpandS (DS 0x03, xof256, 16 lanes; BaseSampler + zero-fold + sign)  *
  * ===================================================================== */
-/* One noise mini-batch: cdt_scan96 over `Z`/`entries` (NOISE_BATCH=32; the
- * AVX-512 cdt_scan96 from the sampler.c fork, bit-identical to scalar),
- * then a 2-bit-per-candidate tail (bit0 sign, bit1 zero-fold), 4
- * cand/byte; the WHOLE NOISE_MINIBATCH_RAND_BYTES (392) is consumed up
- * front so the cursor advances independently of the cnt==want early break.
- * Identical to ref. */
-static void noise_minibatch(gauss_stream *gs, int32_t *dst, size_t *cnt,
-                            size_t want, const uint32_t Z[][3],
-                            int entries)
+/* noise_consume_minibatch: process ONE NOISE_BATCH mini-batch from the
+ * lane buffer (cdt_scan96 over `Z`/`entries`, NOISE_BATCH=32; the AVX-512
+ * cdt_scan96 from the sampler.c fork, bit-identical to scalar), then a
+ * 2-bit-per-candidate tail (bit0 sign, bit1 zero-fold), 4 cand/byte.  PURE
+ * buffer operation -- the caller MUST have ensured >=
+ * NOISE_MINIBATCH_RAND_BYTES are resident at gs->buf+gs->pos.  The WHOLE
+ * NOISE_MINIBATCH_RAND_BYTES (392) is consumed up front so the cursor
+ * advances independently of the *cnt==want early break.  Shared by the
+ * scalar (A) and N-way round-robin (B) ExpandS paths so they cannot drift.
+ */
+static void noise_consume_minibatch(gauss_stream *gs, int32_t *dst,
+                                    size_t *cnt, size_t want,
+                                    const uint32_t Z[][3], int entries)
 {
     int32_t mag[NOISE_BATCH];
     const uint8_t *tailp;
     int j;
-    gs_ensure(gs, NOISE_MINIBATCH_RAND_BYTES);
     noise_magnitude_batch(mag, gs->buf + gs->pos, Z, entries);
     tailp = gs->buf + gs->pos + NOISE_CDT_BYTES; /* 2-bit fields */
     for (j = 0; j < NOISE_BATCH; j++) {
@@ -646,6 +649,159 @@ static void noise_minibatch(gauss_stream *gs, int32_t *dst, size_t *cnt,
     }
     gs->pos += NOISE_MINIBATCH_RAND_BYTES; /* WHOLE tail consumed */
 }
+
+/* noise_minibatch: scalar single-lane mini-batch (A) -- ensure one
+ * mini-batch is resident (one scalar xof256 squeeze on refill) then
+ * consume it.  Byte-identical to the shared pure-buffer body above; kept
+ * for the non-USE_AVX512_XOF_NWAY build and the malloc-failure fallback.
+ */
+static void noise_minibatch(gauss_stream *gs, int32_t *dst, size_t *cnt,
+                            size_t want, const uint32_t Z[][3],
+                            int entries)
+{
+    gs_ensure(gs, NOISE_MINIBATCH_RAND_BYTES);
+    noise_consume_minibatch(gs, dst, cnt, want, Z, entries);
+}
+
+#if defined(USE_AVX512_XOF_NWAY) && defined(__AVX512F__)
+/* gs_lane_refill_prep (defined with the SampleY driver below) replicates
+ * the scalar gs_ensure(need) bookkeeping for one lane WITHOUT issuing the
+ * scalar squeeze, so the ExpandS round-robin driver can batch the squeeze
+ * N-way. */
+static size_t gs_lane_refill_prep(gauss_stream *gs, uint8_t *nonce,
+                                  size_t *fill_at);
+
+/* ------------------------------------------------------------------- *
+ *  N-way round-robin ExpandS driver (B).                              *
+ * ------------------------------------------------------------------- *
+ *
+ *  ExpandS's per-lane work is a fixed, PUBLIC sequence of NOISE_BATCH
+ *  mini-batches: ceil-driven runs that fill `ws` s-coeffs then `we`
+ *  e-coeffs (the run lengths are bounded by the PUBLIC widths -- each
+ *  mini-batch's whole NOISE_MINIBATCH_RAND_BYTES tail is consumed
+ *  up front, so the number of mini-batches per lane is data-independent).
+ *  Like the SampleY driver, every refill across the 16 lanes is issued
+ *  N-at-a-time (16-way SM3 / 8-way SHAKE) instead of one scalar squeeze
+ * per lane.  Byte-exact to ref (consumed-bytes invariance: each lane's
+ *  gauss_stream is the same deterministic nonce schedule, consumed by the
+ *  same noise_consume_minibatch body; only WHERE the bytes are produced
+ *  moves to the N-way batch). */
+typedef struct {
+    int32_t *sdst; /* this lane's s-output slice            */
+    int32_t *edst; /* this lane's e-output slice            */
+    size_t ws;     /* s-coeffs to produce (lane width)      */
+    size_t we;     /* e-coeffs to produce (lane width)      */
+    size_t scnt;   /* s-coeffs produced so far              */
+    size_t ecnt;   /* e-coeffs produced so far              */
+    int phase;     /* 0 = filling s, 1 = filling e, 2 done  */
+} noise_lane_state;
+
+/* noise_lane_advance_phase: roll the lane to its next non-finished phase.
+ */
+static void noise_lane_advance_phase(noise_lane_state *st)
+{
+    if (st->phase == 0 && st->scnt >= st->ws)
+        st->phase = (st->we > 0) ? 1 : 2;
+    if (st->phase == 1 && st->ecnt >= st->we)
+        st->phase = 2;
+}
+
+/* expands_roundrobin: drive all XOF_STREAMS ExpandS lanes in lockstep with
+ * N-way batched refills.  `gss` are init'd (refill=0, first block already
+ * filled by gs_batch_first_fill); `lst` carry the per-lane s/e slices.
+ * Loops in rounds:
+ *   (1) for each not-done lane whose buffer is short for its next
+ *       mini-batch, prep its refill (memmove + refill++ + nonce) and queue
+ *       an N-way fill;
+ *   (2) one N-way pass (xof_nway_fill16) tops up every queued lane;
+ *   (3) each not-done lane consumes ONE mini-batch from its now-resident
+ *       buffer (s-table or e-table per its phase).
+ * Round count is bounded by the PUBLIC per-lane mini-batch count -- no
+ * secret-dependent loop bound. */
+static void expands_roundrobin(gauss_stream gss[XOF_STREAMS],
+                               noise_lane_state lst[XOF_STREAMS])
+{
+    int all_done = 0;
+    /* ExpandS: every lane shares tag DS_EXPAND_S -> the same per-refill
+     * block size (NOISE_MINIBATCH_RAND_BYTES, no over-squeezed tail). */
+    size_t blk = gauss_block_bytes(gss[0].tag);
+    unsigned t;
+
+    for (t = 0; t < XOF_STREAMS; t++)
+        noise_lane_advance_phase(&lst[t]);
+
+    while (!all_done) {
+        uint8_t nonces[XOF_STREAMS][1 + CHALLENGESEEDBYTES + 2 + 2];
+        const uint8_t *noncep[XOF_STREAMS];
+        uint8_t *dstp[XOF_STREAMS];
+        /* Per-round throwaway destinations for the inactive N-way slots,
+         * so no two slots ever alias a live buffer (each padding slot gets
+         * its OWN region; its bytes are discarded). */
+        uint8_t scratch[XOF_STREAMS][GAUSS_STREAM_BLOCK];
+        size_t nlen = 0;
+        unsigned nfill = 0;
+        unsigned fill_lane[XOF_STREAMS];
+
+        /* (1) collect the lanes that need a refill for their next
+         * mini-batch. */
+        for (t = 0; t < XOF_STREAMS; t++) {
+            if (lst[t].phase == 2)
+                continue;
+            if (gss[t].avail - gss[t].pos <
+                (size_t)NOISE_MINIBATCH_RAND_BYTES) {
+                size_t fill_at;
+                nlen =
+                    gs_lane_refill_prep(&gss[t], nonces[nfill], &fill_at);
+                noncep[nfill] = nonces[nfill];
+                dstp[nfill] = gss[t].buf + fill_at;
+                fill_lane[nfill] = t;
+                nfill++;
+            }
+        }
+
+        /* (2) one N-way pass fills all queued lanes' next block at once.
+         * The `nfill` lanes needing a fill occupy the leading slots; the
+         * rest are padded to DISTINCT throwaway buffers (never consumed)
+         * so the producer always issues whole N-way passes.  Correctness
+         * depends only on the leading `nfill` slots, whose bytes land in
+         * the real lane buffers and match the scalar single-stream squeeze
+         * over the SAME nonce (lane-equivalence). */
+        if (nfill) {
+            PROF_START(t_sh);
+            for (t = nfill; t < XOF_STREAMS; t++) {
+                noncep[t] =
+                    noncep[0]; /* any valid nonce; output discarded */
+                dstp[t] = scratch[t];
+            }
+            xof_nway_fill16(dstp, noncep, nlen, blk,
+                            /*use_xof128=*/0);
+            for (t = 0; t < nfill; t++)
+                gss[fill_lane[t]].avail += blk;
+            PROF_STOP(PT_G_SHAKE, t_sh);
+        }
+
+        /* (3) each not-done lane consumes ONE mini-batch from the buffer.
+         */
+        all_done = 1;
+        for (t = 0; t < XOF_STREAMS; t++) {
+            noise_lane_state *st = &lst[t];
+            if (st->phase == 2)
+                continue;
+            if (st->phase == 0)
+                noise_consume_minibatch(&gss[t], st->sdst, &st->scnt,
+                                        st->ws, RCDT_NOISE_S,
+                                        RCDT_NOISE_S_ENTRIES);
+            else
+                noise_consume_minibatch(&gss[t], st->edst, &st->ecnt,
+                                        st->we, RCDT_NOISE_E,
+                                        RCDT_NOISE_E_ENTRIES);
+            noise_lane_advance_phase(st);
+            if (st->phase != 2)
+                all_done = 0;
+        }
+    }
+}
+#endif /* USE_AVX512_XOF_NWAY && __AVX512F__ */
 
 void expand_s(poly s1s2[ELL + EM],
               const uint8_t seedsk[CHALLENGESEEDBYTES])
@@ -667,35 +823,38 @@ void expand_s(poly s1s2[ELL + EM],
                    "s1s2 holds ELL s-polys then EM e-polys");
 
 #if defined(USE_AVX512_XOF_NWAY) && defined(__AVX512F__)
-    /* N-WAY BATCHED INITIAL FILL: prime all 16 gauss_streams, then draw
-     * their first GAUSS_STREAM_BLOCK N-at-a-time (xof256: 16-way SM3 = 1
-     * pass / 8-way SHAKE = 2 passes) instead of 16 sequential
-     * single-stream squeezes.  Byte-exact to ref (lane-equivalence);
-     * the per-lane BaseSampler scan + zero-fold/sign logic is then run on
-     * each pre-filled buffer exactly as scalar. */
+    /* N-WAY ROUND-ROBIN (B): keep ALL of ExpandS's XOF on the N-way path.
+     * Prime all 16 gauss_streams, batch their first block N-at-a-time
+     * (xof256: 16-way SM3 = 1 pass / 8-way SHAKE = 2 passes), then drive
+     * the 16 lanes in lockstep so EVERY subsequent refill -- not just
+     * block 0 -- is computed N-way instead of one scalar squeeze per lane.
+     * Byte-exact to ref (consumed-bytes invariance, see
+     * expands_roundrobin). */
     {
         gauss_stream *gss = (gauss_stream *)malloc((size_t)XOF_STREAMS *
                                                    sizeof(gauss_stream));
-        if (gss) {
-            for (t = 0; t < XOF_STREAMS; t++)
-                gauss_stream_init(&gss[t], DS_EXPAND_S, seedsk, t);
-            gs_batch_first_fill(gss);
+        noise_lane_state *lst = (noise_lane_state *)malloc(
+            (size_t)XOF_STREAMS * sizeof(noise_lane_state));
+        if (gss && lst) {
             for (t = 0; t < XOF_STREAMS; t++) {
-                size_t cnt = 0;
-                while (cnt < ws)
-                    noise_minibatch(&gss[t], sbar + (size_t)t * ws, &cnt,
-                                    ws, RCDT_NOISE_S,
-                                    RCDT_NOISE_S_ENTRIES);
-                cnt = 0;
-                while (cnt < we)
-                    noise_minibatch(&gss[t], ebar + (size_t)t * we, &cnt,
-                                    we, RCDT_NOISE_E,
-                                    RCDT_NOISE_E_ENTRIES);
+                gauss_stream_init(&gss[t], DS_EXPAND_S, seedsk, t);
+                lst[t].sdst = sbar + (size_t)t * ws;
+                lst[t].edst = ebar + (size_t)t * we;
+                lst[t].ws = ws;
+                lst[t].we = we;
+                lst[t].scnt = 0;
+                lst[t].ecnt = 0;
+                lst[t].phase = 0;
             }
+            gs_batch_first_fill(gss);
+            expands_roundrobin(gss, lst);
             free(gss);
+            free(lst);
             return;
         }
         /* malloc failure: fall through to the scalar per-lane path. */
+        free(gss);
+        free(lst);
     }
 #endif
 
