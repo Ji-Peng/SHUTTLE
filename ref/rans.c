@@ -105,23 +105,115 @@ int shuttle_rans_encode(uint8_t *out, size_t *out_len, size_t cap,
     return 0;
 }
 
-/* one decode step keyed by a table: emit the symbol value, update *x. */
-#define DEC_ONE(TBL, X, DST)                                            \
-    do {                                                                \
-        uint32_t val_ = (*(X)) & (PSCALE - 1);                          \
-        unsigned slot_ = TBL##_SLOT[val_];                              \
-        (DST) = TBL##_LO + (int)slot_;                                  \
-        *(X) =                                                          \
-            TBL##_FREQ[slot_] * (*(X) >> PB) + val_ - TBL##_CDF[slot_]; \
+/* Per-`val` decode entry: collapses the chained SLOT[val] -> FREQ[slot] /
+ * CDF[slot] indirection of the const tables into one lookup.  For a given
+ * val in [0, PSCALE), let slot = SLOT[val]; then
+ *     sym  = LO + slot                (decoded symbol value)
+ *     freq = FREQ[slot]               (in [1, PSCALE])
+ *     bias = val - CDF[slot]          (in [0, freq), so non-negative)
+ * and the state update is  x = freq * (x >> PB) + bias.  Packing freq and
+ * bias into one 32-bit word (each < PSCALE <= 2^10 fits in 16 bits) plus a
+ * separate symbol word makes the inner step a single contiguous 8-byte
+ * load.  The values are IDENTICAL to those produced by the chained lookup,
+ * so the decoded output -- and hence the KAT -- is unchanged. */
+typedef struct {
+    uint32_t fb; /* freq << 16 | bias */
+    int32_t sym; /* LO + slot         */
+} rans_dsym;
+
+/* Build the per-val table for one model from its const SLOT/FREQ/CDF/LO.
+ */
+static void rans_build_dsym(rans_dsym *d, const uint8_t *slot,
+                            const uint16_t *freq, const uint16_t *cdf,
+                            int lo)
+{
+    for (uint32_t v = 0; v < PSCALE; v++) {
+        unsigned s = slot[v];
+        d[v].fb = ((uint32_t)freq[s] << 16) | (uint32_t)(v - cdf[s]);
+        d[v].sym = lo + (int)s;
+    }
+}
+
+/* Lazily build all three model tables exactly once.  The content is a pure
+ * function of the compile-time const tables (deterministic, idempotent),
+ * so the unguarded first-build race is benign for the public verify path.
+ */
+static rans_dsym rans_q0_dsym[PSCALE];
+static rans_dsym rans_qs_dsym[PSCALE];
+static rans_dsym rans_hint_dsym[PSCALE];
+static int rans_dsym_ready = 0;
+
+static void rans_init_dsym(void)
+{
+    rans_build_dsym(rans_q0_dsym, RANS_Q0_SLOT, RANS_Q0_FREQ, RANS_Q0_CDF,
+                    RANS_Q0_LO);
+    rans_build_dsym(rans_qs_dsym, RANS_QS_SLOT, RANS_QS_FREQ, RANS_QS_CDF,
+                    RANS_QS_LO);
+    rans_build_dsym(rans_hint_dsym, RANS_HINT_SLOT, RANS_HINT_FREQ,
+                    RANS_HINT_CDF, RANS_HINT_LO);
+    rans_dsym_ready = 1;
+}
+
+/* one decode step on a single state XS keyed by a packed per-val table:
+ * emit the symbol, advance the state with one table load, then
+ * byte-renorm. `bp`/`in`/`in_len` are the caller's shared backward byte
+ * cursor; an empty stream short-circuits to -1. */
+#define DEC_STEP(DTBL, DST, XS)                                  \
+    do {                                                         \
+        uint32_t val_ = (XS) & (PSCALE - 1);                     \
+        rans_dsym e_ = (DTBL)[val_];                             \
+        (DST) = e_.sym;                                          \
+        (XS) = (e_.fb >> 16) * ((XS) >> PB) + (e_.fb & 0xffffu); \
+        while ((XS) < RANS_L) {                                  \
+            if (bp >= in_len)                                    \
+                return -1;                                       \
+            (XS) = ((XS) << 8) | in[bp++];                       \
+        }                                                        \
     } while (0)
+
+/* Decode `cnt` consecutive symbols of ONE model (packed table DTBL) into
+ * DST[0..cnt), continuing the global interleave at start index `t0`.  The
+ * interleave state s = (t0+i) & RMASK selects which stream advances. Bytes
+ * are consumed strictly in increasing t -- identical to a per-symbol loop
+ * -- so the decoded output is unchanged. */
+#if RANS_INTERLEAVED_STREAMS == 2
+/* RN==2 specialization: the two states are two independent dependency
+ * chains, so holding them in named locals x0/x1 and stepping them pairwise
+ * lets the out-of-order core overlap the latency of one chain with the
+ * other.  A leading odd-phase symbol (when t0 is odd) is peeled onto x1.
+ */
+#    define DEC_RUN(DTBL, DST, CNT, T0)            \
+        do {                                       \
+            size_t i_ = 0;                         \
+            if (((T0)&1u) != 0 && i_ < (CNT)) {    \
+                DEC_STEP(DTBL, (DST)[i_], x1);     \
+                i_++;                              \
+            }                                      \
+            for (; i_ + 1 < (CNT); i_ += 2) {      \
+                DEC_STEP(DTBL, (DST)[i_], x0);     \
+                DEC_STEP(DTBL, (DST)[i_ + 1], x1); \
+            }                                      \
+            if (i_ < (CNT))                        \
+                DEC_STEP(DTBL, (DST)[i_], x0);     \
+        } while (0)
+#else
+#    define DEC_RUN(DTBL, DST, CNT, T0)             \
+        do {                                        \
+            for (size_t i_ = 0; i_ < (CNT); i_++) { \
+                unsigned s_ = ((T0) + i_) & RMASK;  \
+                DEC_STEP(DTBL, (DST)[i_], x[s_]);   \
+            }                                       \
+        } while (0)
+#endif
 
 int shuttle_rans_decode(int32_t *q0, int32_t *qs, int32_t *h, size_t nq0,
                         size_t nqs, size_t nh, const uint8_t *in,
                         size_t in_len)
 {
-    size_t ntot = nq0 + nqs + nh;
     if (in_len < (size_t)(4 * RN))
         return -1;
+    if (!rans_dsym_ready)
+        rans_init_dsym();
     uint32_t x[RN];
     size_t bp = 0;
     /* init states in reverse flush order: stream front is state RN-1, ...,
@@ -135,26 +227,25 @@ int shuttle_rans_decode(int32_t *q0, int32_t *qs, int32_t *h, size_t nq0,
         if (!rans_state_in_range(x[s]))
             return -1;
     }
+#if RANS_INTERLEAVED_STREAMS == 2
+    uint32_t x0 = x[0], x1 = x[1];
+#endif
 
-    for (size_t t = 0; t < ntot; t++) {
-        unsigned s = rans_stream_index(t);
-        /* val in [0, PSCALE) -> slot via O(1) direct lookup; CDF[0]=0,
-         * CDF[N]=PSCALE so every val maps to a valid slot (no CDF hole).
-         * The decoded SYMBOL VALUE is range-checked by the caller (the
-         * per-block support + hint range-check live in unpack_sig). */
-        if (t < nq0) {
-            DEC_ONE(RANS_Q0, &x[s], q0[t]);
-        } else if (t < nq0 + nqs) {
-            DEC_ONE(RANS_QS, &x[s], qs[t - nq0]);
-        } else {
-            DEC_ONE(RANS_HINT, &x[s], h[t - nq0 - nqs]);
-        }
-        while (x[s] < RANS_L) {
-            if (bp >= in_len)
-                return -1;
-            x[s] = (x[s] << 8) | in[bp++];
-        }
-    }
+    /* The flat symbol stream is the three models back-to-back (Q0, then
+     * Qs, then HINT); splitting the single dispatch loop into three
+     * contiguous runs hoists the model-selection branch out of the inner
+     * step.  val in [0, PSCALE) maps to a valid slot (CDF[0]=0,
+     * CDF[N]=PSCALE: no hole); the decoded SYMBOL VALUE is range-checked
+     * by the caller (per-block support + hint range-check in unpack_sig).
+     */
+    DEC_RUN(rans_q0_dsym, q0, nq0, (size_t)0);
+    DEC_RUN(rans_qs_dsym, qs, nqs, nq0);
+    DEC_RUN(rans_hint_dsym, h, nh, nq0 + nqs);
+
+#if RANS_INTERLEAVED_STREAMS == 2
+    x[0] = x0;
+    x[1] = x1;
+#endif
     /* Canonical stream check: all bytes consumed and all interleaved
      * states rewind to the encoder's initial state L. */
     if (bp != in_len)

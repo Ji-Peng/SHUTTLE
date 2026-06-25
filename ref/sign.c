@@ -168,6 +168,12 @@ static void poly_set_one(poly *v)
  *  2*I_m e-block (Sign) and the -q*c*j correction (Verify) are applied   *
  *  inside the mat_mul_* lift, NOT here.  See note (3) in the file        *
  *  banner for why column 0 is (b - a_gen), negated by mat_mul.           *
+ *                                                                       *
+ *  The bhat forward NTT goes through poly_ntt_cache, which lands in the  *
+ *  backend-native slot order (ref: canonical == native; AVX: vectorized  *
+ *  NTT).  bhat is consumed only by mat_mul_*, whose SIMD path therefore  *
+ *  imports it directly without a per-use nttunpack.  Ahat = hAgen stays  *
+ *  canonical (ExpandA order) and is still imported inside mat_mul_*.     *
  * ===================================================================== */
 static void build_cached_matrix(poly16 bhat[EM], poly16 Ahat[EM * ELL],
                                 const poly b[EM], const poly16 agen[EM],
@@ -183,7 +189,7 @@ static void build_cached_matrix(poly16 bhat[EM], poly16 Ahat[EM * ELL],
             int32_t d = b[i].coeffs[k] - (int32_t)agen[i].coeffs[k];
             col.coeffs[k] = (uint16_t)freeze(d);
         }
-        poly_ntt(&col);
+        poly_ntt_cache(&col);
         bhat[i] = col;
     }
     for (i = 0; i < EM * ELL; ++i)

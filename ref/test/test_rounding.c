@@ -402,7 +402,7 @@ static int test_mod2q(void)
             poly16 t;
             for (i = 0; i < N; ++i)
                 t.coeffs[i] = (uint16_t)bc[p].coeffs[i];
-            poly_ntt(&t);
+            poly_ntt_cache(&t); /* cached bhat: backend-native order */
             bhat[p] = t;
         }
         for (p = 0; p < EM * ELL; ++p) {
@@ -472,7 +472,7 @@ static int test_mod2q(void)
             poly16 t;
             for (i = 0; i < N; ++i)
                 t.coeffs[i] = (uint16_t)bc[p].coeffs[i];
-            poly_ntt(&t);
+            poly_ntt_cache(&t); /* cached bhat: backend-native order */
             bhat[p] = t;
         }
         for (p = 0; p < EM * ELL; ++p) {
@@ -536,7 +536,7 @@ static int test_mod2q(void)
             poly16 t;
             for (i = 0; i < N; ++i)
                 t.coeffs[i] = (uint16_t)bc[p].coeffs[i];
-            poly_ntt(&t);
+            poly_ntt_cache(&t); /* cached bhat: backend-native order */
             bhat[p] = t;
         }
         for (p = 0; p < EM * ELL; ++p) {

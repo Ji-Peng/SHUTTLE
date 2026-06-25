@@ -104,6 +104,18 @@ void poly_ntt_simd(poly16 *a)
 #endif
 }
 
+void poly_ntt_cache(poly16 *a)
+{
+    /* Forward NTT for a freshly built cached-matrix operand, landing
+     * directly in the AVX512 backend-native slot order via the vectorized
+     * NTT.  By the validated equivalence nttunpack(ntt_ref(p)) ==
+     * ntt_avx(p) (test_ntt_avx512 [3]) this is byte-identical to the
+     * prior flow of a scalar canonical forward NTT followed by a per-use
+     * nttunpack (poly_ntt_simd_import) at the pointwise call site, so it
+     * is KAT-neutral while folding both into one vectorized pass. */
+    poly_ntt_simd(a);
+}
+
 void poly_invntt_tomont_simd(poly16 *a)
 {
 #if SHUTTLE_MODE == 128

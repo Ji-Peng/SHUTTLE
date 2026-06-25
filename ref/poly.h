@@ -73,6 +73,14 @@ void poly_ntt_canonical(poly16 *a);
  * this before an AVX pointwise (the NTT-domain wire order). */
 void poly_ntt_import(poly16 *a);
 
+/* Forward NTT for a freshly built CACHED-matrix operand, landing directly
+ * in the BACKEND-NATIVE slot order: ref = ntt_canonical (native ==
+ * canonical for the scalar backend), AVX = the vectorized forward NTT.
+ * Used when the result is consumed only by the backend-native pointwise
+ * (so it can skip the separate canonical->native import).  Byte-identical
+ * to poly_ntt_import(poly_ntt(a)). */
+void poly_ntt_cache(poly16 *a);
+
 /* === arithmetic helpers extend poly.h below === */
 
 /* `poly` (int32 coeffs[N]) is the scheme/wire type: it must hold centered

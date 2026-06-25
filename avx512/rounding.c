@@ -443,22 +443,22 @@ static void compute_t_prof(poly *t, const poly16 *bh_i,
 void mat_mul_2q(poly comY[EM], const poly yp[KVEC], const poly16 bhat[EM],
                 const poly16 Ahat[EM * ELL])
 {
-    /* bhat / Ahat are already NTT-domain (cached from KeyGen/Sign setup)
-     * IN CANONICAL order; only the fresh compressed mask y' is
-     * forward-transformed here.  The compressed-mask coeff bound is < q
-     * (CompressY shrinks y by alpha_* >= 3), so the freeze + NTT bridge is
-     * exact. */
+    /* bhat / Ahat are already NTT-domain (cached from KeyGen/Sign setup);
+     * only the fresh compressed mask y' is forward-transformed here.  The
+     * compressed-mask coeff bound is < q (CompressY shrinks y by alpha_*
+     * >= 3), so the freeze + NTT bridge is exact.  bhat is cached in the
+     * backend-native slot order (poly_ntt_cache); Ahat = hAgen is cached
+     * in canonical (ExpandA) order. */
     poly16 x0h, xsh[ELL];
     int i, j;
     unsigned k;
 #ifdef SHUTTLE_ROUNDING_SIMD
-    /* import the canonical cached operands into the AVX backend-native
-     * slot order ONCE (nttunpack), so the SIMD pointwise consumes a single
-     * native order shared with the SIMD-transformed fresh mask.  Each
-     * operand is imported once and used once per mat_mul call. */
-    poly16 bhat_n[EM], Ahat_n[EM * ELL];
-    for (i = 0; i < EM; ++i)
-        import_cached(&bhat_n[i], &bhat[i]);
+    /* bhat is already native (built via poly_ntt_cache), so it feeds the
+     * SIMD pointwise directly.  Import only the canonical Ahat into the
+     * AVX backend-native slot order ONCE (nttunpack); each Ahat operand is
+     * imported once and used once per mat_mul call. */
+    const poly16 *bhat_n = bhat;
+    poly16 Ahat_n[EM * ELL];
     for (i = 0; i < EM * ELL; ++i)
         import_cached(&Ahat_n[i], &Ahat[i]);
 #else
@@ -515,11 +515,11 @@ void mat_mul_z1_2q(poly comY_tilde[EM], const poly z1[Z1LEN],
     int i, j;
     unsigned k;
 #ifdef SHUTTLE_ROUNDING_SIMD
-    /* Same canonical->native import as mat_mul_2q: bhat / Ahat are
-     * cached canonical order, the SIMD pointwise needs native order. */
-    poly16 bhat_n[EM], Ahat_n[EM * ELL];
-    for (i = 0; i < EM; ++i)
-        import_cached(&bhat_n[i], &bhat[i]);
+    /* Same operand layout as mat_mul_2q: bhat is cached backend-native
+     * (poly_ntt_cache) and feeds the SIMD pointwise directly; only the
+     * canonical Ahat is imported (nttunpack) into native order. */
+    const poly16 *bhat_n = bhat;
+    poly16 Ahat_n[EM * ELL];
     for (i = 0; i < EM * ELL; ++i)
         import_cached(&Ahat_n[i], &Ahat[i]);
 #else

@@ -113,37 +113,100 @@ void expand_signing_seeds(uint8_t seedY[SEEDBYTES],
 }
 
 /* ===================================================================== *
- *  16-lane uniform-reject stream (ExpandA) -- one-squeeze-per-fill       *
+ *  16-lane uniform-reject stream (ExpandA)                              *
  *                                                                       *
- *  Draws a fixed UNIFORM_BLOCK bytes for (lane, refill) in ONE xof128    *
- *  squeeze; on exhaustion re-inits a fresh ctx with refill+1.            *
+ *  Each (lane, refill) XOF instance supplies UNIFORM_BLOCK logical      *
+ *  bytes, drawn lazily in UNIFORM_DRAW slices; on exhaustion the next   *
+ *  instance is re-init'd with refill+1.                                 *
  * ===================================================================== */
-/* One block must comfortably exceed the expected per-coeff cost.  Each
- * coeff needs ~q/2^DQ acceptance => on average <2 candidates of BQ=2
- * bytes. The largest per-lane chunk is hAgen's w_h = EM*ELL*n/16 =
- * 144/192/384 coeffs.  4096 bytes / 2 = 2048 candidates covers >>5x the
- * worst chunk; refills are essentially never exercised but are implemented
- * + tested. */
+/* A per-(lane,refill) XOF instance supplies UNIFORM_BLOCK logical bytes;
+ * the rejection sampler reads them as BQ-byte candidates and only crosses
+ * into the next instance (refill+1) after all UNIFORM_BLOCK bytes of the
+ * current one are consumed.  We never need the whole block: each coeff
+ * accepts with prob ~q/2^DQ, so the per-lane chunk (agen then hAgen, total
+ * EM*n*(1+ELL)/16 coeffs) needs only ~that many BQ-byte candidates.  We
+ * therefore draw the block LAZILY in UNIFORM_DRAW-byte slices from the
+ * same persisted XOF ctx -- squeezing N then M bytes yields the same bytes
+ * as one N+M squeeze (SHAKE/SM3-DRBG are streams), so the consumed byte
+ * sequence and the refill boundary are byte-identical to one big squeeze;
+ * only the wasted tail is never squeezed. */
 #define UNIFORM_BLOCK 4096
+
+/* Right-sized first/continuation slice: ceil-to-granularity of ~2x the
+ * mean per-lane byte need (per-lane coeffs * BQ * 2, mean acceptance
+ * ~q/2^DQ). Covers the largest mode in one slice with margin, so the slow
+ * lazy continuation almost never runs; UNIFORM_DRAW divides nothing it
+ * must, the refill boundary is governed by the UNIFORM_BLOCK cap, not by
+ * UNIFORM_DRAW.
+ */
+#define UNIFORM_LANE_COEFFS ((size_t)EM * N * (1u + ELL) / XOF_STREAMS)
+#define UNIFORM_DRAW_RAW (UNIFORM_LANE_COEFFS * (size_t)BQ * 2u)
+#define UNIFORM_DRAW                                                    \
+    (((UNIFORM_DRAW_RAW + (size_t)XOF_SQUEEZE_GRANULARITY_BYTES - 1u) / \
+      (size_t)XOF_SQUEEZE_GRANULARITY_BYTES) *                          \
+     (size_t)XOF_SQUEEZE_GRANULARITY_BYTES)
+
+/* Right-sized first/continuation slice for SampleC's partial Fisher-Yates.
+ * The mean candidate need is sum_{i=n-tau}^{n-1} 2^DN/(i+1) BN-byte draws
+ * (well under 256 B for every mode); TAU*BN*4 ceil-to-granularity gives a
+ * comfortable margin so the first slice covers the whole challenge in
+ * essentially every call.  The instance still caps at SAMPLEC_BLOCK bytes,
+ * preserving the per-refill XOF boundary byte-for-byte. */
+#define SAMPLEC_BLOCK UNIFORM_BLOCK /* logical per-refill instance cap */
+#define SAMPLEC_DRAW_RAW ((size_t)TAU * (size_t)BN * 4u)
+#define SAMPLEC_DRAW                                                    \
+    (((SAMPLEC_DRAW_RAW + (size_t)XOF_SQUEEZE_GRANULARITY_BYTES - 1u) / \
+      (size_t)XOF_SQUEEZE_GRANULARITY_BYTES) *                          \
+     (size_t)XOF_SQUEEZE_GRANULARITY_BYTES)
 
 typedef struct {
     uint8_t
         nonce[1 + SEEDBYTES + 2 + 2]; /* tag||seed||LE16(lane)||LE16(rc) */
     size_t nonce_len;
     uint16_t lane, refill;
-    size_t pos, avail;
-    uint8_t buf[UNIFORM_BLOCK];
+    size_t pos, avail; /* cursor / valid bytes within buf            */
+    size_t drawn;      /* bytes squeezed from the current XOF instance */
+    int ctx_ready;     /* persisted ctx initialised for this instance  */
+    xof_ctx ctx;       /* live XOF instance for incremental slices      */
+    uint8_t buf[UNIFORM_DRAW];
 } uniform_stream;
+
+/* Squeeze the next slice of the CURRENT XOF instance into buf.  If the
+ * persisted ctx is not yet live (e.g. the initial block was filled by the
+ * N-way batched path), init it from the nonce and fast-forward past the
+ * `drawn` bytes already consumed -- identical bytes either way (stream).
+ */
+static void us_draw_slice(uniform_stream *us)
+{
+    size_t want = UNIFORM_BLOCK - us->drawn;
+    if (want > UNIFORM_DRAW)
+        want = UNIFORM_DRAW;
+    if (!us->ctx_ready) {
+        put_le16(us->nonce + 1 + SEEDBYTES, us->lane);
+        put_le16(us->nonce + 1 + SEEDBYTES + 2, us->refill);
+        xof128_init(&us->ctx, us->nonce, us->nonce_len);
+        if (us->drawn) {
+            uint8_t skip[UNIFORM_DRAW];
+            size_t left = us->drawn;
+            while (left) {
+                size_t s = left < UNIFORM_DRAW ? left : UNIFORM_DRAW;
+                xof128_squeeze(&us->ctx, skip, s);
+                left -= s;
+            }
+        }
+        us->ctx_ready = 1;
+    }
+    xof128_squeeze(&us->ctx, us->buf, want);
+    us->pos = 0;
+    us->avail = want;
+    us->drawn += want;
+}
 
 static void us_fill(uniform_stream *us)
 {
-    xof_ctx ctx;
-    put_le16(us->nonce + 1 + SEEDBYTES, us->lane);
-    put_le16(us->nonce + 1 + SEEDBYTES + 2, us->refill);
-    xof128_init(&ctx, us->nonce, us->nonce_len);
-    xof128_squeeze(&ctx, us->buf, UNIFORM_BLOCK);
-    us->pos = 0;
-    us->avail = UNIFORM_BLOCK;
+    us->ctx_ready = 0;
+    us->drawn = 0;
+    us_draw_slice(us);
 }
 
 static void us_init(uniform_stream *us, const uint8_t *seedA,
@@ -157,15 +220,21 @@ static void us_init(uniform_stream *us, const uint8_t *seedA,
     us_fill(us);
 }
 
-/* Pull BQ bytes (a uniform-Z_q candidate); refill across the block edge.
+/* Pull BQ bytes (a uniform-Z_q candidate).  When the current slice runs
+ * out, draw the next slice of the same instance; only after the whole
+ * UNIFORM_BLOCK is consumed do we advance to the next instance (refill+1).
  */
 static uint16_t us_next_candidate(uniform_stream *us)
 {
     uint32_t mask = (1u << DQ_BITS) - 1u;
     uint16_t a;
     if (us->pos + BQ > us->avail) {
-        us->refill++;
-        us_fill(us);
+        if (us->drawn < UNIFORM_BLOCK) {
+            us_draw_slice(us); /* same instance, next slice */
+        } else {
+            us->refill++; /* instance exhausted: next instance */
+            us_fill(us);
+        }
     }
     a = (uint16_t)get_le_masked(us->buf + us->pos, BQ, mask);
     us->pos += BQ;
@@ -306,8 +375,7 @@ static void noise_minibatch(gauss_stream *gs, int32_t *dst, size_t *cnt,
                                        advanced */
             dst[(*cnt)++] = r;
     }
-    gs->pos +=
-        NOISE_MINIBATCH_RAND_BYTES; /* WHOLE tail consumed */
+    gs->pos += NOISE_MINIBATCH_RAND_BYTES; /* WHOLE tail consumed */
 }
 
 void expand_s(poly s1s2[ELL + EM],
@@ -353,14 +421,23 @@ void expand_s(poly s1s2[ELL + EM],
  * ===================================================================== */
 void sample_c(poly *c, const uint8_t seedC[CHALLENGESEEDBYTES])
 {
-    /* Single-stream rejection sampler over the public seedC.  Re-uses the
-     * uniform-stream one-squeeze-per-fill discipline but with seedC's
-     * CHALLENGESEEDBYTES length and the SampleC tag.  Variable-time loop
-     * is fine here (seedC is public). */
+    /* Single-stream rejection sampler over the public seedC.  Each refill
+     * is a distinct XOF instance (tag||seedC||LE16(0)||LE16(refill)) that
+     * logically supplies SAMPLEC_BLOCK bytes; we draw those bytes LAZILY
+     * in SAMPLEC_DRAW-byte slices from the SAME persisted ctx and only
+     * roll to the next instance (refill+1) once all SAMPLEC_BLOCK bytes of
+     * the current one are consumed.  Squeezing N then M bytes from one
+     * stream yields the same bytes as one N+M squeeze, so the consumed-
+     * byte sequence and the refill boundary are byte-identical to the old
+     * single 4096 B squeeze -- only the wasted tail is never squeezed.
+     * Variable-time loop is fine here (seedC is public). */
     uint8_t nonce[1 + CHALLENGESEEDBYTES + 2 + 2];
-    uint8_t block[UNIFORM_BLOCK];
+    uint8_t block[SAMPLEC_DRAW];
     uint16_t refill = 0;
+    /* cursor / valid bytes within block */
     size_t pos = 0, avail = 0;
+    /* bytes squeezed from the current instance */
+    size_t drawn = 0;
     uint32_t mask = (1u << DN_BITS) - 1u;
     int i;
     xof_ctx ctx;
@@ -378,12 +455,23 @@ void sample_c(poly *c, const uint8_t seedC[CHALLENGESEEDBYTES])
         uint32_t j;
         do {
             if (pos + BN > avail) {
-                put_le16(nonce + 1 + CHALLENGESEEDBYTES + 2, refill);
-                refill++;
-                xof256_init(&ctx, nonce, sizeof(nonce));
-                xof256_squeeze(&ctx, block, UNIFORM_BLOCK);
+                size_t want;
+                if (drawn >= SAMPLEC_BLOCK) {
+                    /* current instance exhausted: advance to refill+1 */
+                    refill++;
+                    drawn = 0;
+                }
+                if (drawn == 0) {
+                    put_le16(nonce + 1 + CHALLENGESEEDBYTES + 2, refill);
+                    xof256_init(&ctx, nonce, sizeof(nonce));
+                }
+                want = SAMPLEC_BLOCK - drawn;
+                if (want > SAMPLEC_DRAW)
+                    want = SAMPLEC_DRAW;
+                xof256_squeeze(&ctx, block, want);
                 pos = 0;
-                avail = UNIFORM_BLOCK;
+                avail = want;
+                drawn += want;
             }
             j = get_le_masked(block + pos, BN, mask);
             pos += BN;

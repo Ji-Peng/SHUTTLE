@@ -67,3 +67,11 @@ void poly_ntt_import(poly16 *a)
      * backend-agnostic; the AVX backends do real nttunpack work here. */
     (void)a;
 }
+
+void poly_ntt_cache(poly16 *a)
+{
+    /* Scalar backend: native order == canonical order, so the
+     * cached-matrix forward NTT is just ntt_ref (== poly_ntt). */
+    ensure_init();
+    ntt_ref(a->coeffs);
+}
