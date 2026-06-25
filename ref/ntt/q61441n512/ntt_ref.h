@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-/* SHUTTLE namespacing (P03): every public scalar NTT symbol carries the s512_
+/* SHUTTLE namespacing: every public scalar NTT symbol carries the s512_
  * prefix so the three vendored configs co-link in one process.  This mirrors
  * the s512_ prefix the AVX2/AVX512 generators thread through their .S/consts.
  * The internal macro names below (NTT_Q/NTT_N) are also prefixed (S512_*) to

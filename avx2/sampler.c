@@ -1,6 +1,6 @@
 /*
  * sampler.c -- 96-bit reverse-CDT (RCDT) discrete-Gaussian base sampler
- *              (AVX2 FORK).  P05 / M9.
+ *              (AVX2 FORK).
  *
  * =========================================================================
  *  What this is
@@ -26,7 +26,7 @@
  * is bit-for-bit the scalar ref.
  *
  * =========================================================================
- *  The AVX2 SIMD scan (cdt_scan96_avx2) -- why it is byte-exact (K10/K11)
+ *  The AVX2 SIMD scan (cdt_scan96_avx2) -- why it is byte-exact
  * =========================================================================
  * The scan replaced is the per-sample scalar loop in cdt_scan96_scalar.
  * For each sample s the scalar code reads three 32-bit limbs at the
@@ -51,16 +51,17 @@
  * (Zf below, on the stack per dispatch since cdt_scan96 takes an arbitrary
  * public table), v is XOR-K'd once on load, and the borrow folds into Zf
  * by _mm256_sub_epi32(Zf, b_vec) where b_vec is the {0,-1} vpcmpgtd mask.
- * This is byte-for-byte the validated kernel in
- * agent/SHUTTLE-NGCC/Impl/demo_basesampler.c::avx2_count8 (4e6-case fuzz:
- * 0 mismatches vs the scalar eq|lt reference) and BaseSampler.tex sec7.
+ * This is byte-for-byte the validated kernel exercised by the
+ * basesampler demo's avx2_count8 (4e6-case fuzz: 0 mismatches vs the
+ * scalar eq|lt reference).
  * Under INV-NOMAX (mid/high limb != 0xFFFFFFFF) the threshold-side add
  * never wraps, so the fold is bit-exact to the textbook 96-bit compare and
- * hence to the scalar oracle (K11).  The accumulate is _mm256_sub_epi32(z,
- * b_vec) (+= the {0,1} borrow), identical to the scalar `z += b`.
+ * hence to the scalar oracle (the table invariant).  The accumulate is
+ * _mm256_sub_epi32(z, b_vec) (+= the {0,1} borrow), identical to the
+ * scalar `z += b`.
  *
  * =========================================================================
- *  Constant-time (K10)
+ *  Constant-time
  * =========================================================================
  * The SIMD scan is data-oblivious by construction, exactly like the
  * scalar:
@@ -76,7 +77,8 @@
  * The AVX2 path therefore has the SAME (data-independent) timing profile
  * as the scalar oracle; the only data-dependent timing that escapes is the
  * caller's BLISS/zero-fold accept COUNT (a public masking-sampler
- * property, whitelisted in P13), which lives in polyvec.c, not here.
+ * property, whitelisted by the constant-time policy), which lives in
+ * polyvec.c, not here.
  *
  * NB the scalar fallback path keeps the `volatile z` gather-barrier from
  * the reference (see the long comment below) so that even the `batch % 16`
@@ -91,7 +93,7 @@
 #endif
 
 /*
- * ===================== P13 CT-1 HARDENING (gather defense) ==============
+ * ===================== CT GATHER HARDENING (gather defense) =============
  *
  * (Verbatim from ref/sampler.c.)  The scalar scan below is a
  * data-independent linear sweep over the PUBLIC RCDT table length and the
@@ -131,7 +133,7 @@ static void cdt_scan96_scalar(int32_t *out, const uint8_t *rand,
         uint32_t v0 = load_le32(rand + base + 0);
         uint32_t v1 = load_le32(rand + base + 32);
         uint32_t v2 = load_le32(rand + base + 64);
-        volatile int32_t z = 0; /* gather barrier (P13 CT-1) */
+        volatile int32_t z = 0; /* gather barrier */
         int i;
         for (i = 0; i < entries; i++) {
             uint32_t b = ct_lt_u32(v0, Z[i][0]); /* b0 = [v0 <_u Z0]     */
@@ -254,14 +256,14 @@ void cdt_scan96(int32_t *out, const uint8_t *rand, const uint32_t Z[][3],
 
 /* Wide masking / BLISS base sampler (RCDT_Z, sigma_s = 825/256),
  * GAUSS_BATCH samples.  The uniform-y / ApproxExp accept / sign are
- * P06/P07. */
+ * applied by the caller. */
 void sampler_sigma2(int32_t *z_out, const uint8_t *rand)
 {
     cdt_scan96(z_out, rand, SHUTTLE_RCDT_Z, RCDT_Z_ENTRIES, GAUSS_BATCH);
 }
 
 /* Keygen secret-noise magnitude scan (RCDT_NOISE_S / RCDT_NOISE_E),
- * NOISE_BATCH samples.  Returns RAW unsigned magnitudes; the caller (P07)
+ * NOISE_BATCH samples.  Returns RAW unsigned magnitudes; the caller
  * applies the sign and the 1/2 zero-fold rejection from the tail bytes.
  * See the contract in sampler.h / ref/sampler.c. */
 void noise_magnitude_batch(int32_t *m_out, const uint8_t *rand,
@@ -271,7 +273,7 @@ void noise_magnitude_batch(int32_t *m_out, const uint8_t *rand,
 }
 
 /* ===================================================================== *
- *  Wide-Gaussian per-candidate finalize (P07; SampleDGauss step 5-8)    *
+ *  Wide-Gaussian per-candidate finalize (SampleDGauss step 5-8)        *
  * ===================================================================== *
  * Verbatim from ref/sampler.c.  Per-candidate, cheap (one Q64 compare + a
  * couple of branchless selects); kept scalar.  Constant-time apart from
@@ -307,11 +309,11 @@ int gauss_finalize(int32_t *out, int32_t x, int32_t y, uint64_t p_hat,
 /*
  * ===================================================================== *
  *  gauss_finalize_batch -- AVX2 vectorized SIGN-INDEPENDENT precompute  *
- *  (M9; PT_G_FINAL).  BYTE-EXACT to GAUSS_BATCH scalar gauss_finalize.  *
+ *  (PT_G_FINAL).  BYTE-EXACT to GAUSS_BATCH scalar gauss_finalize.     *
  * ===================================================================== *
  *
  *  RIGOROUS PRECISION + SECURITY ANALYSIS (the three points; see also    *
- *  agent/SHUTTLE-NGCC/Impl/BaseSampler.tex sec on the gauss finalize).   *
+ *  the BaseSampler design notes on the gauss finalize).                 *
  *
  *  ----------------------------------------------------------------------
  *  (1) EXACTNESS -- every SIMD op is an EXACT integer op, no float, no
@@ -380,7 +382,7 @@ int gauss_finalize(int32_t *out, int32_t x, int32_t y, uint64_t p_hat,
  *      the caller's scalar tail (the accept-count -> coefcnt advance),
  *      which is IDENTICAL to the scalar reference and is the documented,
  *      whitelisted masking-sampler rejection-timing channel (the
- *      isochronous emitted-distribution argument, P13).  No new timing /
+ *      isochronous emitted-distribution argument).  No new timing /
  *      cache / branch leak is introduced; the machine-code CT scanner
  *      (ct_scan) stays CLEAN (no gather/scatter emitted here).
  *

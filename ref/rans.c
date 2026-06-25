@@ -1,5 +1,5 @@
 /*
- * rans.c -- static byte-renormalized rANS codec for SHUTTLE (P10).
+ * rans.c -- static byte-renormalized rANS codec for SHUTTLE.
  *
  * Byte-exact to the Python golden model tools/rans.py.  32-bit state,
  * L = 2^23, 8-bit renorm, prob_bits = 10, RANS_N = 2 interleaved streams.
@@ -10,7 +10,7 @@
  * latency at the cost of only 4 extra flush bytes (negligible vs
  * RANS_RESERVED_BYTES); see rans.h for the engine rationale.
  *
- * CONSTANT-TIME (D6): this operates on the PUBLIC, post-signing signature
+ * CONSTANT-TIME: this operates on the PUBLIC, post-signing signature
  * data, so the renorm `while` loops and `pos` bounds are not a CT
  * violation.
  */

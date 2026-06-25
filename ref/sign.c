@@ -1,14 +1,13 @@
 /*
- * sign.c -- KeyGen / Sign / Verify top-level orchestration for SHUTTLE
- *           (P11, the M2/M3 capstone).
+ * sign.c -- KeyGen / Sign / Verify top-level orchestration for SHUTTLE.
  *
- * This file is pure glue: it sequences the P02-P10 subroutines in the
+ * This file is pure glue: it sequences the subroutines in the
  * EXACT order the spec algorithm blocks mandate (Description.tex KeyGen
  * alg:keygen-internal L416-459, Sign alg:sign-internal L473-547, Verify
  * alg:verify-internal L557-601) and owns the four structurally
  * load-bearing decisions that no subroutine can make for it:
  *
- *   1. The kappa-counter timing (K4).  KeyGen increments kappa BEFORE the
+ *   1. The kappa-counter timing.  KeyGen increments kappa BEFORE the
  *      first expansion (first attempt uses kappa=1).  Sign uses the
  * CURRENT kappa to derive seed_y then increments AFTER (first iteration
  * uses kappa=0).  The two have OPPOSITE timing; an off-by-one breaks every
@@ -21,13 +20,13 @@
  * NARROWER A1-hat = [ NTT(2(a-b)+q*j) | 2*A-hat_gen ]          (width
  * Z1LEN) by NTT(z1) (length Z1LEN = 1+ELL); the 2*I_m identity block and
  * the z2 operand are absent because z2 is reconstructed from the hint,
- *      never re-multiplied.  These are wired through TWO distinct P09
+ *      never re-multiplied.  These are wired through TWO distinct
  *      helpers -- mat_mul_2q (signer, KVEC columns + e-block) and
  *      mat_mul_z1_2q (verifier, Z1LEN columns + the -q*c*j correction) --
  *      so the asymmetry is explicit in code, not hidden in a shared
  * helper.
  *
- *   3. The cached-matrix column-0 wiring (THE subtle bit).  The P09
+ *   3. The cached-matrix column-0 wiring (THE subtle bit).  The
  *      mat_mul_* helpers compute t_i = -bhat_i . x0 + sum_j Ahat_ij .
  * xs_j, i.e. they put -bhat against the constant slot x0.  The spec's
  * derived matrix column 0 is 2(a_gen - b) + q*j, so to make -bhat_i . x0
@@ -37,7 +36,7 @@
  *
  *      Then -bhat_i . x0 = -(b - a_gen)_i . x0 = (a_gen - b)_i . x0,
  * exactly the spec column-0 contribution; the factor 2 and the q*j shift
- * are applied inside the mat_mul lift step.  This is the wiring P09's
+ * are applied inside the mat_mul lift step.  This is the wiring the
  *      "naive reference will catch a mismatch" note warns about; a sanity
  *      derivation: at the secret, t_0 = (a_gen-b) + A_gen.s + e' and since
  *      b = a_gen + A_gen.s + e' (KeyGen), t_0 = 0, so comY_0 = q*j -- the
@@ -55,26 +54,26 @@
  * y'_0 (mod 2) and w_0' = w_0.  Combined with the hint reconstructing w_h
  *      exactly when ||z2'|| is in-bound, EncodeCom(w_h,w_0') ==
  *      EncodeCom(w_h,w_0), hence seed_c' = seed_c.  An off-by-one in the
- * LSB lift (raw parity vs freeze parity, K13) silently breaks w_0' = w_0
+ * LSB lift (raw parity vs freeze parity) silently breaks w_0' = w_0
  *      and the signature fails to verify with no other symptom -- which is
- *      why the P09 lift uses RAW coefficient parity, not freeze() parity.
+ *      why the lift uses RAW coefficient parity, not freeze() parity.
  *      For this same reason the SIGNER reconstructs z2' through the
  * verifier path (use_hint) rather than its own +2*z2 formula, so the value
  * it gates on is byte-identical to what the verifier will reconstruct (the
  * spec deliberately mirrors verification, Description.tex L2541).
  *
- * M3 raw-packing rationale: -DSIG_RAW selects pack_sig_raw/unpack_sig_raw
+ * Raw-packing rationale: -DSIG_RAW selects pack_sig_raw/unpack_sig_raw
  * (fixed-length, never-fail) so the ENTIRE algorithm is proven correct
- * end-to-end BEFORE the rANS size blocker (MS-A6) is resolved.  The real
+ * end-to-end without depending on the rANS size question.  The real
  * rANS pack_sig/unpack_sig is wired too (drop -DSIG_RAW); it round-trips
  * identically, only the byte length differs.
  *
- * Constant-time discipline (Overview 4.7): the ONLY data-dependent
+ * Constant-time discipline: the ONLY data-dependent
  * branches are the PUBLIC rejection gates -- KeyGen's norm window (over a
  * public key statistic) and Sign's B_v gate / sigEncode-bottom restart
  * (public rejection-sampling outcomes, exactly like ML-DSA's bound check).
  * The squared-norm accumulation, the lift, the hint, and the matrix
- * products are all branchless (P09).  The seed_c compare in Verify is
+ * products are all branchless.  The seed_c compare in Verify is
  * constant-time (ct_bytes_equal).  No floating point, no secret-dependent
  * division.
  */
@@ -107,7 +106,7 @@
 /* EncodeCom over the full commitment VECTOR (EM polys).  The spec packs
  * the vector as PolyToBytes(w_h, d_h) || PolyToBytes(w_0, 1) applied
  * per-component and concatenated -- i.e. ALL w_h polys first, THEN all w_0
- * polys (block order, NOT interleaved).  P04's pack_com is the per-poly
+ * polys (block order, NOT interleaved).  pack_com is the per-poly
  * primitive (w_h[i] || w_0[i]); we lay the vector out in spec block order
  * here so the encoded transcript is reproducible.  ENCODECOM_VEC_BYTES is
  * the full vector length. */
@@ -167,7 +166,7 @@ static void poly_set_one(poly *v)
  *  (already NTT-domain from ExpandA).  This is the cached column-0 +     *
  *  A_gen block of the derived matrix; the factor-2, the q*j shift, the   *
  *  2*I_m e-block (Sign) and the -q*c*j correction (Verify) are applied   *
- *  inside the P09 mat_mul_* lift, NOT here.  See note (3) in the file    *
+ *  inside the mat_mul_* lift, NOT here.  See note (3) in the file        *
  *  banner for why column 0 is (b - a_gen), negated by mat_mul.           *
  * ===================================================================== */
 static void build_cached_matrix(poly16 bhat[EM], poly16 Ahat[EM * ELL],
@@ -201,7 +200,7 @@ uint32_t shuttle_last_keygen_attempts = 0;
 /* ===================================================================== *
  *  KeyGen  (crypto_sign_keypair) -- alg:keygen-internal                 *
  * ===================================================================== *
- * Deterministic given xi.  kappa timing (K4): kappa starts at 0 and is
+ * Deterministic given xi.  kappa timing: kappa starts at 0 and is
  * incremented to 1 BEFORE the first ExpandSeeds (first attempt uses
  * kappa=1, OPPOSITE to Sign).  Each norm-window failure loops back with
  * kappa incremented again.  KeyGen is over a PUBLIC key statistic, so the
@@ -230,7 +229,7 @@ static int keygen_from_xi(uint8_t *pk, uint8_t *sk,
     unsigned k;
 
     for (iter = 0; iter < SIGN_MAX_ITER; ++iter) {
-        kappa += 1; /* (K4) increment BEFORE use: first attempt kappa=1 */
+        kappa += 1; /* increment BEFORE use: first attempt kappa=1 */
 
         /* Step 2: T = ExpandSeeds(...); slice seedA | seedsk | K. */
         expand_seeds(T, xi, kappa);
@@ -317,7 +316,7 @@ static int keygen_from_xi(uint8_t *pk, uint8_t *sk,
             ok = keygen_norm_ok(stretched);
             PROF_STOP(PT_KG_NORM, t_kgw);
             if (!ok)
-                continue; /* (K4) loop back, kappa increments again */
+                continue; /* loop back, kappa increments again */
         }
 
         /* Steps 11-13: pkEncode, HashPK(tr), skEncode. */
@@ -469,13 +468,13 @@ static int sign_internal(uint8_t *sig, size_t *siglen, const uint8_t *m,
         uint8_t irs_seed[1 + SEEDBYTES];
 
         /* Step a: seed_y = ExpandSigningSeeds(K||rnd||mu||I2B(kappa,4))
-         * (0x01).  Uses the CURRENT kappa (K4). */
+         * (0x01).  Uses the CURRENT kappa. */
         PROF_CTX(PC_GAUSS);
         {
             PROF_START(t_sy);
             expand_signing_seeds(seedY, masterK, rnd, mu, kappa);
 
-            /* Step b: kappa++ AFTER use (K4).  Both restart causes below
+            /* Step b: kappa++ AFTER use.  Both restart causes below
              * re-enter with kappa already advanced; there is NO reset. */
             kappa += 1;
 
@@ -528,7 +527,7 @@ static int sign_internal(uint8_t *sig, size_t *siglen, const uint8_t *m,
             PROF_STOP(PT_CHALLENGE, t_ch);
         }
 
-        /* Steps j-l: FRESH IRS ctx (0x09||seed_y, K2); RejectSample [IRS];
+        /* Steps j-l: FRESH IRS ctx (0x09||seed_y); RejectSample [IRS];
          * z = CompressY(z_tilde). */
         PROF_CTX(PC_IRS);
         {
@@ -584,7 +583,7 @@ static int sign_internal(uint8_t *sig, size_t *siglen, const uint8_t *m,
             ok = response_norm_ok(z1, z2p);
             PROF_STOP(PT_NORMCHECK, t_nc);
             if (!ok)
-                continue; /* (K4) kappa already advanced */
+                continue; /* kappa already advanced */
         }
 
             /* Step q: sigEncode.  RAW path never fails; rANS may return

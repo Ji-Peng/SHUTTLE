@@ -1,8 +1,8 @@
 #!/bin/sh
-# Component-level dudect smoke (P13-T6 / CT-5, SMOKE, non-gating). Builds
+# Component-level dudect smoke (CT-5, SMOKE, non-gating). Builds
 # tools/dudect/dudect_components.c per backend x mode and runs it with
 # DUDECT_COMPONENT_N samples. The isochronous primitive cdt_scan96 /
-# sampler_sigma2 (K11 branchless full-table scan) is the gating probe;
+# sampler_sigma2 (branchless full-table scan) is the gating probe;
 # approx_exp / approx_log are provably branchless integer kernels (ct_scan owns
 # their CT property) so a high |t| on those few-cycle kernels is uarch noise,
 # not a leak. WARN is allowed; this never hard-gates run_tests.sh.

@@ -3,9 +3,9 @@
  *
  * The rejection-free inner masking transition (Algorithms alg:RejectSample
  * and alg:Ryv).  See irs.h for the full contract: the fresh 0x09||seed_y
- * context (K2), the ascending-j traversal (K5), the base-2->ln multiply by
- * 2 r^2 ln2 (K12 / MS-C2), the N=29 / 15-boundary-pair interval test, and
- * the isochrony / secret-vs-public leakage argument (the P13 anchor).
+ * context, the ascending-j traversal, the base-2->ln multiply by
+ * 2 r^2 ln2, the N=29 / 15-boundary-pair interval test, and the isochrony
+ * / secret-vs-public leakage argument.
  *
  * Constant-time discipline (irs.h "ISOCHRONY / LEAKAGE"):
  *   - the ONLY branch on the IRS path is the ascending-j  if (c[j])  gate,
@@ -35,7 +35,7 @@
  * ===================================================================== *
  *
  * RejectSample is rejection-FREE: it runs EXACTLY tau transitions (irs.h),
- * each consuming a FIXED 18 bytes (10 exponent + 8 mantissa, K3).  So the
+ * each consuming a FIXED 18 bytes (10 exponent + 8 mantissa).  So the
  * IRS needs EXACTLY tau*18 bytes off the 0x09||seed_y stream
  * (756/1044/2052 for SHUTTLE-128/256/512), DETERMINISTIC and PUBLIC in
  * length.
@@ -59,7 +59,7 @@
  * The avx2/avx512 backends fill the SAME tau*18 buffer N-way and
  * BYTE-EXACT to this scalar bulk squeeze (see irs_bulk_fill below).
  */
-#define IRS_BLOCK_BYTES 18 /* 10 exponent + 8 mantissa (K3) */
+#define IRS_BLOCK_BYTES 18 /* 10 exponent + 8 mantissa */
 #define IRS_BULK_BYTES ((size_t)TAU * IRS_BLOCK_BYTES)
 /* SM3-DRBG blocks for the bulk fill: ceil(tau*18 / 32) (24/33/65 for the
  * three sets).  Bounds the per-block message/digest scratch arrays. */
@@ -74,7 +74,7 @@ _Static_assert(IRS_BLOCK_BYTES == 18, "SamplerU block is 18 bytes");
  * ..., SM3(V+m-1)  (each the SM3 hash of the 55-byte working state V
  * incremented i times), copies the first L bytes out (the tail block is
  * truncated; L is a whole number of bytes here so no partial-byte mask
- * fires, K3), THEN advances the state once by  V <- V + SM3(0x03||V) + C +
+ * fires), THEN advances the state once by  V <- V + SM3(0x03||V) + C +
  * reseed_counter ; reseed_counter++.
  *
  * The m blocks are INDEPENDENT SM3 compressions of distinct 55-byte
@@ -207,7 +207,7 @@ static void irs_bulk_fill(xof_ctx *ctx, uint8_t *buf, size_t L)
 
 /* The u-vs-boundary comparison and the 2 r^2 ln2 multiply use GNU __int128
  * (a GCC/Clang extension ISO C does not define; -Wpedantic flags it).
- * Localize the suppression to this TU's __int128 use, exactly as P06 did.
+ * Localize the suppression to this TU's __int128 use.
  */
 #if defined(__GNUC__) || defined(__clang__)
 #    pragma GCC diagnostic push
@@ -215,11 +215,11 @@ static void irs_bulk_fill(xof_ctx *ctx, uint8_t *buf, size_t L)
 #endif
 
 /* ===================================================================== *
- *  IRS R-transition fixed-point constant (R3 / MS-C2)                    *
+ *  IRS R-transition fixed-point constant                                *
  *  Owned by tools/gen_irs_consts.py; re-derived by `make check-consts`.  *
  * ===================================================================== */
 /* @@AUTOGEN:irs_consts@@ BEGIN */
-/* IRS R-transition fixed-point constant (R3 / MS-C2; gen_irs_consts.py).
+/* IRS R-transition fixed-point constant (gen_irs_consts.py).
  *
  *   2 r^2 ln 2 = 2*825^2*ln2 = 943546.5995372255524442...
  *   R2LN2_QSHIFT = 44   (the Q-scale F; u is carried at Q44)
@@ -248,8 +248,7 @@ _Static_assert(TWO_RSQ == 1361250L, "2 r^2 = 2*825^2 = 1361250");
  * V = <sk_tilde, sk_tilde> = sum over KVEC polys, n coeffs each.  sk_tilde
  * = StretchS(sk) is norm-bounded (||sk_tilde|| <= B_k ~ 296, so V ~ 88000
  * < 2^17); the int64 accumulation cannot overflow.  Computed ONCE per
- * RejectSample and reused for every shift (isometry,
- * K5/Description.tex:1461).
+ * RejectSample and reused for every shift (isometry).
  */
 static int64_t sk_tilde_norm2(const poly sk_tilde[KVEC])
 {
@@ -310,7 +309,7 @@ static void poly_axpy_flag(poly z[KVEC], const poly v[KVEC], int64_t flag)
 }
 
 /* ===================================================================== *
- *  The u fixed-point form (K12 / MS-C2)                                  *
+ *  The u fixed-point form                                                *
  * ===================================================================== */
 
 /*
@@ -420,10 +419,10 @@ void reject_sample(xof_ctx *ctx, poly z[KVEC], const poly y[KVEC],
     /* z <- y  (copy; y may alias z safely after this). */
     memcpy(z, y, KVEC * sizeof(poly));
 
-    /* V = <sk_tilde, sk_tilde>, computed ONCE (isometry, K5). */
+    /* V = <sk_tilde, sk_tilde>, computed ONCE (isometry). */
     V = sk_tilde_norm2(sk_tilde);
 
-    /* Draw the ENTIRE IRS randomness in one shot (K2 single 0x09 ctx). The
+    /* Draw the ENTIRE IRS randomness in one shot (single 0x09 ctx). The
      * buffer length tau*18 is PUBLIC (tau is the challenge weight), so the
      * single squeeze is over a data-independent length -- no
      * secret-dependent squeeze count.  Backends fill this N-way and
@@ -432,8 +431,8 @@ void reject_sample(xof_ctx *ctx, poly z[KVEC], const poly y[KVEC],
     irs_bulk_fill(ctx, buf, IRS_BULK_BYTES);
 
     /*
-     * Strict ascending traversal j = 0..n-1, transition iff c[j] == 1
-     * (K5). c is PUBLIC, so this branch is a whitelisted public-data
+     * Strict ascending traversal j = 0..n-1, transition iff c[j] == 1.
+     * c is PUBLIC, so this branch is a whitelisted public-data
      * branch (irs.h leakage note).  Each matching j consumes the NEXT
      * 18-byte slice of buf (10 exponent + 8 mantissa) in ascending-j
      * order, decodes it to ell via sampler_u_decode (no XOF, pure

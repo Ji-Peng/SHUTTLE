@@ -1,12 +1,12 @@
 /*
- * test_xof.c -- P02 build-verify for the unified XOF layer (scalar ref).
+ * test_xof.c -- build-verify for the unified XOF layer (scalar ref).
  *
  * NGCC_MODE (default):
  *   - xof128_init/squeeze and xof256_init/squeeze are byte-exact aliases
  * of a direct init_random_number + get_random_number(..., K*8) call,
  * proving the wrapper is a faithful alias INCLUDING the bytes->bits
  * conversion.
- *   - xof128 == xof256 (the 128/256 collapse, MS-C5).
+ *   - xof128 == xof256 (the 128/256 collapse).
  *
  * SHA3_MODE (-DSHA3_MODE):
  *   - xof128_* (SHAKE128) and xof256_* (SHAKE256) round-trip against the
@@ -100,7 +100,7 @@ int main(void)
         /* xof128 collapses to the same SM3 DRBG -> identical to xof256. */
         xof128_init(&ctx, seed, sizeof(seed));
         xof128_squeeze(&ctx, w_xof128, K);
-        report("xof128 == xof256 (NGCC 128/256 collapse, MS-C5)",
+        report("xof128 == xof256 (NGCC 128/256 collapse)",
                memcmp(w_xof128, w_ref, K) == 0);
 
         /* NGCC DRBG semantics (NOT a rate-buffer): each get_random_number
@@ -108,7 +108,7 @@ int main(void)
          * then advances state ONCE per call.  So two separate squeezes do
          * NOT equal one concatenated squeeze (unlike a SHAKE rate cursor).
          * We assert exactly that, and that a re-seeded second squeeze
-         * reproduces the first block (determinism).  K6 design
+         * reproduces the first block (determinism).  Consumed-bytes
          * consequence: under NGCC_MODE a producer must draw a per-stream
          * chunk in ONE squeeze; the 16-stream flow's fixed,
          * whole-granularity refills already honor this. */

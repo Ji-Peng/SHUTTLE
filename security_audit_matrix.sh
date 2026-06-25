@@ -1,17 +1,17 @@
 #!/bin/sh
-# Full security audit gate (P13-T4): fault injection + negative parser corpus
-# (+ trace-KAT when P12's trace_kat.c lands). Each group runs across
+# Full security audit gate: fault injection + negative parser corpus
+# (+ trace-KAT when trace_kat.c lands). Each group runs across
 # backends x modes and aggregates a PASS/FAIL matrix.
 #
 # fault injection (test/security_fault_injection.c): every tampered/faulted
 #   input handled deterministically -- no crash, no accept of corrupted sig,
 #   no cross-message forge.
 # parser negative (test/parser_negative.c): every malformed signature (wrong
-#   length, bad seedC, rANS decode-fail K15, out-of-range hint K14) is a
+#   length, bad seedC, rANS decode-fail, out-of-range hint) is a
 #   deterministic public REJECT (crypto_sign_verify != 0).
-# trace-KAT (test/trace_kat.c, P12): exactly 1 distinct trace_hash per mode
+# trace-KAT (test/trace_kat.c): exactly 1 distinct trace_hash per mode
 #   across ref/avx2/avx512. Wired here; SKIPPED (not failed) until the driver
-#   exists, since P12 owns it.
+#   exists.
 set -eu
 cd "$(dirname "$0")"
 . ./tools/audit_lib.sh
@@ -63,7 +63,7 @@ run_group 'fault injection matrix' test/security_fault_injection.c "$FAULT_REPOR
     -DSIGN_MAX_ITER=12 || overall=FAIL
 run_group 'parser negative matrix' test/parser_negative.c "$PARSER_REPORT" || overall=FAIL
 
-# trace-KAT group (P12 owns trace_kat.c). Wire it when present; else SKIP.
+# trace-KAT group (trace_kat.c). Wire it when present; else SKIP.
 trace_status=SKIP
 if [ -f test/trace_kat.c ] || [ -f ref/test/trace_kat.c ]; then
     trace_status=PASS
@@ -106,8 +106,9 @@ if [ -f test/trace_kat.c ] || [ -f ref/test/trace_kat.c ]; then
 else
     {
         printf '=== SHUTTLE security trace-KAT matrix ===\n'
-        printf 'SKIP: test/trace_kat.c not present (P12 owns the trace driver); '
-        printf 'wired and ready -- K1/K10 are additionally covered by ct_scan '
+        printf 'SKIP: test/trace_kat.c not present; '
+        printf 'wired and ready -- the NTT-domain wire order and constant-time '
+        printf 'properties are additionally covered by ct_scan '
         printf '+ diff_fuzz + cross-backend KAT.\n'
         printf 'OVERALL: SKIP\n'
     } > "$TRACE_REPORT"

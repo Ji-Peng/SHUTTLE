@@ -1,5 +1,5 @@
 /*
- * symmetric.c -- the four scalar XOF primitive bodies (P02-T2/T3).
+ * symmetric.c -- the four scalar XOF primitive bodies.
  *
  * External linkage (matches the non-static prototypes in xof.h).  The MODE
  * switch lives in xof.h; this TU just provides the bodies.
@@ -64,7 +64,7 @@ void xof256_squeeze(xof_ctx *ctx, uint8_t *out, size_t out_len)
        *   xof256_init   = init_random_number  (seed_len already in      \
        * BYTES) xof256_squeeze= get_random_number   (out_len * 8 -- the                 \
        * BYTES->BITS shim) xof128_* are byte-exact aliases of xof256_*                             \
-       * (the 128/256 collapse, MS-C5): SM3 cannot reach 256-bit, so both                                       \
+       * (the 128/256 collapse): SM3 cannot reach 256-bit, so both                                       \
        * names drive the identical SM3 DRBG.  We implement them as                                                       \
        * separate function bodies (not #define aliases) so the namespaced                                                              \
        * symbols xofK_init / xofK_squeeze all exist for the linker and   \
@@ -82,7 +82,7 @@ void xof256_squeeze(xof_ctx *ctx, uint8_t *out, size_t out_len)
     /* BYTES -> BITS: get_random_number takes a BIT length (drng.h).  We
      * only ever request whole bytes, so the MSB-first high-bit masking of
      * the last byte inside get_random_number never fires on this plumbing
-     * path (K3). */
+     * path. */
     PROF_SQ(out_len); /* randomness accounting (PROF_RAND only) */
     (void)get_random_number(ctx, out, (unsigned long long)out_len * 8u);
 }

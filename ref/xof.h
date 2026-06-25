@@ -1,5 +1,5 @@
 /*
- * xof.h -- the unified XOF compatibility layer for SHUTTLE (P02).
+ * xof.h -- the unified XOF compatibility layer for SHUTTLE.
  *
  * Every keygen/sign/verify randomness draw flows through exactly four
  * scalar primitives (plus their _avx2/_avx512 lane-batched variants):
@@ -14,7 +14,7 @@
  *   NGCC_MODE (default, no extra -D): SM3 Hash-DRBG via the UNMODIFIABLE
  *       drng.{c,h}.  xof_ctx == DRNG_ctx.  Both xof128_* and xof256_*
  * collapse onto the SAME SM3 DRBG (SM3 cannot reach 256-bit security; the
- * 128/256 split is a placeholder for a future NGCC hash -- MS-C5).
+ * 128/256 split is a placeholder for a future NGCC hash).
  *
  *   SHA3_MODE (-DSHA3_MODE): SHAKE128 (public) / SHAKE256 (secret) via the
  *       vendored fips202.{c,h}.  xof_ctx == keccak_state.  These are TWO
@@ -23,7 +23,7 @@
  * The two MODEs are TWO DISTINCT KAT sets; within each MODE,
  * ref/avx2/avx512 must be byte-exact.
  *
- * Prototypes (Overview 4.1, BINDING):
+ * Prototypes (BINDING):
  *     void xofK_init   (xof_ctx *ctx, const uint8_t *seed, size_t
  * seed_len); void xofK_squeeze(xof_ctx *ctx, uint8_t *out,        size_t
  * out_len);
@@ -34,7 +34,7 @@
  *     NGCC_MODE wrapper does the bytes->bits *8 shim -- see symmetric.h).
  *
  * The actual function BODIES live in symmetric.h (thin static-inline
- * wrappers, Lithium symmetric.h pattern).  This header owns only the macro
+ * wrappers).  This header owns only the macro
  * switch, the xof_ctx typedef, the rate macros, the lane-count macros and
  * the four prototypes (so callers can include xof.h alone for the
  * declarations).
@@ -49,8 +49,8 @@
  *   DS_HASH_CH       = 0x04   DS_SAMPLE_Y  = 0x08
  *                             DS_IRS       = 0x09
  * DS_SAMPLE_Y (0x08) and DS_IRS (0x09) both derive from seed_y; IRS opens
- * a FRESH ctx absorbing 0x09||seed_y and does NOT continue SampleY's ctx
- * (K2). The XOF layer makes xof256_init cheap and stateless precisely to
+ * a FRESH ctx absorbing 0x09||seed_y and does NOT continue SampleY's ctx.
+ * The XOF layer makes xof256_init cheap and stateless precisely to
  * enable this.
  * ------------------------------------------------------------------------
  */
@@ -97,7 +97,7 @@ void xof256_squeeze(xof_ctx *ctx, uint8_t *out, size_t out_len);
 
 /* ===================================================================== *
  *  Lane-count macros: resolve the SM3 (8/16) vs Keccak (4/8) divergence  *
- *  and the FIXED 16-stream algorithm flow (K6).                          *
+ *  and the FIXED 16-stream algorithm flow.                               *
  * ===================================================================== */
 #if defined(SHA3_MODE)
 #    define XOF_LANES_AVX2 4
@@ -116,7 +116,7 @@ void xof256_squeeze(xof_ctx *ctx, uint8_t *out, size_t out_len);
  * Producers iterate `for (pass = 0; pass < XOF_STREAMS / LANES; pass++)`
  * and NEVER branch on lane count for the byte CONTENT; splitting
  * contiguous per-stream output across lanes is pointer arithmetic only.
- * See the shuttle_xof_passes() helper below and the K6 note. */
+ * See the shuttle_xof_passes() helper below and the 16-stream note. */
 #define XOF_STREAMS 16
 
 /* Number of lane-batched passes needed to cover all XOF_STREAMS at a given
@@ -125,17 +125,17 @@ void xof256_squeeze(xof_ctx *ctx, uint8_t *out, size_t out_len);
 #define XOF_NUM_PASSES(lanes) ((XOF_STREAMS + (lanes)-1) / (lanes))
 
 /* Pinned per-MODE squeeze granularity (BYTES per lane per refill).  The
- * 16-stream producers (ExpandA/ExpandS/SampleY, P07) refill in whole units
+ * 16-stream producers (ExpandA/ExpandS/SampleY) refill in whole units
  * of this size so ref (1 lane) and AVX (N lanes) consume the SAME amount
- * even when rejection sampling stops early (K6, full-mini-batch-tail
+ * even when rejection sampling stops early (full-mini-batch-tail
  * cursor advance).
  *
  *   NGCC : 32 B/SM3-compression * 4 = 128 B/lane  (4 SM3 calls per refill)
  *   SHA3 : 168 B/lane = SHAKE128_RATE (one squeezeblocks block)
  *
  * MUST be identical across ref/avx2/avx512 within a MODE; asserted by the
- * K6 diff-fuzz / KAT gate, NOT by a generator (these are rate-fixed, not
- * derived). Open item tracked in Overview 10 + MS-C5. */
+ * diff-fuzz / KAT gate, NOT by a generator (these are rate-fixed, not
+ * derived). */
 #if defined(SHA3_MODE)
 #    define XOF_SQUEEZE_GRANULARITY_BYTES SHAKE128_RATE /* 168 */
 #else

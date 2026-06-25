@@ -8,7 +8,7 @@
  * fully-unrolled 8-way permutation, originally by Gilles Van Assche et
  * al., CC0/public domain).
  *
- * MODIFICATIONS for Lithium-Code/avx512:
+ * MODIFICATIONS for this AVX-512 backend:
  *   - Stripped to ONLY the 24-round PermuteAll (the IRS fips202x8 wrappers
  * do their own absorb via _mm512_i64gather_epi64 XOR and squeeze via lane
  *     extract, so none of the XKCP SnP byte-accessors, the 12/6/4-round

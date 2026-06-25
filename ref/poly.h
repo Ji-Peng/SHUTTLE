@@ -1,14 +1,13 @@
 /*
  * poly.h -- ring-element TYPES for SHUTTLE + the NTT shim prototypes.
  *
- * Ownership split (Overview 12 / plans P03+P04):
- *   - P03 (this commit) owns the TWO poly types below and the poly_ntt /
+ * Ownership split:
+ *   - The TWO poly types below and the poly_ntt /
  *     poly_invntt_tomont / poly_pointwise / poly_ntt_canonical /
  *     poly_ntt_import shim prototypes (implemented in poly_ntt.{c,h}).
- *   - P04 owns the scheme-domain arithmetic helpers (poly_add, poly_sub,
- *     poly_reduce, poly_freeze, poly_sqnorm, packing, ...).  P04 APPENDS
- * them below the marker comment at the end of this file, so the two plans
- * never conflict on this header.
+ *   - The scheme-domain arithmetic helpers (poly_add, poly_sub,
+ *     poly_reduce, poly_freeze, poly_sqnorm, packing, ...) are APPENDED
+ * below the marker comment at the end of this file.
  *
  * TWO coefficient representations coexist:
  *   - `poly`   : int32_t coeffs[N].  The SCHEME-DOMAIN element.
@@ -44,7 +43,7 @@ _Static_assert(sizeof(poly16) == 2 * N,
                "(int16_t*) NTT-backend reinterpret cast");
 
 /* ===================================================================== *
- *  NTT shim prototypes (P03; bodies in poly_ntt.c + the avx2/avx512      *
+ *  NTT shim prototypes (bodies in poly_ntt.c + the avx2/avx512           *
  *  forks).  Uniform UPWARD contract over poly16, [0,q) canonical.  See   *
  *  poly_ntt.h for the full per-config dispatch + readback documentation. *
  * ===================================================================== */
@@ -55,7 +54,7 @@ _Static_assert(sizeof(poly16) == 2 * N,
 void poly_ntt(poly16 *a);
 
 /* Inverse NTT + to-Montgomery, canonicalized to [0,q) (after the signed
- * config's red16 + cond-add-q).  LiftToModTwoQ-ready (P09). */
+ * config's red16 + cond-add-q).  LiftToModTwoQ-ready. */
 void poly_invntt_tomont(poly16 *a);
 
 /* Coefficient-wise Montgomery product c = a*b*R^-1 (both operands in the
@@ -64,16 +63,17 @@ void poly_pointwise_montgomery(poly16 *c, const poly16 *a,
                                const poly16 *b);
 
 /* Forward NTT leaving the EXACT scalar (ref bit-reversed) order -- the
- * canonical wire-byte order for pk/sk/com.  KAT-critical (K1). */
+ * canonical wire-byte order for pk/sk/com.  KAT-critical (the NTT-domain
+ * wire order). */
 void poly_ntt_canonical(poly16 *a);
 
 /* Import a canonical-order (ref bit-reversed) NTT poly into the
  * backend-native slot order: ref = no-op (memcpy identity), AVX =
  * nttunpack shuffle.  Route any standard-sampled / wire-read poly through
- * this before an AVX pointwise (K1). */
+ * this before an AVX pointwise (the NTT-domain wire order). */
 void poly_ntt_import(poly16 *a);
 
-/* === P04 extends poly.h below (arithmetic helpers) === */
+/* === arithmetic helpers extend poly.h below === */
 
 /* `poly` (int32 coeffs[N]) is the scheme/wire type: it must hold centered
  * coefficients, un-reduced accumulators, and the mod-2q lift (2q can
@@ -83,7 +83,7 @@ _Static_assert(sizeof(poly) == 4 * N,
                "poly must be a flat int32_t[N] (no padding)");
 
 /* ---------------------------------------------------------------------- *
- *  Scheme-domain arithmetic helpers (P04).  Bodies in poly.c.            *
+ *  Scheme-domain arithmetic helpers.  Bodies in poly.c.                  *
  *                                                                        *
  *  These operate on the signed int32 `poly` type and wrap the per-coeff  *
  *  reduce.{c,h} primitives (reduce32 / caddq / freeze).  They run on     *
@@ -130,15 +130,14 @@ int64_t poly_sqnorm(const poly *a);
 /*
  * unpack_pk_bn -- fused bitunpack + rescale for the public-key b poly.
  *
- * SHUTTLE divergence from Lithium (see 04-Poly-Packing.md "Design notes ->
- * unpack_pk_bn"): the packed pk field is the COEFFICIENT-DOMAIN quotient
- * b1 = b/alpha_b in [0, ceil(q/alpha_b)), NOT an NTT-domain residue.
- * Reconstruction is b = alpha_b*b1, a left shift by 1 or 2 bits (alpha_b
- * in {2,4}).  Because alpha_b*(ceil(q/alpha_b)-1) < q, the rescale alone
- * lands every coeff in [0, q): there is NO conditional subtract of q
- * (unlike Lithium's freeze fusion) and NO nttunpack / poly_ntt_import
- * afterwards (b is consumed in the COEFFICIENT domain by KeyGen / Sign /
- * Verify).
+ * The SHUTTLE design point: the packed pk field is the COEFFICIENT-DOMAIN
+ * quotient b1 = b/alpha_b in [0, ceil(q/alpha_b)), NOT an NTT-domain
+ * residue.  Reconstruction is b = alpha_b*b1, a left shift by 1 or 2 bits
+ * (alpha_b in {2,4}).  Because alpha_b*(ceil(q/alpha_b)-1) < q, the
+ * rescale alone lands every coeff in [0, q): there is NO conditional
+ * subtract of q (unlike a freeze-fused bitunpack) and NO nttunpack /
+ * poly_ntt_import afterwards (b is consumed in the COEFFICIENT domain by
+ * KeyGen / Sign / Verify).
  *
  * This is the FAST, TRUSTED-input path: the caller (sk path) guarantees
  * the bytes came from our own pack_pk/pack_sk, so the b1 < ceil(q/ab)

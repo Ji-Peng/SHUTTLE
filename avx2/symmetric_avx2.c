@@ -1,5 +1,5 @@
 /*
- * symmetric_avx2.c -- AVX2 lane-batched XOF variant bodies (P02-T6).
+ * symmetric_avx2.c -- AVX2 lane-batched XOF variant bodies.
  *
  * Implements xof128/256_avx2_init/squeeze on top of the already-built
  * N-way primitives.  The signature shape mirrors the existing N-way
@@ -49,7 +49,7 @@
  * hardware `div`.  out_len is the (public) squeeze length, never secret, so
  * the divide would be safe regardless -- but keeping it a constant divisor
  * keeps the constant-time scanner (tools/ct_scan.py) clean now that this TU
- * sits on the secret-seeded ExpandS/SampleY path (M9). */
+ * sits on the secret-seeded ExpandS/SampleY path. */
 #    define SHAKEX4_SQUEEZE_BODY(out, out_len, st, RATE, SQBLK)        \
         do {                                                          \
             /* Division-free nblocks/off (out_len is PUBLIC): gcc -Os   \

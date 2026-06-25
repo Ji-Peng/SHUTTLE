@@ -19,7 +19,7 @@ int sm3hash_avx2(const unsigned char *const msg[8],
                  unsigned char *const digest[8]);   /* 32-byte digests */
 ```
 
-`output_len_bits` and `msg_len_bits` are **shared** across the 8 lanes; `msg[]` and `output[]` are **per-lane** pointers. This matches the brief: in `pseudoXOF_avx2` the two lengths are unified for all 8 lanes while the messages and outputs are 8 separate buffers. `pseudoXOF` follows GB/T 32918.4-2016 §5.4.3 (KDF-SM3): output block $i$ is $\mathrm{SM3}(\text{msg} \parallel ct)$ with the 32-bit counter $ct = i+1$ appended MSB-first.
+`output_len_bits` and `msg_len_bits` are **shared** across the 8 lanes; `msg[]` and `output[]` are **per-lane** pointers. This matches the interface contract: in `pseudoXOF_avx2` the two lengths are unified for all 8 lanes while the messages and outputs are 8 separate buffers. `pseudoXOF` follows GB/T 32918.4-2016 §5.4.3 (KDF-SM3): output block $i$ is $\mathrm{SM3}(\text{msg} \parallel ct)$ with the 32-bit counter $ct = i+1$ appended MSB-first.
 
 ## DRNG (8-way SM3 Hash-DRBG)
 

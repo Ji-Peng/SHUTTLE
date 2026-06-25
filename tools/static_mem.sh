@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # static_mem.sh -- NGCC static-memory metric for the SHUTTLE production
-# library (P14, deliverable 5).
+# library.
 #
 # Sums the ELF section sizes of the per-instance SCHEME object set:
 #     static_text  = sum of .text

@@ -1,7 +1,7 @@
 /*
- * test_pack.c -- build-verify for the P04 (de)serialization layer.
+ * test_pack.c -- build-verify for the (de)serialization layer.
  *
- * Covers (per the 04-Poly-Packing.md test plan):
+ * Covers:
  *   (a) poly_to_bytes / bytes_to_poly round-trip over random in-range
  * polys for every field width d in {1, d_s, d_e, d_h, d_b} (and the
  *       cross-set widths 1/5/6/7/13/14/15); output length == ceil(N*d/8);
@@ -13,9 +13,9 @@
  * unpack_pk's b. (c) pack_sk / unpack_sk round-trip (seedA/masterSeed/tr
  * verbatim; s/e' exact after shift); realized sk length == 2288/3680/7104;
  * reported. (d) pack_com / unpack_com round-trip for in-range commitments.
- *   (e) NEGATIVE (K14): a comY_h coeff set to a value in [H_h, 2^d_h)
- * makes unpack_com return -1 (range-CHECK-then-reject, NOT mod-H_h wrap);
- *       plus pk_decode rejects an over-range b1 and sk_decode rejects an
+ *   (e) NEGATIVE (range-reject): a comY_h coeff set to a value in [H_h,
+ * 2^d_h) makes unpack_com return -1 (range-CHECK-then-reject, NOT mod-H_h
+ * wrap); plus pk_decode rejects an over-range b1 and sk_decode rejects an
  *       out-of-range secret coeff.
  *
  * No external RNG: a tiny self-contained xorshift keeps the test
@@ -281,14 +281,14 @@ static void test_com(void)
 }
 
 /* ====================================================================== *
- *  (e) negative tests (K14 + range rejects)                              *
+ *  (e) negative tests (range rejects)                                   *
  * ======================================================================
  */
 static void test_negative(void)
 {
     int fail = 0;
 
-    /* K14: a comY_h coeff in [H_h, 2^d_h) must be REJECTED, not wrapped.
+    /* a comY_h coeff in [H_h, 2^d_h) must be REJECTED, not wrapped.
      */
     if ((1u << DH_BITS) <= (unsigned)HH) {
         /* would mean no reject gap exists -- structural error */
@@ -317,7 +317,7 @@ static void test_negative(void)
         if (!any_reject_ok)
             fail = 1;
     }
-    report("decode_com REJECTS [H_h,2^d_h) (K14)", fail);
+    report("decode_com REJECTS [H_h,2^d_h)", fail);
 
     /* pk_decode rejects an over-range b1 field (>= ceil(q/alpha_b)).  Only
      * exists when 2^d_b > ceil(q/alpha_b), which holds for all three sets.

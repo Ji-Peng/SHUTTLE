@@ -7,9 +7,9 @@
 /* The uint16 Montgomery core (montgomery_reduce16 / fqmul16 / addm16 /
  * subm16, R = 2^16) lives as static inline in reduce.h.  This file carries
  * the signed centered / mod-2q helpers used by the SCHEME domain
- * (poly_reduce/freeze in P04, rounding/LiftToModTwoQ in P09).  Bodies are
- * byte-for-byte the Lithium-Code forms (verified bit-identical to a%q /
- * a%2q over the full int32 range there); only Q / DQ are re-pointed at the
+ * (poly_reduce/freeze, rounding/LiftToModTwoQ).  Bodies are
+ * byte-for-byte the standard Barrett forms (verified bit-identical to a%q
+ * / a%2q over the full int32 range); only Q / DQ are re-pointed at the
  * SHUTTLE per-set values. */
 
 /* ============================================================
@@ -25,8 +25,9 @@
  * (verified by t_reduce.c over a dense int32 sweep that hits every
  * multiple-of-d boundary up to 2^31).
  *
- * SH = 46 (P03 deviation from the plan's SH=47).  SH=47 is Lithium's value
- * and is SOUND for Lithium's larger q, but for SHUTTLE-128's q=15361 the
+ * SH = 46 (a deviation from the more common SH=47).  SH=47 is the value
+ * used in reference Dilithium-style code and is SOUND for a larger q, but
+ * for SHUTTLE-128's q=15361 the
  * reciprocal floor(2^47/15361) ~ 2^33.1, so au*REC for au up to 2^31
  * reaches ~2^64.1 and OVERFLOWS uint64 (verified: reduce32==a%q then fails
  * for q=15361 only).  SH=46 is the largest shift that keeps au*REC < 2^64

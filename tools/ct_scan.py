@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compile and objdump SHUTTLE secret-handling objects for forbidden CT opcodes.
 
-This is the P13 KyberSlash main-defense gate: source-level constant-time is NOT
+This is the KyberSlash main-defense gate: source-level constant-time is NOT
 enough (gcc -Os re-emits a real `idiv` for "divide by constant" that -O3 turns
 into reciprocal-multiply), so we descend to the machine-code level.  Each
 secret-handling source is compiled to an object file across the matrix
@@ -13,15 +13,15 @@ BAD_MNEMONIC_RE is FLAGGED unless allowlisted (gather on public SHAKE/SM3 lane
 pointers, or a public-length division inside a named block-count function).
 Every allowlist entry cites a section of SECRET_PUBLIC_AUDIT.md.
 
-Re-keyed from Lithium-Code/tools/ct_scan.py:
-  * -DLITHIUM_MODE -> -DSHUTTLE_MODE; MODES = (128, 256, 512).
+Re-keyed from the reference Dilithium-style scanner:
+  * mode macro -> -DSHUTTLE_MODE; MODES = (128, 256, 512).
   * QSETS = {128: q15361n256, 256: q61441n512, 512: q59393n1024}.
   * REF_SRCS extended to SHUTTLE's layout (sampler_u.c, approx_log.c, poly.c,
     rans.c for irs_rans.c, and the SM3 path drng.c/auxfunc.c since NGCC_MODE is
     the default).
-  * NEW vs Lithium: the NGCC/SHA3 XOF axis (`--xofs`).  NGCC_MODE pulls
+  * NEW vs the reference: the NGCC/SHA3 XOF axis (`--xofs`).  NGCC_MODE pulls
     drng.c/auxfunc.c; SHA3_MODE pulls fips202.c (the scheme XOF backend).
-  * SHUTTLE ships NO opt-in float-exp variant (integer-only, Overview 4.7), so
+  * SHUTTLE ships NO opt-in float-exp variant (integer-only), so
     `--include-optional` is a documented no-op (no avx2exp / ifmaexp variant).
 
 Usage:
@@ -78,7 +78,7 @@ ALLOW_GATHER_SOURCES = {
 # it is public-length block-count arithmetic (output byte counts / batch sizes),
 # never secret-value arithmetic.  Each cites SECRET_PUBLIC_AUDIT.md.
 #
-# SHUTTLE re-key vs Lithium:
+# SHUTTLE re-key vs the reference:
 #   * sampler.c Gaussian length block counts: SHUTTLE's batched samplers are
 #     `sample_gauss_*` / `noise_magnitude_batch` / `sampler_sigma2` (public
 #     batch sizes; SECRET_PUBLIC_AUDIT "Sampler" public-length).
@@ -125,28 +125,28 @@ ALLOW_PUBLIC_DIVS = [
 FUNC_LABEL_RE = re.compile(r"^[0-9a-fA-F]+ <([^>]+)>:$")
 
 BASE_CFLAGS = ["-fstack-protector-strong", "-Wall", "-Wextra", "-std=c99"]
-# NOTE (MS-D1): BASE_CFLAGS deliberately OMIT -fwrapv.  The production build
-# carries -fwrapv (Overview 4.7); the scanner only needs the worst-case
-# instruction selection, and -fwrapv does not influence div/idiv emission.
+# NOTE: BASE_CFLAGS deliberately OMIT -fwrapv.  The production build
+# carries -fwrapv; the scanner only needs the worst-case instruction
+# selection, and -fwrapv does not influence div/idiv emission.
 
-# SHUTTLE secret-handling source list (re-keyed from Lithium per
-# 13-Security-Audit.md REF_SRCS).  These are the files that touch sk / s / e /
-# y / per-coefficient samples / IRS state / the secret z|hint stream.
+# SHUTTLE secret-handling source list (re-keyed from the reference REF_SRCS).
+# These are the files that touch sk / s / e / y / per-coefficient samples /
+# IRS state / the secret z|hint stream.
 REF_SRCS = [
-    "sampler.c",        # BaseSampler 96-bit CDT + ExpandS + SampleY (P05/P07)
-    "sampler_u.c",      # SamplerU (CLZ + MSB-first mantissa + ApproxLog) (P08)
-    "approx_exp.c",     # ApproxExp t7d8 Q64 (P06)
-    "approx_log.c",     # ApproxLog g2d13 Q62 (P06)
-    "irs.c",            # RejectSample / R transition (P08)
-    "rans.c",           # rANS codec on the secret-derived z/hint stream (P10)
-    "polyvec.c",        # NTT-domain poly vectors, unpack_pk_bn fused freeze (P04)
-    "poly.c",           # poly types + PolyToBytes/BytesToPoly (P04)
-    "packing.c",        # pk/sk/sig (un)pack -- AABBCC bug hot-zone (P04/P10)
-    "reduce.c",         # Barrett/Montgomery -- NO % / NO / (P03)
-    "rounding.c",       # CompressY/StretchS/RoundB/mod-2q lift/hint (P09)
-    "sign.c",           # KeyGen/Sign/Verify orchestration (P11)
-    "poly_ntt.c",       # scalar/SIMD ntt shim (+ ntt/<qset>/ntt_ref.c) (P03)
-    "symmetric.c",      # XOF wrappers (symmetric.{c,h}/xof.h) (P02)
+    "sampler.c",        # BaseSampler 96-bit CDT + ExpandS + SampleY
+    "sampler_u.c",      # SamplerU (CLZ + MSB-first mantissa + ApproxLog)
+    "approx_exp.c",     # ApproxExp t7d8 Q64
+    "approx_log.c",     # ApproxLog g2d13 Q62
+    "irs.c",            # RejectSample / R transition
+    "rans.c",           # rANS codec on the secret-derived z/hint stream
+    "polyvec.c",        # NTT-domain poly vectors, unpack_pk_bn fused freeze
+    "poly.c",           # poly types + PolyToBytes/BytesToPoly
+    "packing.c",        # pk/sk/sig (un)pack -- AABBCC bug hot-zone
+    "reduce.c",         # Barrett/Montgomery -- NO % / NO /
+    "rounding.c",       # CompressY/StretchS/RoundB/mod-2q lift/hint
+    "sign.c",           # KeyGen/Sign/Verify orchestration
+    "poly_ntt.c",       # scalar/SIMD ntt shim (+ ntt/<qset>/ntt_ref.c)
+    "symmetric.c",      # XOF wrappers (symmetric.{c,h}/xof.h)
 ]
 # Per-XOF additional secret-handling sources (the XOF backend itself).
 XOF_SRCS = {
@@ -156,7 +156,7 @@ XOF_SRCS = {
 # AVX N-way XOF additions (the scalar XOF lives in REF_SRCS+XOF_SRCS; these are
 # the backend-specific N-way kernels that also touch secret-seeded state).
 AVX2_EXTRA = {
-    # symmetric_avx2.c = the xof*_avx2_* lane-batched wrappers (M9 ExpandA/
+    # symmetric_avx2.c = the xof*_avx2_* lane-batched wrappers (the ExpandA/
     # ExpandS/SampleY N-way refills); pure pointer marshaling over the N-way
     # kernels, but it sits on the secret-seeded ExpandS/SampleY path so we
     # scan it too.
@@ -164,7 +164,7 @@ AVX2_EXTRA = {
     "sha3": ["symmetric_avx2.c", "fips202x4.c", "f1600x4.S"],
 }
 AVX512_EXTRA = {
-    # symmetric_avx512.c = the xof*_avx512_* lane-batched wrappers (M9
+    # symmetric_avx512.c = the xof*_avx512_* lane-batched wrappers (the
     # ExpandA/ExpandS/SampleY N-way refills); pure pointer marshaling over the
     # N-way kernels, but it sits on the secret-seeded ExpandS/SampleY path so
     # we scan it too (mirrors symmetric_avx2.c in AVX2_EXTRA).  Its SHA3
@@ -245,9 +245,9 @@ def backend_sources(backend, mode, xof, variant):
 
 
 def variants_for(backend, include_optional):
-    # SHUTTLE is integer-only by default (Overview 4.7); there is NO opt-in
-    # float/IFMA exp path, so --include-optional adds no variant.  Recorded as
-    # a deliberate no-op per 13-Security-Audit.md P13-T12.
+    # SHUTTLE is integer-only by default; there is NO opt-in float/IFMA exp
+    # path, so --include-optional adds no variant.  Recorded as a deliberate
+    # no-op.
     return [Variant("default", (), ())]
 
 

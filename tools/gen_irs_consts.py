@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """gen_irs_consts.py - the IRS R-transition fixed-point constants for SHUTTLE.
 
-P08 (irs.c) restores the natural-log test variable u = 2 r^2 ln(U) from the
-base-2 value ell ~= log2(U) returned by SamplerU/ApproxLog (K12) with a single
+irs.c restores the natural-log test variable u = 2 r^2 ln(U) from the
+base-2 value ell ~= log2(U) returned by SamplerU/ApproxLog with a single
 multiply by the reproducible real constant
 
     2 r^2 ln 2 = 2 * 825^2 * ln 2 = 943546.5995372256...    (with 2 r^2 = 1361250).
 
 This constant is NOT an integer, so it is carried in fixed point.  This
-generator PINS the Q-scale F (the R3 / MS-C2 decision), emits the rounded
-integer R2LN2_QF into the @@AUTOGEN:irs_consts@@ region of ref/irs.c, and
-asserts that the integer u-vs-boundary comparison reproduces the high-precision
-float reference on a dense (t, V, ell) grid.
+generator PINS the Q-scale F, emits the rounded integer R2LN2_QF into the
+@@AUTOGEN:irs_consts@@ region of ref/irs.c, and asserts that the integer
+u-vs-boundary comparison reproduces the high-precision float reference on a
+dense (t, V, ell) grid.
 
-================ The pinned Q-form (R3 / MS-C2; see irs.c header) ============
+================ The pinned Q-form (see irs.c header) ========================
 
 ApproxLog returns log2(b) as a Q62 SIGNED int64 `frac`; SamplerU additionally
 yields the integer exponent `a` in {1..81}.  Thus
@@ -61,7 +61,7 @@ TWO_RSQ = 2 * RY * RY  # 1361250
 LN2 = mpmath.ln(2)
 TWO_RSQ_LN2 = TWO_RSQ * LN2  # 943546.5995372256...
 
-# ---- the pinned Q-scale (R3 / MS-C2) ----
+# ---- the pinned Q-scale ----
 R2LN2_QSHIFT = 44  # F: u carried at Q44; see module docstring.
 FRAC_QBITS = 62    # ApproxLog `frac` is Q62 (= SHUTTLE_LOG_POLY_QBITS).
 
@@ -142,7 +142,7 @@ def grid_reproduction_check(F, R):
 
 
 BLOCK_TEMPLATE = """\
-/* IRS R-transition fixed-point constant (R3 / MS-C2; gen_irs_consts.py).
+/* IRS R-transition fixed-point constant (gen_irs_consts.py).
  *
  *   2 r^2 ln 2 = 2*825^2*ln2 = {real}...
  *   R2LN2_QSHIFT = {F}   (the Q-scale F; u is carried at Q{F})

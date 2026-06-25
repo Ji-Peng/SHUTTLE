@@ -10,7 +10,7 @@ software is used for any other purposes.
 */
 
 /*
- * SIG_AlgorithmInstance.c -- the NGCC adapter for SHUTTLE (P11).
+ * SIG_AlgorithmInstance.c -- the NGCC adapter for SHUTTLE.
  *
  * Thin glue mapping the fixed NGCC sig_* contract
  * (SIG_AlgorithmInstance.h) onto the SHUTTLE top-level KeyGen/Sign/Verify
@@ -19,7 +19,7 @@ software is used for any other purposes.
  *   (1) the three byte-length getters return the params.h size macros
  *       (CRYPTO_PUBLICKEYBYTES / CRYPTO_SECRETKEYBYTES / CRYPTO_BYTES);
  *       CRYPTO_BYTES is the rANS-variable signature UPPER BOUND
- *       (sig_get_sn_len_bytes(), MS-A6), large enough for either the RAW
+ *       (sig_get_sn_len_bytes()), large enough for either the RAW
  *       or rANS packing -- KAT_SIG.c calloc's the sn buffer with it once.
  *
  *   (2) the three entry points draw the scheme-internal randomness from
@@ -39,7 +39,7 @@ software is used for any other purposes.
  * order; it must be identical across ref/avx2/avx512 within a MODE.  For a
  * deterministic KAT one may instead zero rnd -- this adapter uses the
  * hedged draw (rnd from the DRBG) to match the spec's Sign(sk, M, rnd)
- * signature; the choice is pinned per MODE in P12 (Open Q "rnd source").
+ * signature; the rnd-source choice is pinned per MODE.
  */
 
 #include "SIG_AlgorithmInstance.h"
@@ -98,7 +98,7 @@ unsigned long long sig_get_sn_len_bytes()
     /* The fixed signature length for the compiled packing path (RAW vs
      * rANS).  KAT_SIG.c calloc's the sn buffer with exactly this, so it
      * MUST be >= the realized signature length (RAW is larger than the
-     * rANS CRYPTO_BYTES bound -- see SHUTTLE_SIG_LEN above, MS-A6). */
+     * rANS CRYPTO_BYTES bound -- see SHUTTLE_SIG_LEN above). */
     return SHUTTLE_SIG_LEN;
 }
 
@@ -130,7 +130,7 @@ int sig_sign(unsigned char *sk, unsigned long long sk_len_bytes,
         sk_len_bytes; /* fixed by CRYPTO_SECRETKEYBYTES; not re-checked */
     /* Hedged signing: draw rnd (RNDBYTES) from the DRBG.  For a purely
      * deterministic KAT one would zero rnd instead; the byte schedule
-     * (xi for KeyGen, then rnd for each Sign) is pinned per MODE in P12.
+     * (xi for KeyGen, then rnd for each Sign) is pinned per MODE.
      */
     if (get_random_number(&drng_algorithm, rnd,
                           (unsigned long long)RNDBYTES * 8) != 0)

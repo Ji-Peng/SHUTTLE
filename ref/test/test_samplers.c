@@ -1,5 +1,5 @@
 /*
- * test_samplers.c -- build-verify for the P07 Expand and Sample wiring
+ * test_samplers.c -- build-verify for the Expand and Sample wiring
  *                    (scalar reference).  Pure C99.
  *
  * Build (per mode m in 128/256/512), NGCC_MODE (default):
@@ -10,7 +10,7 @@
  *       ref/approx_exp.c ref/approx_log.c -DSHUTTLE_MODE=<m>
  * (SHA3_MODE adds -DSHA3_MODE and swaps drng.c+auxfunc.c -> fips202.c.)
  *
- * Coverage (07-Samplers-Wiring.md test plan):
+ * Coverage:
  *   (a) ExpandSeeds: fixed xi -> deterministic seedA/seedsk/K split;
  * re-run determinism; the three slices are distinct. (b) ExpandA: fixed
  * seedA -> deterministic A_gen; every coeff in [0,q); statistical
@@ -31,7 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "approx_exp.h" /* approx_exp_accept_q64 (scalar x1, for the K10 oracle) */
+#include "approx_exp.h" /* approx_exp_accept_q64 (scalar x1, oracle) */
 #include "params.h"
 #include "polyvec.h"
 #include "sampler.h"
@@ -383,8 +383,8 @@ static int test_sample_y(void)
     return fail;
 }
 
-/* ===================== batch == scalar-loop (e, the K10 oracle) ====== *
- * Re-derive one SampleY lane chunk with an INDEPENDENT scalar reference
+/* ===================== batch == scalar-loop (e, the byte-exact oracle) =
+ * * Re-derive one SampleY lane chunk with an INDEPENDENT scalar reference
  * loop (single-candidate gauss_finalize + scalar approx_exp) reading the
  * SAME per-lane stream bytes, and assert it is bit-identical to the
  * gauss_stream_chunk batch path. */
@@ -456,7 +456,7 @@ static int test_batch_eq_scalar(void)
     return fail;
 }
 
-/* ===================== cursor-advance determinism (K6/K8) ============ *
+/* ============ cursor-advance determinism (consumed-bytes rule) ======= *
  * The whole mini-batch tail is consumed up front, so gs->pos advances by a
  * FIXED amount per mini-batch regardless of how many candidates were
  * accepted (early break).  Drive one ExpandS lane stream, and assert the
@@ -468,7 +468,8 @@ static int test_cursor_determinism(void)
     /* Two ExpandS runs on the SAME seedsk must be byte-identical (already
      * checked in test_expand_s); here we additionally verify the
      * STRUCTURAL cursor-advance contract: the per-lane stream consumes
-     * whole mini-batch units.  We assert the relation that drives K6/K8:
+     * whole mini-batch units.  We assert the consumed-bytes determinism
+     * relation:
      *
      *   the per-lane byte budget to fill a chunk of W coeffs is a whole
      *   number of NOISE_MINIBATCH_RAND_BYTES mini-batches, NOT a function
@@ -504,7 +505,7 @@ static int test_cursor_determinism(void)
 }
 
 /* ===== (g) gauss_finalize_batch == per-candidate gauss_finalize ======= *
- * SIMD-only: the M9 vectorized SIGN-INDEPENDENT precompute (cand/negcand/
+ * SIMD-only: the vectorized SIGN-INDEPENDENT precompute (cand/negcand/
  * accept/z0) must be BIT-IDENTICAL to GAUSS_BATCH scalar gauss_finalize
  * calls, for every (x,y,p_hat,tail,sign), including the precision-critical
  * 64-bit unsigned Bernoulli compare at its hard edges (u == p_hat, u =
@@ -616,7 +617,7 @@ static int test_finalize_batch_eq_scalar(void)
 
 int main(void)
 {
-    printf("== test_samplers (SHUTTLE-%d, ref scalar P07) ==\n",
+    printf("== test_samplers (SHUTTLE-%d, ref scalar) ==\n",
            (int)SHUTTLE_MODE);
     printf("[a] ExpandSeeds / ExpandSigningSeeds\n");
     report("ExpandSeeds determinism + slices", test_expand_seeds());
@@ -629,7 +630,7 @@ int main(void)
     printf("[e] SampleY / SampleDGauss (wide Gaussian r=825)\n");
     report("SampleY stats+determinism", test_sample_y());
     report("SampleY batch == scalar loop", test_batch_eq_scalar());
-    printf("[f] cursor-advance determinism (K6/K8)\n");
+    printf("[f] cursor-advance determinism\n");
     report("mini-batch fixed cursor advance", test_cursor_determinism());
 #if (defined(USE_AVX2_SAMPLER) && defined(__AVX2__)) || \
     (defined(USE_AVX512_SAMPLER) && defined(__AVX512F__))

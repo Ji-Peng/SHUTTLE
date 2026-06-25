@@ -6,7 +6,7 @@ CompressY divides each y-block by a positive divisor alpha in {alpha_1, alpha_s,
 alpha_e} = {90/135/144, 10/5/3, 5/5/3} (NOT powers of two), ROUNDING to nearest
 with TIES AWAY FROM ZERO (Description.tex:65).  These divides act on
 SECRET-derived data (the uncompressed response), so NO hardware idiv / `% const`
-is allowed (Overview 4.4).
+is allowed.
 
 The branchless ties-away kernel computes |v|, an unsigned round-divide, then
 re-signs:

@@ -1,9 +1,8 @@
 /*
  * fips202x8.h -- 8-way (AVX-512) SHAKE128/SHAKE256 for SHUTTLE SHA3_MODE.
  *
- * Vendored from the Lithium AVX-512 reference
- * (/home/jipengzhang/code/NGCC_Project/Lithium-Code/avx512/{fips202x8.c,
- * keccakf1600x8.c}); self-contained inside SHUTTLE/.  The namespace macro
+ * Vendored from an AVX-512 reference (fips202x8.c / keccakf1600x8.c);
+ * self-contained inside SHUTTLE/.  The namespace macro
  * FIPS202X8_NAMESPACE is bound to the SHUTTLE per-set/per-backend
  * SHUTTLE_NAMESPACE (config.h) so all sets co-link.  Compiled ONLY under
  * SHA3_MODE; the default NGCC_MODE avx512 build never links it.

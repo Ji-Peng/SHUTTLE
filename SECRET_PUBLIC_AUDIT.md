@@ -2,7 +2,7 @@
 
 This note is the secret/public classification baseline for SHUTTLE. Any future division, modulus, lookup, branch, gather allowlist, rejection-timing decision, or declassification in secret-handling code must cite one of the entries below, or extend this note in the same style, before the code change lands. It is the human-auditable source of truth that every `tools/ct_scan.py` allowlisted forbidden-instruction exemption points at.
 
-Re-keyed from `Lithium-Code/docs/design-notes/SECRET_PUBLIC_AUDIT.md`: SHUTTLE's parameter sets are `128/256/512` (module dims `1+ELL+EM = KVEC = 7/6/6`), the default XOF is the NGCC SM3 Hash-DRBG (a NEW `XOF / DRNG` section vs Lithium's SHAKE-only path), and the core rejection sampler is the rejection-FREE Iterated Rejection Sampler (IRS), so the per-message iteration count is NOT a secret-dependent loop count (see the IRS section).
+SHUTTLE's parameter sets are `128/256/512` (module dims `1+ELL+EM = KVEC = 7/6/6`), the default XOF is the NGCC SM3 Hash-DRBG (a `XOF / DRNG` section, replacing a SHAKE-only path), and the core rejection sampler is the rejection-FREE Iterated Rejection Sampler (IRS), so the per-message iteration count is NOT a secret-dependent loop count (see the IRS section).
 
 ## Classification Labels
 
@@ -35,13 +35,13 @@ Re-keyed from `Lithium-Code/docs/design-notes/SECRET_PUBLIC_AUDIT.md`: SHUTTLE's
 
 - Gaussian and noise sample values, sign bits, CDT decisions, ApproxExp acceptance values, refill state that depends on accepted samples, and the generated secret-key / signing vectors are `secret`.
 - XOF output block counts derived from fixed sampler batch sizes, initial refill sizes, lane counts, and mode constants are `public length`.
-- The 96-bit RCDT tables, the ApproxExp / ApproxLog polynomial tables, and the fixed distribution tables are `public`; indexes into them are allowed only through full scans (the branchless 96-bit `cdt_scan96`, K11 — full-table scan + borrow-fold equality mask), fixed-lane SIMD selection, or documented constant-time table selection. SamplerU's `__builtin_clzll` (K3) lowers to `lzcnt`/`bsr` (NOT in the forbidden set) and consumes no float conversion (SHUTTLE is integer-only, Overview 4.7).
+- The 96-bit RCDT tables, the ApproxExp / ApproxLog polynomial tables, and the fixed distribution tables are `public`; indexes into them are allowed only through full scans (the branchless 96-bit `cdt_scan96` full-table scan + borrow-fold equality mask), fixed-lane SIMD selection, or documented constant-time table selection. SamplerU's `__builtin_clzll` (MSB-first bit extraction) lowers to `lzcnt`/`bsr` (NOT in the forbidden set) and consumes no float conversion (SHUTTLE is integer-only).
 
-## IRS (cross-reference P08 §S8, irs.h "ISOCHRONY / LEAKAGE (P13 anchor)")
+## IRS (see the "ISOCHRONY / LEAKAGE" notes in irs.h)
 
 - `seed_y`, the stretched secret `sk_tilde`, the IRS accumulator `t`, the state `V`, `ell`, and `flag`, the random bits from the IRS RNG, and the adjusted `z` values are `secret` until signature packing declassifies the accepted output.
 - The challenge weight `tau` (the support size), the polynomial dimension `N`, and the IRS loop trip count are `public length`.
-- **The IRS is rejection-FREE: RejectSample applies EXACTLY `tau` R-transitions per call and never aborts, so there is NO secret-dependent loop count and the SamplerU byte consumption is a fixed `18*tau` bytes (deterministic).** The single documented public-branch exception is the ascending-`j` `if (c[j])` test inside RejectSample: `c` is recomputed by the verifier from `seedC`, so the challenge support pattern is `public` (P08 R4); gating on `c[j]` reveals only the public challenge support, not secret data. The only timing observable in the whole signing path is the **outer** Sign-loop iteration count driven by the PUBLIC norm test `||(z1,z2')||_2 <= B_v` (P11) — that count is a function of public/declassified quantities. Any future shortcut in IRS rejection or coefficient adjustment must cite this section and prove it does not expose secret-dependent variable latency.
+- **The IRS is rejection-FREE: RejectSample applies EXACTLY `tau` R-transitions per call and never aborts, so there is NO secret-dependent loop count and the SamplerU byte consumption is a fixed `18*tau` bytes (deterministic).** The single documented public-branch exception is the ascending-`j` `if (c[j])` test inside RejectSample: `c` is recomputed by the verifier from `seedC`, so the challenge support pattern is `public`; gating on `c[j]` reveals only the public challenge support, not secret data. The only timing observable in the whole signing path is the **outer** Sign-loop iteration count driven by the PUBLIC norm test `||(z1,z2')||_2 <= B_v` — that count is a function of public/declassified quantities. Any future shortcut in IRS rejection or coefficient adjustment must cite this section and prove it does not expose secret-dependent variable latency.
 
 ## Challenge
 
@@ -49,27 +49,27 @@ Re-keyed from `Lithium-Code/docs/design-notes/SECRET_PUBLIC_AUDIT.md`: SHUTTLE's
 - Verify-side challenge recomputation inputs are `public`; a challenge mismatch is public reject behavior.
 - Challenge packing is fixed-size and public after serialization; malformed challenge bytes are parser-negative corpus inputs.
 
-## rANS (cross-reference P10)
+## rANS
 
 - Sign-side `z`-head and hint symbols, the rANS encoder states, the stream bytes before publication, the rANS used length, and the overflow-retry decisions are `secret` until the signature is successfully emitted. The rANS renormalization is a division acting DIRECTLY on the secret symbol stream — it MUST be implemented as precomputed-reciprocal multiplication (the single most dangerous division site, KyberSlash class); `tools/ct_scan.py` enforces that `rans.c` contains ZERO division mnemonics (any div here is a real bug, NOT a public-length exception — `rans.c` carries no allowlist entry).
 - rANS frequency / CDF / reciprocal tables, the interleave count `RANS_N`, the reserve size, and the final fixed signature size are `public` or `public length`.
-- Verify-side rANS bytes, decoded symbols, the non-canonical-state checks (initial state out of range, incomplete consumption, terminal state != L, nonzero padding, CDF-hole, K15), the reserve-overflow check, and the padding checks are `public` parser behavior and must stay in the parser-negative corpus.
+- Verify-side rANS bytes, decoded symbols, the non-canonical-state checks (initial state out of range, incomplete consumption, terminal state != L, nonzero padding, CDF-hole), the reserve-overflow check, and the padding checks are `public` parser behavior and must stay in the parser-negative corpus.
 
 ## Packing
 
 - Key packing treats the secret-key seed and the secret polynomials (`s`, `e'`) as `secret`; public-key bytes and the cached `bn` are `declassified` public-key material. The SHUTTLE `skEncode` layout is `seedA (SEEDBYTES) + EM*POLYPK_PACKEDBYTES (b body) + masterSeed (CHALLENGESEEDBYTES) + tr (CHALLENGESEEDBYTES) + ELL*(secret s) + EM*(secret e')`, summing to `CRYPTO_SECRETKEYBYTES = 2288 / 3680 / 7104`.
 - Sign-side signature packing handles secret-derived `c`, `h`, and `z1` until the complete signature is emitted; zero padding is `declassified` and authenticated by verify.
-- Verify-side unpacking treats all signature bytes as attacker-controlled `public`; branches on malformed lengths, padding, rANS decode failure, the non-power-of-2 hint range (K14, a decoded hint `>= H_h = 30/120/58` must REJECT, never `mod H_h`-wrap), and signature size are public parser behavior.
+- Verify-side unpacking treats all signature bytes as attacker-controlled `public`; branches on malformed lengths, padding, rANS decode failure, the non-power-of-2 hint range (a decoded hint `>= H_h = 30/120/58` must REJECT, never `mod H_h`-wrap), and signature size are public parser behavior.
 
-## NTT Boundary (K1)
+## NTT Boundary
 
 - Secret-key and signing vectors entering NTT or inverse-NTT routines are `secret`; the public matrix `A`, the public-key `bn`, and verifier-side imported NTT data are `public`.
 - Backend-native NTT slot order is an INTERNAL representation detail, NOT a declassification event; only `pack_pk` / `pack_sk` / `pack_sig` define serialized declassification boundaries.
 - SIMD gathers or shuffles may be allowlisted only when their addresses depend on fixed permutations, public lane layout, public SHAKE lane pointers, or mode constants; secret-indexed gather remains forbidden. SHUTTLE-512's avx512 superblock (`q59393n1024/ntt_avx512.S`) uses only fixed permutes; the avx2 8-block NTT must contain no `zmm` (enforced by `make -C avx2 check-no-avx512`).
 
-## XOF / DRNG (NEW vs Lithium)
+## XOF / DRNG
 
-- SM3 Hash-DRBG state and SHAKE state are `secret` when seeded from secret material: the signing randomness `rnd` is drawn from `drng_algorithm` (SM3 Hash-DRBG) under NGCC_MODE and feeds `rhoprime` and the IRS `0x09 || seed_y` stream (Overview 4.2, K2); that DRBG state is `secret`.
+- SM3 Hash-DRBG state and SHAKE state are `secret` when seeded from secret material: the signing randomness `rnd` is drawn from `drng_algorithm` (SM3 Hash-DRBG) under NGCC_MODE and feeds `rhoprime` and the IRS `0x09 || seed_y` stream; that DRBG state is `secret`.
 - Block-count divisions on PUBLIC output byte counts (how many SM3 / SHAKE blocks to squeeze for a fixed-length request) are `public length` and MAY drive divisions — but they are allowlisted in `tools/ct_scan.py` only inside the named DRBG/XOF block-count functions (`drng_*`, `get_random_number`, `*xof*`, `sm3_*`, `*_shake128/256`), never blanket. Preferred outcome: division-free (reciprocal-multiply); any live allowlisted division here cites this section.
 - Public `seedA`, cached `bn`, message, and verifier inputs stay `public`; the produced signature is `declassified`.
 
@@ -82,20 +82,20 @@ Re-keyed from `Lithium-Code/docs/design-notes/SECRET_PUBLIC_AUDIT.md`: SHUTTLE's
 - `rans.c` carries NO allowlist: the rANS reciprocal-multiply renorm must be division-free (cite **rANS**).
 - Verify-side parser early exits cite the **Verify**, **rANS**, and **Packing** public-parser-behavior entries (negative-corpus covered).
 
-## K1–K15 Risk -> Covering Gate Traceability (P13-T13)
+## Implementation Risk -> Covering Gate Traceability
 
-| Risk (Overview §9) | Covering gate(s) |
+| Risk | Covering gate(s) |
 |---|---|
-| K1 (NTT slot order divergence) | trace-KAT (`security_audit_matrix.sh`) + NTT-Boundary classification + `check-no-avx512` |
-| K2 (rnd/seed derivation order) | KAT (deterministic SM3 DRBG) + diff-fuzz |
-| K3 (SamplerU MSB-first CLZ) | ct_scan (no `cvtsi2sd`; `lzcnt`/`bsr` not forbidden) + KAT |
-| K4 (keygen kappa timing) | provisioning-time classification (Keygen) + dudect-sign |
-| K6 (XOF refill cursor determinism) | `check-refill` + KAT |
-| K7 (sampler bit-consumption) | trace-KAT + KAT |
-| K9 (sign-bit fold) | KAT + diff-fuzz |
-| K10 (SIMD == scalar byte-exact + division-free) | KAT cross-backend equality + ct_scan (all 3 backends) + trace-KAT + diff-fuzz |
-| K11 (96-bit `cdt_scan96` branchless) | ct_scan (no div/branch on secret index) + dudect-components |
-| K12 (base-2 exact exponent term) | check-consts (ApproxLog table) + KAT |
-| K13 (mod-2q parity) | diff-fuzz + trace-KAT |
-| K14 (non-pow-2 hint range) | parser-negative (decoded hint `>= H_h` must REJECT) |
-| K15 (rANS canonical decode) | parser-negative (>= 6 rANS mutations) + KAT |
+| NTT slot order divergence | trace-KAT (`security_audit_matrix.sh`) + NTT-Boundary classification + `check-no-avx512` |
+| rnd/seed derivation order | KAT (deterministic SM3 DRBG) + diff-fuzz |
+| SamplerU MSB-first CLZ | ct_scan (no `cvtsi2sd`; `lzcnt`/`bsr` not forbidden) + KAT |
+| keygen kappa timing | provisioning-time classification (Keygen) + dudect-sign |
+| XOF refill cursor determinism | `check-refill` + KAT |
+| sampler bit-consumption | trace-KAT + KAT |
+| sign-bit fold | KAT + diff-fuzz |
+| SIMD == scalar byte-exact + division-free | KAT cross-backend equality + ct_scan (all 3 backends) + trace-KAT + diff-fuzz |
+| 96-bit `cdt_scan96` branchless | ct_scan (no div/branch on secret index) + dudect-components |
+| base-2 exact exponent term | check-consts (ApproxLog table) + KAT |
+| mod-2q parity | diff-fuzz + trace-KAT |
+| non-pow-2 hint range | parser-negative (decoded hint `>= H_h` must REJECT) |
+| rANS canonical decode | parser-negative (>= 6 rANS mutations) + KAT |

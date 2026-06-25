@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """gen_rans_tables.py -- emit the THREE rANS frequency tables per SHUTTLE set
-into the @@AUTOGEN:rans_tables@@ region of ref/rans.h (P10).
+into the @@AUTOGEN:rans_tables@@ region of ref/rans.h.
 
 Three tables per set (prob_bits=10, each FREQ sums to 1024):
   * RANS_Q0   : retained quotient Q0 = floor(z0 / 2^b0), z0 = round(y/alpha_1)
   * RANS_QS   : retained quotient Qs = floor(z_s / 2^bs), z_s = round(y/alpha_s)
   * RANS_HINT : the whole hint h in [0, H_h) (no split), bucket-crossing law
 
-Quantization (deterministic, MS-A1): f(s) = max(1, round(PMF(s)*1024)); the
+Quantization (deterministic): f(s) = max(1, round(PMF(s)*1024)); the
 single largest-`raw` bucket (lowest index on a tie) is adjusted so each table
 sums to exactly 1024.  Per slot we also emit the Granlund-Montgomery
 multiply-by-reciprocal (RCP/RSH/BIAS) for the division-free encoder and a

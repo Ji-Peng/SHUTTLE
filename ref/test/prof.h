@@ -1,11 +1,11 @@
 /*
  * prof.h -- macro-gated profiling probes for the SHUTTLE KeyGen / Sign /
- * Verify path (P14).
+ * Verify path.
  *
  * Two independent, opt-in instrumentation systems (BOTH no-ops unless their
  * macro is defined, so a normal / KAT / CT build is byte-identical and
- * zero-cost -- this is the load-bearing invariant K10: the probes must
- * never perturb the production data path, and `make check-kat` must
+ * zero-cost -- this is the load-bearing invariant: the probes must never
+ * perturb the production data path, and `make check-kat` must
  * reproduce the recorded hashes after the probes are inserted):
  *
  *   -DPROF_TIME : per-component cycle accounting.  Disjoint regions are
@@ -25,19 +25,21 @@
  *
  * `make profile` (-DPROF_TIME -DPROF_RAND) builds + runs test/speed_profile.c.
  *
- * The PT_ / PC_ / PU_ enum bucket sets below diverge from Lithium where
- * SHUTTLE's algorithm differs (the principal divergence point):
+ * The PT_ / PC_ / PU_ enum bucket sets below diverge from a
+ * Dilithium-style bucket layout where SHUTTLE's algorithm differs (the
+ * principal divergence point):
  *   (1) PT_EXPAND_A (SHUTTLE's public matrix is A, expanded NTT-domain via
  *       tag 0x02 xof128) -- not PT_EXPAND_A0;
  *   (2) the sign rejection bucket is PT_IRS (parent) + PT_SAMPLERU +
  *       PT_APPROXLOG (children): SHUTTLE's inner loop is the Iterative
  *       Rejection Sampler driven by SamplerU/ApproxLog (the base-2 log +
- *       2 r^2 ln2 multiply, K12), NOT a Gaussian rejection;
- *   (3) PT_RANS is broken out from PT_PACK so M9 can attribute the rANS
- *       encode (the variable-cost block, the only source of sign's tail);
+ *       2 r^2 ln2 multiply), NOT a Gaussian rejection;
+ *   (3) PT_RANS is broken out from PT_PACK so the profiler can attribute
+ *       the rANS encode (the variable-cost block, the only source of
+ *       sign's tail);
  *   (4) PT_SAMPLE_Y children are PT_G_SHAKE / PT_G_BASESAMP (96-bit CDT,
- *       K11) / PT_G_APPROXEXP (t7d8 Q64 Bernoulli) / PT_G_FINAL (fold/sign
- *       K9);
+ *       the table invariant) / PT_G_APPROXEXP (t7d8 Q64 Bernoulli) /
+ *       PT_G_FINAL (fold/sign, the output-indexed sign convention);
  *   (5) Verify's PT_VF_MATMUL reconstructs over only 1+ELL columns (the
  *       A1-hat asymmetry: Verify omits the 2 I_m block), so it is
  *       structurally cheaper than Sign's full-matrix PT_COMMIT.
@@ -104,7 +106,7 @@ enum {
 
 /* ---- PROF_USE fine consumption (within the samplers; catches PRNG waste) ---- */
 enum {
-    PU_SIGNS = 0, /* OUTPUT-indexed sign bits (K9)           */
+    PU_SIGNS = 0, /* OUTPUT-indexed sign bits                */
     PU_SIGMA_S,   /* BaseSampler RCDT draws (sigma_s)        */
     PU_Y,         /* uniform y bits in the BLISS convolution */
     PU_GTAIL,     /* SampleY rejection-tail / fold bytes     */

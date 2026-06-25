@@ -1,8 +1,8 @@
 /*
- * avx2/rounding.c -- AVX2/AVX512 SIMD fork of the P09 rounding/lift/hint/
+ * avx2/rounding.c -- AVX2/AVX512 SIMD fork of the rounding/lift/hint/
  *                    norm substrate, behind USE_AVX2_NTT / USE_AVX512_NTT.
  *
- * === M9 PERF wiring (the SIMD NTT in the commitment + norm hot path) ===
+ * === SIMD NTT wiring (the SIMD NTT in the commitment + norm hot path) ===
  * This fork is byte-identical to ref/rounding.c EXCEPT for the two
  * NTT-domain matrix-vector products in the commitment lift:
  *
@@ -11,7 +11,7 @@
  *   - mat_mul_z1_2q    (verifier-side z2' reconstruction = w - 2 z2 mod
  * 2q; PT_NORMCHECK / PT_VF_MATMUL, ~15% of Sign)
  *
- * At M6 these ran the SCALAR ntt_ref/invntt_tomont_ref/pointwise_ref
+ * Previously these ran the SCALAR ntt_ref/invntt_tomont_ref/pointwise_ref
  * oracle (the scheme-facing poly_ntt / poly_invntt_tomont / poly_pointwise
  * shim, which in the avx2/avx512 poly_ntt.c forks dispatches to scalar so
  * the integrated KAT is byte-exact to ref).  HERE we route the genuine
@@ -20,7 +20,7 @@
  * products.  Those kernels are exported by avx2/avx512 poly_ntt.c and are
  * VALIDATED BYTE-EXACT to the scalar oracle (mod q) by test_ntt_avx /
  * test_ntt_avx512 (the SIMD pipeline ntt->pointwise->invntt == scalar
- * schoolbook product, K1/K10).
+ * schoolbook product).
  *
  * === WHY THIS IS BYTE-EXACT (the KAT invariant) ===
  * The cached operands bhat / Ahat are produced upstream by the
@@ -33,14 +33,14 @@
  * ladder, no butterflies).  The fresh secret vector (y' / z1) is
  * forward-transformed with poly_ntt_simd, which already lands in native
  * order.  Both pointwise operands then share the one native order, so
- * pointwise needs no reorder (K1); the accumulation (subm16(0,.) negation
+ * pointwise needs no reorder; the accumulation (subm16(0,.) negation
  * + poly16_add) is elementwise in [0,q), hence order-agnostic; and
  * poly_invntt_tomont_simd returns standard [0,q) (after the signed-config
  * centered->[0,q) canonicalization it already performs internally).  The
  * validated equivalence nttunpack(canonical) -> pointwise_simd ->
  * invntt_simd  ==  scalar mod q means each q-domain accumulator t_i is
  * IDENTICAL to the scalar compute_t.  The mod-2q lift (2t + true-parity
- * K13 + masked add/sub) downstream is UNCHANGED scalar, so comY (and the
+ * + masked add/sub) downstream is UNCHANGED scalar, so comY (and the
  * reconstructed z2') are bit-identical to the scalar mat_mul_2q /
  * mat_mul_z1_2q -> comY_h / seedC / challenge / signature / KAT all
  * unchanged.  The local oracle is test_rounding section (c): it builds
@@ -63,7 +63,7 @@
  * branchless masked arithmetic with no idiv / `% const` / float.
  *
  * Read rounding.h FIRST for the API, the StretchS no-mod range analysis,
- * the norm int64-overflow analysis, and the K13/K14/MS-B5 rationale.
+ * the norm int64-overflow analysis, and the lift/hint/gate rationale.
  *
  * The CompressY round-to-nearest magic reciprocals (RCP_ALPHA_* /
  * SH_ROUND_* / ROUND_BIAS_*) and the LOG2_ALPHA_H shift come from the
@@ -83,7 +83,7 @@
 #include "test/prof.h" /* PT_NTT_FWD/PW/INV -- ((void)0) unless PROF_TIME */
 
 /* ====================================================================== *
- *  SIMD NTT entry points (M9): the genuine vectorized kernels exported by
+ *  SIMD NTT entry points: the genuine vectorized kernels exported by
  * * avx2/avx512 poly_ntt.c.  Declared here (the scheme-facing poly.h shim
  * * prototypes only the canonical/scalar-dispatching ops); only this fork
  * * calls the *_simd_* family.  Guarded so a non-AVX build never
@@ -167,7 +167,8 @@ static int32_t addmod_Hh(int32_t x)
 /* centermod_Hh: fold a difference x in (-H_h, H_h) into [0, H_h) by ONE
  * masked add (x<0 -> +H_h).  Used for highbits(.)-highbits(.) in MakeHint
  * (both operands in [0,H_h), so the difference is in (-H_h, H_h)).  This
- * is a FOLD of an in-range value (K14), never a general `% H_h`. */
+ * is a FOLD of an in-range value (range-check), never a general `% H_h`.
+ */
 static int32_t centermod_Hh(int32_t x)
 {
     int32_t mlt = (x >> 31); /* -1 if x<0, else 0 (x in (-H_h, H_h)) */
@@ -273,18 +274,18 @@ void roundB_update_s2(poly pkb[EM], poly ep[EM], const poly pkb0[EM],
 }
 
 /* ====================================================================== *
- *  mod-2q commitment products (the lift; K13)                            *
+ *  mod-2q commitment products (the lift)                                 *
  * ======================================================================
  */
 
 /* poly_to_ntt_dom: bridge a signed scheme-domain `poly` (small coeffs)
  * into the NTT domain.  freeze each coeff into [0,q) (poly16), then NTT.
  * The compressed mask / response coeffs are bounded < q (CompressY shrinks
- * by alpha_* >= 3), so this is exact -- it stands in for Lithium's
- * poly_ntt_small (SHUTTLE has no separate small-NTT entry; freeze+NTT is
- * the uniform bridge).
+ * by alpha_* >= 3), so this is exact -- it stands in for a dedicated
+ * small-coefficient NTT entry (SHUTTLE has none; freeze+NTT is the uniform
+ * bridge).
  *
- * M9: the fresh secret vector is the one operand we forward-transform per
+ * The fresh secret vector is the one operand we forward-transform per
  * mat_mul, so it goes through the SIMD forward NTT (poly_ntt_simd), which
  * lands in the AVX backend-native order -- the order the SIMD pointwise
  * expects.  (Scalar build: poly_ntt, canonical order.) */
@@ -305,7 +306,7 @@ static void poly_to_ntt_dom(poly16 *out, const poly *in)
  * into the AVX backend-native slot order via nttunpack (shuffle-only, no
  * butterflies).  Called once per cached operand per mat_mul (== once per
  * use; see file banner), bridging the build_cached_matrix / test poly_ntt
- * (canonical) operand into the order the SIMD pointwise consumes (K1). */
+ * (canonical) operand into the order the SIMD pointwise consumes. */
 static void import_cached(poly16 *dst, const poly16 *canonical)
 {
     *dst = *canonical;
@@ -314,7 +315,7 @@ static void import_cached(poly16 *dst, const poly16 *canonical)
 
 /* simd_pw_canon: canonicalize a SIMD pointwise output to [0,q).
  *
- * Representation gotcha (K10), SIGNED config only (q15361, mode 128): the
+ * Representation gotcha, SIGNED config only (q15361, mode 128): the
  * signed pointwise_avx leaves a CENTERED signed Montgomery product in
  * (-q,q) (the dmul output |x|<q), NOT in [0,q).  The unsigned valley
  * configs (q61441/q59393) already return [0,q).  The compute_t
@@ -346,8 +347,7 @@ static void simd_pw_canon(poly16 *a)
  * ORDER (the SIMD build imports the cached operands + forward-transforms
  * the fresh secret into native order before calling this; the scalar build
  * is canonical order -- compute_t is order-agnostic because
- * pointwise/accum/ invntt all stay within one order).  Mirrors Lithium
- * compute_t. */
+ * pointwise/accum/ invntt all stay within one order). */
 static void compute_t(poly *t, const poly16 *bh_i,
                       const poly16 Ahat_native[EM * ELL],
                       const poly16 *x0h, const poly16 xsh[ELL], int i)
@@ -448,9 +448,9 @@ void mat_mul_2q(poly comY[EM], const poly yp[KVEC], const poly16 bhat[EM],
     int i, j;
     unsigned k;
 #ifdef SHUTTLE_ROUNDING_SIMD
-    /* M9: import the canonical cached operands into the AVX backend-native
+    /* import the canonical cached operands into the AVX backend-native
      * slot order ONCE (nttunpack), so the SIMD pointwise consumes a single
-     * native order shared with the SIMD-transformed fresh mask (K1).  Each
+     * native order shared with the SIMD-transformed fresh mask.  Each
      * operand is imported once and used once per mat_mul call. */
     poly16 bhat_n[EM], Ahat_n[EM * ELL];
     for (i = 0; i < EM; ++i)
@@ -488,7 +488,7 @@ void mat_mul_2q(poly comY[EM], const poly yp[KVEC], const poly16 bhat[EM],
                  * parity yp[0].coeffs[k] & 1, NOT freeze(yp[0])&1 (freeze
                  * adds odd q to negatives, flipping their parity).  The
                  * compressed mask y'_0 is signed (can be negative), so the
-                 * freeze'd parity would be wrong for negative coeffs. K13.
+                 * freeze'd parity would be wrong for negative coeffs.
                  */
                 v += (int32_t)Q * (yp[0].coeffs[k] & 1);
             }
@@ -511,7 +511,7 @@ void mat_mul_z1_2q(poly comY_tilde[EM], const poly z1[Z1LEN],
     int i, j;
     unsigned k;
 #ifdef SHUTTLE_ROUNDING_SIMD
-    /* Same canonical->native import as mat_mul_2q (K1): bhat / Ahat are
+    /* Same canonical->native import as mat_mul_2q: bhat / Ahat are
      * cached canonical order, the SIMD pointwise needs native order. */
     poly16 bhat_n[EM], Ahat_n[EM * ELL];
     for (i = 0; i < EM; ++i)
@@ -534,7 +534,7 @@ void mat_mul_z1_2q(poly comY_tilde[EM], const poly z1[Z1LEN],
         for (k = 0; k < N; ++k) {
             int32_t v = 2 * t.coeffs[k];
             if (i == 0) {
-                /* RAW parities (z1[0] and c), not freeze()&1 (K13).
+                /* RAW parities (z1[0] and c), not freeze()&1.
                  * v += q*(z0 parity) - q*(c parity)  (the -q*c*j of
                  * UseHint step 1 carried into the lift). */
                 int32_t ck = c->coeffs[k] & 1;
@@ -563,7 +563,7 @@ int32_t highbits_reduced(int32_t x)
     int32_t b = (x + ((int32_t)ALPHA_H >> 1)) >> LOG2_ALPHA_H;
     /* b can reach H_h (x near 2q-1); ONE masked subtract folds into
      * [0,H_h) (b <= H_h, never >= 2H_h -- a FOLD, not a general mod H_h;
-     * K14). */
+     * range-check). */
     int32_t mge = -(int32_t)(b >= (int32_t)HH);
     b -= mge & (int32_t)HH;
     return b; /* [0, H_h) */
@@ -608,7 +608,7 @@ void use_hint(poly comY_h[EM], poly z2p[EM], const poly h[EM],
             int32_t c0 = (p == 0) ? comY0p->coeffs[i] : 0;
             /* comY_h = (h + highbits(comY_tilde)) mod H_h.  Both addends
              * are in [0,H_h), so the sum is in [0, 2*H_h): one masked
-             * subtract folds it (K14 fold, not a wrap). */
+             * subtract folds it (range-check fold, not a wrap). */
             int32_t cyh = addmod_Hh(h[p].coeffs[i] + highbits_reduced(wt));
             comY_h[p].coeffs[i] = cyh;
             /* comY_app = alpha_h*comY_h + comY0p  (plain, in [0,2q) since
@@ -651,7 +651,7 @@ int64_t poly_array_sqnorm(const poly *v, unsigned int len)
 int keygen_norm_ok(const poly stretched[KVEC])
 {
     int64_t nsq = poly_array_sqnorm(stretched, (unsigned)KVEC);
-    /* Closed window, inclusive both ends (MS-D2): accept iff
+    /* Closed window, inclusive both ends: accept iff
      * BK_LOW_SQ <= nsq <= BK_SQ.  Branchless comparison; the CALLER
      * branches on the PUBLIC accept/reject outcome (KeyGen-only -> no
      * signing-time leak). */

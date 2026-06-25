@@ -1,6 +1,6 @@
 /*
  * test_ntt.c -- SCALAR (reference backend) correctness for the SHUTTLE NTT
- * shim (P03), adapted from each NTT module's test_ntt.c.  Exercises the
+ * shim, adapted from each NTT module's test_ntt.c.  Exercises the
  * per-mode poly_ntt / poly_invntt_tomont / poly_pointwise_montgomery /
  * poly_ntt_canonical / poly_ntt_import shim, plus the raw s<n>_*_ref
  * oracle.
@@ -127,7 +127,7 @@ int main(void)
 
     /* [4] readback / [0,q) output convention: every coeff of an
      * invntt_tomont output lands in [0,q) (the LiftToModTwoQ input
-     * convention, K13). */
+     * convention). */
     int f4 = 0;
     for (int it = 0; it < 1000; it++) {
         poly16 a;

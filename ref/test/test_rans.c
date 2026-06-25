@@ -1,5 +1,5 @@
 /*
- * test_rans.c -- build-verify for the P10 rANS entropy coder + signature
+ * test_rans.c -- build-verify for the rANS entropy coder + signature
  * (de)serialization.
  *
  * Per param set:
@@ -14,7 +14,7 @@
  * initial state, a CDF-hole / out-of-support attempt, a non-terminal end
  * state, an enlarged rlen field, an out-of-range hint bucket, and a
  * re-encode-mismatch construct. (d) pack_sig_raw / unpack_sig_raw
- * round-trip + the K14 hint range-check (a negative h-bucket rejected).
+ * round-trip + the hint range-check (a negative h-bucket rejected).
  *   (e) C-vs-Python byte-exactness: read ref/test/rans_vectors_<set>.txt
  *       (recorded by tools/check_rans.py), encode the SAME synthetic
  * vector in C, assert identical `com` bytes. (f) size report: realized
@@ -329,7 +329,7 @@ static int test_pack_sig_negatives(void)
 #undef MUT
 }
 
-/* ---- (d) RAW path round-trip + K14 hint range-check ---- */
+/* ---- (d) RAW path round-trip + hint range-check ---- */
 static int test_raw(void)
 {
     static uint8_t sig[SIG_RAW_PACKED_BYTES];
@@ -356,9 +356,9 @@ static int test_raw(void)
         fail = 1;
     report("pack_sig_raw / unpack_sig_raw round-trip", fail);
 
-    /* K14 negative: corrupt the FIRST hint field to a value in [H_h,
-     * 2^d_h), which the d_h-bit pack can represent; unpack_sig_raw must
-     * reject. */
+    /* range-reject negative: corrupt the FIRST hint field to a value in
+     * [H_h, 2^d_h), which the d_h-bit pack can represent; unpack_sig_raw
+     * must reject. */
     int neg_fail = 0;
     if (HH < (1u << DH_BITS)) {
         h[0].coeffs[0] = (int32_t)HH; /* first illegal bucket */
@@ -366,7 +366,7 @@ static int test_raw(void)
         if (unpack_sig_raw(seedCb, z1b, hb, sig) != -1)
             neg_fail = 1;
     }
-    report("RAW K14 hint range-check (h>=H_h rejected)", neg_fail);
+    report("RAW hint range-check (h>=H_h rejected)", neg_fail);
     return fail | neg_fail;
 }
 

@@ -1,6 +1,5 @@
 /*
- * test_ntt_avx.c -- AVX2 backend correctness for the SHUTTLE NTT shim
- * (P03).
+ * test_ntt_avx.c -- AVX2 backend correctness for the SHUTTLE NTT shim.
  *
  * Built per mode with the AVX2 flags, linking the per-mode vendored asm:
  *   gcc -mavx2 ... -DSHUTTLE_MODE=<m> -DUSE_AVX2_NTT
@@ -11,11 +10,11 @@
  *   [1] AVX512 round-trip via the shim:
  * poly_invntt_tomont_simd(poly_ntt_simd(a)) == a*R (and output is [0,q)
  * after the signed canonicalization). [2] negacyclic product via the AVX2
- * shim == polymul_schoolbook. [3] K1: nttunpack(ntt_ref(p)) == ntt_avx(p)
+ * shim == polymul_schoolbook. [3] nttunpack(ntt_ref(p)) == ntt_avx(p)
  * (mod q) -- the canonical-> backend-native reconciliation, via
  * poly_ntt_simd_import(poly_ntt_canonical)
  *       == poly_ntt.
- *   [4] K10: full-layer ref == avx2 byte-exact -- the SCALAR poly_ntt then
+ *   [4] full-layer ref == avx2 byte-exact -- the SCALAR poly_ntt then
  *       poly_invntt_tomont equals the AVX2 result
  * coefficient-by-coefficient in [0,q) (random + edge: all-0, all-(q-1),
  * alternating).
@@ -29,11 +28,11 @@
 #include "poly_ntt.h"
 
 /* The genuine AVX-512 SIMD NTT kernels, exported by avx512/poly_ntt.c for
- * this byte-exactness validation.  At M6 the scheme-facing shim (poly_ntt
+ * this byte-exactness validation.  The scheme-facing shim (poly_ntt
  * / poly_invntt_tomont / poly_pointwise_montgomery / poly_ntt_import)
  * routes to the SCALAR oracle so the integrated KAT is byte-exact to ref;
  * the SIMD asm is exercised HERE through these *_simd_* entries and proven
- * bit-identical to that scalar oracle (the M9 perf wiring of the SIMD path
+ * bit-identical to that scalar oracle (the perf wiring of the SIMD path
  * into a forked polyvec/sign is gated on this). */
 void poly_ntt_simd(poly16 *a);
 void poly_invntt_tomont_simd(poly16 *a);
@@ -47,7 +46,7 @@ static uint16_t U(uint16_t x)
     return (uint16_t)(x % Q);
 }
 
-/* PER-CONFIG NTT-domain readback (K10): a RAW NTT-domain lane (output of
+/* PER-CONFIG NTT-domain readback: a RAW NTT-domain lane (output of
  * poly_ntt / nttunpack, NOT yet canonicalized by poly_invntt_tomont) is a
  * TRUE signed int16 for the signed q15361 config (smod), but a
  * raw-bits-unsigned value for the unsigned valley configs ((uint16_t)x % q
@@ -138,7 +137,7 @@ int main(void)
     printf("[2] AVX512 negacyclic product == schoolbook, 2000: %s (%d)\n",
            f2 ? "FAIL" : "PASS", f2);
 
-    /* [3] K1: nttunpack(ntt_ref(p)) == ntt_avx(p).  poly_ntt_canonical =
+    /* [3] nttunpack(ntt_ref(p)) == ntt_avx(p).  poly_ntt_canonical =
      * scalar ntt_ref order; poly_ntt_import = nttunpack into AVX2 layout;
      * poly_ntt = the AVX2 forward.  They must agree mod q
      * coefficient-by-coefficient. */
@@ -164,10 +163,10 @@ int main(void)
                 break;
             }
     }
-    printf("[3] K1 nttunpack(ntt_ref(p)) == ntt_avx(p), 5000: %s (%d)\n",
+    printf("[3] nttunpack(ntt_ref(p)) == ntt_avx(p), 5000: %s (%d)\n",
            f3 ? "FAIL" : "PASS", f3);
 
-    /* [4] K10: full-layer scalar == AVX2 byte-exact in [0,q), random +
+    /* [4] full-layer scalar == AVX2 byte-exact in [0,q), random +
      * edge. */
     int f4 = 0;
     int edges = 4;
@@ -203,7 +202,7 @@ int main(void)
                 break;
             }
     }
-    printf("[4] K10 scalar==AVX2 byte-exact (round-trip), %d: %s (%d)\n",
+    printf("[4] scalar==AVX2 byte-exact (round-trip), %d: %s (%d)\n",
            3000 + edges, f4 ? "FAIL" : "PASS", f4);
 
     /* [4b] pointwise layer scalar == AVX2 (in matching NTT orders):
@@ -234,7 +233,7 @@ int main(void)
             }
     }
     printf(
-        "[4b] K10 scalar==AVX2 byte-exact (full product), 2000: %s (%d)\n",
+        "[4b] scalar==AVX2 byte-exact (full product), 2000: %s (%d)\n",
         f5 ? "FAIL" : "PASS", f5);
 
     int fails = f1 + f2 + f3 + f4 + f5;

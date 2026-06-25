@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """check_rans.py -- round-trip + negative-test driver for the SHUTTLE rANS
-golden codec (P10), over the real committed tables in ref/rans.h.
+golden codec, over the real committed tables in ref/rans.h.
 
 It does three things per param set:
   1. ROUND-TRIP: draw many random in-support (Q0, Qs, h) vectors from the

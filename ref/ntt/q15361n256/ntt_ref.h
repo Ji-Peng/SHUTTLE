@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-/* SHUTTLE namespacing (P03): every public scalar NTT symbol carries the
+/* SHUTTLE namespacing: every public scalar NTT symbol carries the
  * s256_ prefix so the three vendored configs co-link in one process.  This
  * mirrors the s256_ prefix the AVX2/AVX512 generators thread through their
  * .S/consts. The internal macro names below (NTT_Q/NTT_N/NTT_LEVELS) are
@@ -66,7 +66,7 @@ void s256_reduce_avx(int16_t *poly);
 void s256_nttunpack_avx(int16_t *dst, const int32_t *src);
 
 /* Opt-in AVX-512BW full-ZMM path.  Built only by the AVX512=1 Makefile
- * targets. R1 FIX (P03 vendoring): the upstream header declared
+ * targets.  Vendoring fix: the upstream header declared
  * ntt512_qdata[64] while ntt_consts_avx512.c DEFINES [96] (signed needs
  * q/V/RND = 3x32); the mismatch is technically UB.  Declared correctly
  * here as [96]; the gen_ntt.py emitter (avx512_codegen emit_consts_signed)

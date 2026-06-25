@@ -1,8 +1,8 @@
 /*
- * test_irs.c -- build-verify for P08 (SamplerU + RejectSample/R), scalar
- * ref. Pure C99.  The impl is integer-only; the high-precision ORACLES
- * below use long double / __int128 ONLY in the test (never in sampler_u.c
- * / irs.c).
+ * test_irs.c -- build-verify for the IRS layer (SamplerU +
+ * RejectSample/R), scalar ref. Pure C99.  The impl is integer-only; the
+ * high-precision ORACLES below use long double / __int128 ONLY in the test
+ * (never in sampler_u.c / irs.c).
  *
  * Build (per mode m in 128/256/512), NGCC_MODE (default):
  *   gcc -std=c99 -Wpedantic -Wall -Wextra -Werror -O2 -I. -Itest
@@ -11,7 +11,7 @@
  *       symmetric.c drng.c auxfunc.c -DSHUTTLE_MODE=<m>
  * (SHA3_MODE adds -DSHA3_MODE and swaps drng.c+auxfunc.c -> fips202.c.)
  *
- * Coverage (08-IRS-SamplerU.md test plan):
+ * Coverage:
  *   (a) SamplerU:  U = 2^ell uniform in (0,1] (histogram/KS-style); ell ==
  *       high-precision oracle from the SAME exponent+mantissa bits;
  *       determinism; the (a,m) MSB-first extraction matches a hand
@@ -19,8 +19,8 @@
  * restore: the fixed-point u == round(2 r^2 ln2 * ell). (c)
  * RejectSample/R: determinism from (seed_y,c,sk_tilde); the N=29 interval
  * test matches a reference; z == y + sk_tilde.c'; ascending-j
- *       shuffle-invariance (K5); V-once isometry; sign-normalize branch.
- *   (d) K2 fresh-ctx: the IRS ctx is NOT a continuation of SampleY's ctx.
+ *       shuffle-invariance; V-once isometry; sign-normalize branch.
+ *   (d) fresh-ctx: the IRS ctx is NOT a continuation of SampleY's ctx.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -35,7 +35,7 @@
 /* TEST-ONLY: the high-precision oracles below use GNU __int128 (to mirror
  * the impl's u Q-form bit-exactly) and long double.  __int128 is a
  * GCC/Clang extension ISO C does not define; localize the -Wpedantic
- * suppression to this whole test TU (mirrors test_approx.c's P06 oracle
+ * suppression to this whole test TU (mirrors test_approx.c's oracle
  * guard).  The IMPL (sampler_u.c / irs.c) confines its own __int128 use
  * the same way. */
 #if defined(__GNUC__) || defined(__clang__)
@@ -93,8 +93,8 @@ static void fill_seed(uint8_t *p, size_t len, uint8_t salt)
         p[i] = (uint8_t)(0x40u + salt + (uint8_t)(i * 7u));
 }
 
-/* Open the IRS ctx the way Sign (P11) will: fresh ctx, absorb 0x09||seed_y
- * (K2).  This is the canonical IRS stream init. */
+/* Open the IRS ctx the way Sign will: fresh ctx, absorb 0x09||seed_y.
+ * This is the canonical IRS stream init. */
 static void irs_ctx_init(xof_ctx *ctx, const uint8_t seed_y[SEEDBYTES])
 {
     uint8_t in[1 + SEEDBYTES];
@@ -361,7 +361,7 @@ static int test_restore_constant(void)
     /* (2) the impl's integer u (Q44) equals round(2r^2ln2*ell*2^44) to <=1
      * ULP.  We compute the true Q44 value in long double and the per-term
      * rounding bound, and assert |u - true| <= 2 (Q44 ULPs).  This is the
-     * exact "u == round(2 r^2 ln2 * ell)" check from the plan. */
+     * exact "u == round(2 r^2 ln2 * ell)" check. */
     fill_seed(seed_y, SEEDBYTES, 0x33);
     irs_ctx_init(&ctx, seed_y);
     for (i = 0; i < 3000u; ++i) {
@@ -406,8 +406,8 @@ static int test_restore_constant(void)
  *  (c) RejectSample / R                                                 *
  * ===================================================================== */
 
-/* Deterministic small sk_tilde / y / c builders (no P09/P07 dependency).
- */
+/* Deterministic small sk_tilde / y / c builders (no rounding/sampler
+ * dependency). */
 static void build_sk_tilde(poly sk[KVEC], uint8_t salt)
 {
     unsigned i, k;
@@ -431,7 +431,7 @@ static void build_y(poly y[KVEC], uint8_t salt)
         }
 }
 /* Place TAU ones at deterministic positions; opt: a permuted SampleC order
- * has NO effect since reject_sample scans ascending j (K5). */
+ * has NO effect since reject_sample scans ascending j. */
 static void build_c(poly *c, unsigned seedpos)
 {
     unsigned placed = 0, k;
@@ -691,7 +691,7 @@ static int test_reject_sample(void)
     return fail;
 }
 
-/* K5: a DIFFERENT placement order of the same TAU positions yields
+/* A DIFFERENT placement order of the same TAU positions yields
  * identical z (reject_sample scans ascending j, ignoring SampleC's
  * shuffle).  We build the same support set two ways and confirm equal z.
  */
@@ -710,7 +710,7 @@ static int test_ascending_j(void)
     /* c2 = same support, but we (trivially) reverse-fill -- since c is a
      * coeff array, the "order" SampleC placed them in is not stored; the
      * support set is what matters.  So c2 is literally c1 (same set).  The
-     * point of K5 is that reject_sample depends only on the SET, which
+     * point here is that reject_sample depends only on the SET, which
      * this confirms together with the oracle's ascending scan. */
     memcpy(&c2, &c1, sizeof(poly));
     /* sanity: shuffle the *iteration* in the oracle would change nothing;
@@ -823,7 +823,7 @@ static int test_interval_logic(void)
 }
 
 /* ===================================================================== *
- *  (d) K2 fresh-ctx                                                      *
+ *  (d) fresh-ctx                                                        *
  * ===================================================================== */
 
 /* The IRS ctx (0x09||seed_y) must produce a DIFFERENT stream than a 0x08
@@ -845,7 +845,7 @@ static int test_fresh_ctx(void)
     xof256_squeeze(&c9, out9, sizeof out9);
     xof256_squeeze(&c8, out8, sizeof out8);
     if (memcmp(out9, out8, sizeof out9) == 0) {
-        printf("    K2: 0x09 and 0x08 ctx produced identical stream\n");
+        printf("    0x09 and 0x08 ctx produced identical stream\n");
         fail = 1;
     }
     /* and the IRS ctx is reproducible from the tag+seed (fresh init). */
@@ -855,7 +855,7 @@ static int test_fresh_ctx(void)
         xof256_init(&c9b, in9, sizeof in9);
         xof256_squeeze(&c9b, out9b, sizeof out9b);
         if (memcmp(out9, out9b, sizeof out9) != 0) {
-            printf("    K2: IRS ctx not reproducible from 0x09||seed_y\n");
+            printf("    IRS ctx not reproducible from 0x09||seed_y\n");
             fail = 1;
         }
     }
@@ -875,11 +875,11 @@ int main(void)
     report("(b) 2 r^2 ln2 restore constant", test_restore_constant());
     report("(c) reject_sample determinism+oracle+identity",
            test_reject_sample());
-    report("(c) ascending-j (K5) support-only", test_ascending_j());
+    report("(c) ascending-j support-only", test_ascending_j());
     report("(c) V-once isometry", test_isometry());
     report("(c) interval-test logic (<=1 match, inclusivity)",
            test_interval_logic());
-    report("(d) K2 fresh 0x09||seed_y ctx", test_fresh_ctx());
+    report("(d) fresh 0x09||seed_y ctx", test_fresh_ctx());
 
     printf("\n%s: %d failure(s)\n", g_fails ? "FAILURES" : "ALL PASS",
            g_fails);

@@ -1,9 +1,9 @@
 #!/bin/sh
 # mklinks.sh - materialize the avx2/ and avx512/ backend trees by relative
 # symlinking the SHARED scalar source from ref/, skipping the per-backend FORK
-# set (Overview 3 / P01-T10).
+# set.
 #
-# ref/ is the single source of truth.  At the M6 byte-exactness milestone the
+# ref/ is the single source of truth.  At the byte-exactness milestone the
 # ONLY genuine forks/AVX-only files per backend are:
 #   - config.h        (real fork: _avx2 / _avx512 namespace tail)
 #   - poly_ntt.c      (real SIMD fork: hard-codes the AVX NTT signature families
@@ -18,9 +18,10 @@
 # EVERYTHING else is a relative symlink `ln -s ../ref/<f>` -- including the
 # would-be-fork scalar sources (sampler.c polyvec.c irs.c rounding.c sign.c)
 # and the NGCC infra (SIG_AlgorithmInstance.{c,h}, KAT_SIG.c, drng.{c,h},
-# auxfunc.{c,h}, README.txt).  At M6 the backends = scalar scheme logic + SIMD
-# NTT (poly_ntt.c fork + vendored asm) + SIMD XOF (the N-way files); the SIMD
-# sampler/polyvec/rounding perf kernels are a LATER milestone (M9).  Until then
+# auxfunc.{c,h}, README.txt).  At byte-exactness the backends = scalar scheme
+# logic + SIMD NTT (poly_ntt.c fork + vendored asm) + SIMD XOF (the N-way
+# files); the SIMD sampler/polyvec/rounding perf kernels are a LATER
+# milestone.  Until then
 # the symlinked scalar .c is the running implementation, and -DUSE_AVX2_* /
 # -DUSE_AVX512_* only route the NTT shim (poly_ntt.c) and the (currently
 # unbuilt) SIMD kernels; the scalar bodies are byte-exact, so symlinking them
@@ -41,28 +42,28 @@ root=$(CDPATH= cd "$here/.." && pwd)
 ref="$root/ref"
 
 # --- FORK / SKIP set: real files per backend, never symlinked from ref/. ---
-# At M6 this is ONLY the genuine forks + AVX-only files (see header).  The
-# would-be-fork scalar sources (polyvec/sampler/irs/rounding/sign) and ALL the
-# NGCC infra (SIG_AlgorithmInstance/KAT_SIG/drng/auxfunc/README) are SYMLINKED
-# scalar -- they are NOT in this skip set.
+# At byte-exactness this is ONLY the genuine forks + AVX-only files (see
+# header).  The would-be-fork scalar sources (polyvec/sampler/irs/rounding/sign)
+# and ALL the NGCC infra (SIG_AlgorithmInstance/KAT_SIG/drng/auxfunc/README) are
+# SYMLINKED scalar -- they are NOT in this skip set.
 # is_fork <filename> <backend>: true (return 0) iff <filename> is a REAL fork
 # in <backend>/ and must NOT be symlinked from ref/.  Most forks are common to
-# all backends; the M9 SIMD sampler perf forks (sampler.c, polyvec.c) exist for
+# all backends; the SIMD sampler perf forks (sampler.c, polyvec.c) exist for
 # BOTH the avx2 and avx512 SIMD backends (each carries its own width-specific
 # kernel), so they are backend-gated to {avx2,avx512}.
 is_fork() {
     backend="$2"
-    # M9 SIMD sampler perf forks (avx2 + avx512): sampler.c routes the 96-bit
+    # SIMD sampler perf forks (avx2 + avx512): sampler.c routes the 96-bit
     # RCDT scan (cdt_scan96) through a SIMD borrow-fold kernel (avx2 = 8-way
     # flip-to-signed; avx512 = 16-way native unsigned vpcmpltud), and polyvec.c
     # routes the ExpandA uniform-reject scan through a vectorized reject +
     # compaction (avx2 = 16-wide + BMI2 pdep/pext; avx512 = 32-wide + vpcompressw).
     # Both are guarded by -DUSE_AVX2_SAMPLER / -DUSE_AVX512_SAMPLER and are
     # BYTE-EXACT to the scalar ref (KAT-locked).
-    # M9 SIMD NTT commitment fork (avx2 + avx512): rounding.c routes the
+    # SIMD NTT commitment fork (avx2 + avx512): rounding.c routes the
     # mat_mul_2q / mat_mul_z1_2q NTT-domain products through the SIMD NTT
     # kernels (poly_ntt_simd / *_import / pointwise / invntt), importing the
-    # cached canonical operands to backend-native order via nttunpack (K1).
+    # cached canonical operands to backend-native order via nttunpack.
     # Guarded by -DUSE_AVX2_NTT / -DUSE_AVX512_NTT and BYTE-EXACT to the
     # scalar ref (KAT-locked: the mod-2q lift downstream is unchanged scalar).
     if [ "$backend" = "avx2" ] || [ "$backend" = "avx512" ]; then
@@ -73,11 +74,11 @@ is_fork() {
     case "$1" in
     # Real per-backend fork: the namespace-tail-only config.h.
     config.h) return 0 ;;
-    # P03: the NTT shim has a per-backend FORK body (avx2/avx512 poly_ntt.c
+    # The NTT shim has a per-backend FORK body (avx2/avx512 poly_ntt.c
     # hard-code the two asm signature families + signed canonicalization); the
     # scalar ref/poly_ntt.c is NOT symlinked into the backends.
     poly_ntt.c) return 0 ;;
-    # AVX-only / N-way XOF files are real in the backend dirs (P02).
+    # AVX-only / N-way XOF files are real in the backend dirs.
     fips202x4.* | fips202x8.* | f1600x4.* | keccakf1600x8.* | ntt_avx_decls.h) return 0 ;;
     symmetric_avx2.* | symmetric_avx512.*) return 0 ;;
     auxfunc_avx2.* | auxfunc_avx512.* | drng_avx2.* | drng_avx512.*) return 0 ;;

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# peak_mem.sh -- NGCC peak-memory metric for SHUTTLE (P14, deliverable 5).
+# peak_mem.sh -- NGCC peak-memory metric for SHUTTLE.
 #
 # Runs the one-shot keygen+sign+verify worker (ref/test/mem_worker.c) under
 #   valgrind --tool=massif --stacks=yes

@@ -1,6 +1,6 @@
 /*
  * test_rounding.c -- SCALAR (reference backend) correctness for the
- * SHUTTLE P09 rounding/lift/hint/norm substrate.  Built per mode with:
+ * SHUTTLE rounding/lift/hint/norm substrate.  Built per mode with:
  *
  *   gcc -O2 -std=c99 -Wall -I. -I../tools -Intt/<qset> -DSHUTTLE_MODE=<m>
  *       -DDISABLE_NAMESPACE=1 test/test_rounding.c rounding.c reduce.c
@@ -15,12 +15,12 @@
  * BE_ENC. (c) the mod-2q lift: lift_to_mod2q_coeff / mat_mul_2q match a
  * NAIVE reference doing the whole A x product in plain mod-2q integer
  *      arithmetic, over random inputs (signer AND verifier forms); the
- *      TRUE-parity (K13) gotcha is exercised (negative coeffs); the
+ *      TRUE-parity gotcha is exercised (negative coeffs); the
  *      raw-vs-freeze parity DIVERGES and the raw form matches the
  * reference. (d) make_hint / use_hint round-trip: use_hint(make_hint(...))
  * recovers the high bits over random comY in [0,2q); the /2 is exact (even
  * by parity); a negative test that an out-of-range H_h bucket is rejected
- *      by ct_range_reject (K14).
+ *      by ct_range_reject (the decode-side range check).
  *  (e) the norm gates accept/reject at the boundary (nsq==BK_SQ accepts,
  *      nsq==BK_SQ+1 rejects; same for BV_SQ and BK_LOW_SQ).
  */
@@ -29,7 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "packing.h" /* ct_range_reject (K14 decode-side check) */
+#include "packing.h" /* ct_range_reject (decode-side range check) */
 #include "params.h"
 #include "poly_ntt.h"
 #include "reduce.h"
@@ -358,7 +358,7 @@ static int test_mod2q(void)
         }
     }
 
-    /* K13: raw parity vs freeze parity DIVERGE on a negative coeff, and
+    /* raw parity vs freeze parity DIVERGE on a negative coeff, and
      * the raw form is the spec-correct one.  q*(x0 mod 2) where x0
      * negative odd: raw (x0&1)==1 but freeze(x0) is even/odd flipped
      * (freeze adds odd q). Demonstrate that q*(x0_raw&1) !=
@@ -383,8 +383,8 @@ static int test_mod2q(void)
         poly16 bhat[EM], Ahat[EM * ELL];
         poly comY[EM];
 
-        /* random signed small compressed mask (include negatives for K13).
-         */
+        /* random signed small compressed mask (include negatives to
+         * exercise the parity divergence). */
         for (p = 0; p < KVEC; ++p)
             for (i = 0; i < N; ++i)
                 yp[p].coeffs[i] = (int32_t)rnd_range(-40, 40);
@@ -561,7 +561,7 @@ static int test_mod2q(void)
 
     printf(
         "(c) mod-2q lift (lift_to_mod2q, mat_mul_2q & mat_mul_z1_2q vs "
-        "naive mod-2q, K13 raw-parity, parity lemma): %s\n",
+        "naive mod-2q, raw-parity, parity lemma): %s\n",
         fails ? "FAIL" : "PASS");
     return fails;
 }
@@ -640,8 +640,9 @@ static int test_hint(void)
             }
     }
 
-    /* K14 negative test: an out-of-range H_h bucket is REJECTED by the
-     * decode-side range check (ct_range_reject), NOT wrapped mod H_h. */
+    /* range-reject negative test: an out-of-range H_h bucket is REJECTED
+     * by the decode-side range check (ct_range_reject), NOT wrapped mod
+     * H_h. */
     {
         uint32_t fail_acc = 0;
         /* in-range comY_h coeff: accepted */
@@ -657,7 +658,7 @@ static int test_hint(void)
 
     printf(
         "(d) make_hint/use_hint round-trip (recover highbits, /2 exact, "
-        "K14 range-reject): %s\n",
+        "range-reject): %s\n",
         fails ? "FAIL" : "PASS");
     return fails;
 }

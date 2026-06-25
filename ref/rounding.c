@@ -1,9 +1,10 @@
 /*
  * rounding.c -- CompressY / StretchS / RoundB / mod-2q lift / hint / norm
- *               gates for SHUTTLE (P09).  PURE SCALAR (reference oracle).
+ *               gates for SHUTTLE.  PURE SCALAR (reference oracle).
  *
  * Read rounding.h FIRST for the API, the StretchS no-mod range analysis,
- * the norm int64-overflow analysis, and the K13/K14/MS-B5 rationale.  This
+ * the norm int64-overflow analysis, and the lift/hint correctness
+ * rationale.  This
  * file is the single CT-audit surface for the lift kernel: every operation
  * on SECRET-derived data (y', sk, comY, z, h, ...) is branchless masked
  * arithmetic with NO hardware idiv / `% const` / floating point.
@@ -93,7 +94,7 @@ static int32_t addmod_Hh(int32_t x)
 /* centermod_Hh: fold a difference x in (-H_h, H_h) into [0, H_h) by ONE
  * masked add (x<0 -> +H_h).  Used for highbits(.)-highbits(.) in MakeHint
  * (both operands in [0,H_h), so the difference is in (-H_h, H_h)).  This
- * is a FOLD of an in-range value (K14), never a general `% H_h`. */
+ * is a FOLD of an in-range value, never a general `% H_h`. */
 static int32_t centermod_Hh(int32_t x)
 {
     int32_t mlt = (x >> 31); /* -1 if x<0, else 0 (x in (-H_h, H_h)) */
@@ -199,7 +200,7 @@ void roundB_update_s2(poly pkb[EM], poly ep[EM], const poly pkb0[EM],
 }
 
 /* ====================================================================== *
- *  mod-2q commitment products (the lift; K13)                            *
+ *  mod-2q commitment products (the lift)                                 *
  * ======================================================================
  */
 
@@ -207,8 +208,8 @@ void roundB_update_s2(poly pkb[EM], poly ep[EM], const poly pkb0[EM],
  * into the NTT domain.  freeze each coeff into [0,q) (poly16), then
  * poly_ntt. The compressed mask / response coeffs are bounded < q
  * (CompressY shrinks by alpha_* >= 3), so this is exact -- it stands in
- * for Lithium's poly_ntt_small (SHUTTLE has no separate small-NTT entry;
- * freeze+poly_ntt is the uniform bridge). */
+ * for a dedicated small-NTT entry (SHUTTLE has no separate small-NTT
+ * entry; freeze+poly_ntt is the uniform bridge). */
 static void poly_to_ntt_dom(poly16 *out, const poly *in)
 {
     unsigned i;
@@ -218,8 +219,7 @@ static void poly_to_ntt_dom(poly16 *out, const poly *in)
 }
 
 /* compute_t: t_i = -bhat_i . x0 + sum_j Ahat[i][j] . xs_j  (mod q), normal
- * domain in [0,q).  Inputs are NTT-domain poly16.  Mirrors Lithium
- * compute_t (polyvec.c:467-486). */
+ * domain in [0,q).  Inputs are NTT-domain poly16. */
 static void compute_t(poly *t, const poly16 *bh_i,
                       const poly16 Ahat[EM * ELL], const poly16 *x0h,
                       const poly16 xsh[ELL], int i)
@@ -311,7 +311,7 @@ void mat_mul_2q(poly comY[EM], const poly yp[KVEC], const poly16 bhat[EM],
                  * parity yp[0].coeffs[k] & 1, NOT freeze(yp[0])&1 (freeze
                  * adds odd q to negatives, flipping their parity).  The
                  * compressed mask y'_0 is signed (can be negative), so the
-                 * freeze'd parity would be wrong for negative coeffs. K13.
+                 * freeze'd parity would be wrong for negative coeffs.
                  */
                 v += (int32_t)Q * (yp[0].coeffs[k] & 1);
             }
@@ -345,7 +345,7 @@ void mat_mul_z1_2q(poly comY_tilde[EM], const poly z1[Z1LEN],
         for (k = 0; k < N; ++k) {
             int32_t v = 2 * t.coeffs[k];
             if (i == 0) {
-                /* RAW parities (z1[0] and c), not freeze()&1 (K13).
+                /* RAW parities (z1[0] and c), not freeze()&1.
                  * v += q*(z0 parity) - q*(c parity)  (the -q*c*j of
                  * UseHint step 1 carried into the lift). */
                 int32_t ck = c->coeffs[k] & 1;
@@ -373,8 +373,8 @@ int32_t highbits_reduced(int32_t x)
      * dance. */
     int32_t b = (x + ((int32_t)ALPHA_H >> 1)) >> LOG2_ALPHA_H;
     /* b can reach H_h (x near 2q-1); ONE masked subtract folds into
-     * [0,H_h) (b <= H_h, never >= 2H_h -- a FOLD, not a general mod H_h;
-     * K14). */
+     * [0,H_h) (b <= H_h, never >= 2H_h -- a FOLD, not a general mod H_h).
+     */
     int32_t mge = -(int32_t)(b >= (int32_t)HH);
     b -= mge & (int32_t)HH;
     return b; /* [0, H_h) */
@@ -419,7 +419,7 @@ void use_hint(poly comY_h[EM], poly z2p[EM], const poly h[EM],
             int32_t c0 = (p == 0) ? comY0p->coeffs[i] : 0;
             /* comY_h = (h + highbits(comY_tilde)) mod H_h.  Both addends
              * are in [0,H_h), so the sum is in [0, 2*H_h): one masked
-             * subtract folds it (K14 fold, not a wrap). */
+             * subtract folds it (a fold, not a wrap). */
             int32_t cyh = addmod_Hh(h[p].coeffs[i] + highbits_reduced(wt));
             comY_h[p].coeffs[i] = cyh;
             /* comY_app = alpha_h*comY_h + comY0p  (plain, in [0,2q) since
@@ -462,7 +462,7 @@ int64_t poly_array_sqnorm(const poly *v, unsigned int len)
 int keygen_norm_ok(const poly stretched[KVEC])
 {
     int64_t nsq = poly_array_sqnorm(stretched, (unsigned)KVEC);
-    /* Closed window, inclusive both ends (MS-D2): accept iff
+    /* Closed window, inclusive both ends: accept iff
      * BK_LOW_SQ <= nsq <= BK_SQ.  Branchless comparison; the CALLER
      * branches on the PUBLIC accept/reject outcome (KeyGen-only -> no
      * signing-time leak). */

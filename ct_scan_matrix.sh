@@ -1,5 +1,5 @@
 #!/bin/sh
-# Full machine-code constant-time scan matrix (P13 CT-1, MANDATORY HARD GATE).
+# Full machine-code constant-time scan matrix (MANDATORY HARD GATE).
 # Thin wrapper over tools/ct_scan.py. Scans every SHUTTLE secret-handling object
 # across {ref,avx2,avx512} x {128,256,512} x {gcc,clang} x {-O3,-Os} x {ngcc,sha3}
 # for forbidden CT mnemonics (div/idiv/gather/scatter/sqrt/cvt...), allowlisting

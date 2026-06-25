@@ -10,16 +10,15 @@ gates are INCLUSIVE:
   Sign   : ||(z_1,z_2')|| <= B_v
   Verify : ||(z_1,z_2')|| <= B_v   (SAME bound B_v as Sign)
 
-Since norm_sq is an integer, the canonical inclusive-gate rounding rule
-(Overview 12.5 / MS-D2) is:
+Since norm_sq is an integer, the canonical inclusive-gate rounding rule is:
 
   BK_SQ     = floor(B_k^2)    accept upper iff  norm_sq <= BK_SQ
   BK_LOW_SQ = ceil(B_k'^2)    accept lower iff  norm_sq >= BK_LOW_SQ
   BV_SQ     = floor(B_v^2)    accept       iff  norm_sq <= BV_SQ
 
-Unlike Lithium (distinct BS_SQ/BV_SQ), SHUTTLE's Sign and Verify SHARE one
-bound B_v, so only BV_SQ is emitted for that gate.  B_k' = 290 is an integer in
-all three sets, so BK_LOW_SQ = ceil(290^2) = 84100 exactly.
+Unlike schemes with distinct sign/verify thresholds, SHUTTLE's Sign and Verify
+SHARE one bound B_v, so only BV_SQ is emitted for that gate.  B_k' = 290 is an
+integer in all three sets, so BK_LOW_SQ = ceil(290^2) = 84100 exactly.
 
 Full-precision reals are taken verbatim from tab:suf-parameters.  Worst-case
 norm_sq ~ B_v^2 ~ 6.3e8 fits int64; no scaling.
@@ -71,7 +70,7 @@ def main():
     blocks, summary, log = [], [], []
     log.append("gen_bounds.py -- SHUTTLE exact integer squared-norm thresholds")
     log.append("")
-    log.append("Inclusive-gate rounding rule (Overview 12.5 / MS-D2):")
+    log.append("Inclusive-gate rounding rule:")
     log.append("  BK_SQ     = floor(B_k^2)    (KeyGen upper, '<='  on B_k)")
     log.append("  BK_LOW_SQ = ceil(B_k'^2)    (KeyGen lower, '>='  on B_k')")
     log.append("  BV_SQ     = floor(B_v^2)    (Sign+Verify, '<='  on B_v, SHARED)")
@@ -96,7 +95,7 @@ def main():
                                    bk_sq=bk_sq, bkl_sq=bkl_sq, bv_sq=bv_sq))
 
     body = ("/* EXACT integer squared-norm thresholds (see tools/gen_bounds.py +\n"
-            " * tools/log/bounds_derivation.txt).  Inclusive-gate rule (MS-D2):\n"
+            " * tools/log/bounds_derivation.txt).  Inclusive-gate rule:\n"
             " *   KeyGen accept iff BK_LOW_SQ <= norm_sq <= BK_SQ  (B_k' <= ||.|| <= B_k)\n"
             " *   Sign/Verify accept iff norm_sq <= BV_SQ          (||.|| <= B_v, SHARED)\n"
             + "\n".join(summary) + "\n */\n"

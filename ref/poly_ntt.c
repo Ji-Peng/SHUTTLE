@@ -1,5 +1,5 @@
 /*
- * poly_ntt.c -- SCALAR (reference backend) bodies of the NTT shim (P03).
+ * poly_ntt.c -- SCALAR (reference backend) bodies of the NTT shim.
  *
  * The scalar path dispatches to the per-config s<n>_ntt_ref / s<n>_*_ref
  * kernels (selected by SHUTTLE_MODE via poly_ntt.h).  All three configs'
@@ -8,9 +8,9 @@
  * asm mod q), so:
  *   - poly_ntt / poly_invntt_tomont need no signed canonicalization here
  * (that is an AVX2/AVX512-only step; see avx2/poly_ntt.c).
- * invntt_tomont_ref already lands in [0,q), LiftToModTwoQ-ready (P09).
+ * invntt_tomont_ref already lands in [0,q), LiftToModTwoQ-ready.
  *   - poly_ntt_canonical IS just ntt_ref: the scalar bit-reversed order is
- * the canonical wire-byte order (K1).
+ * the canonical wire-byte order.
  *   - poly_ntt_import is a no-op: the scalar backend's native order
  * already IS the canonical order, so there is nothing to unpack.
  *

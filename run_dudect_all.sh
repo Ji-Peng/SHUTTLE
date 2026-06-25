@@ -1,5 +1,5 @@
 #!/bin/sh
-# Whole-sign dudect timing gate (P13-T6 / CT-4, HARD but SLOW). Loops
+# Whole-sign dudect timing gate (CT-4, HARD but SLOW). Loops
 # backend x mode, builds tools/dudect/dudect_sign.c against each backend's sign
 # sources and runs it with DUDECT_N samples (fixed-vs-random secret key). The
 # whole-sign t mixes the isochronous per-sample CT with the EXPECTED public

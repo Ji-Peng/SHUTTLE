@@ -1,5 +1,5 @@
 /*
- * irs.h -- SHUTTLE Iterative Rejection Sampler: RejectSample / R (P08).
+ * irs.h -- SHUTTLE Iterative Rejection Sampler: RejectSample / R.
  *
  * The rejection-FREE inner masking transition of SHUTTLE signing.  Pure
  * C99, integer-only, constant-time.  Shared across all three parameter
@@ -18,14 +18,14 @@
  * where c' is the SIGNED challenge: c has only {0,1} entries (SampleC
  * output), and the per-position sign of each applied shift is decided by
  * the transition R, NOT carried in c.  For every index j with c_j = 1, in
- * STRICT ASCENDING order j = 0..n-1 (K5), R applies one transition that
+ * STRICT ASCENDING order j = 0..n-1, R applies one transition that
  * moves z to z +- v with v = sk_tilde . X^j (a negacyclic rotation).  R
  * NEVER aborts: it always emits one of the two neighbours, so RejectSample
  * runs EXACTLY tau transitions (rejection-free).
  *
  * The transition test (Algorithm alg:Ryv) draws U ~ Uniform(0,1] via
  * SamplerU, forms the natural-log test variable u = 2 r^2 ln U from the
- * base-2 ell ~= log2(U) by a single multiply by 2 r^2 ln2 (K12), and
+ * base-2 ell ~= log2(U) by a single multiply by 2 r^2 ln2, and
  * checks u against the closed-form squared-norm differences
  *
  *     ||y||^2 - ||y + m v||^2 = -2 m t - m^2 V,   t = <y,v>,  V = ||v||^2,
@@ -37,10 +37,10 @@
  * is an isometry of R = Z[X]/(X^n+1)).  Before the test, v is
  * sign-normalized so t = <y,v> > 0.
  *
- * ============= K2: THE IRS CONTEXT IS A FRESH 0x09||seed_y STREAM
+ * ============= THE IRS CONTEXT IS A FRESH 0x09||seed_y STREAM
  * =========
  *
- * Sign (P11) opens a FRESH xof_ctx, absorbs DS_IRS(0x09) || seed_y, and
+ * Sign opens a FRESH xof_ctx, absorbs DS_IRS(0x09) || seed_y, and
  * threads it through reject_sample -> R_transition -> sampler_u.  This is
  * the SAME seed_y that SampleY (tag 0x08) used, separated ONLY by the
  * domain tag. Do NOT continue SampleY's context, and do NOT use the
@@ -50,7 +50,7 @@
  * EXACTLY 18*tau bytes per signing attempt (deterministic -- this is what
  * makes the byte accounting trivial vs the wide-Gaussian sampler).
  *
- * ===================== K12 / MS-C2: THE u FIXED-POINT FORM
+ * ===================== THE u FIXED-POINT FORM
  * ================
  *
  * ell ~= log2(U) is carried UNFOLDED as (a, frac_q62) by SamplerU
@@ -64,12 +64,12 @@
  * U ) and compares against the boundary integers B = -2 m t - m^2 V (exact
  * int64) promoted to (int128)B << 44.  The half-open test (lo<<44) < u <=
  * (hi<<44) is EXACT in __int128.  The folded int64 log2(U) = frac -
- * (a<<62) is NOT used: a up to 81 makes 81*2^62 ~ 2^68.3 overflow int64
- * (S2).  The scale 44, the rounding rule, and the constant are PINNED by
+ * (a<<62) is NOT used: a up to 81 makes 81*2^62 ~ 2^68.3 overflow int64.
+ * The scale 44, the rounding rule, and the constant are PINNED by
  * tools/gen_irs_consts.py (the @@AUTOGEN:irs_consts@@ region of irs.c) and
  * are KAT-critical.
  *
- * ====================== ISOCHRONY / LEAKAGE (P13 anchor)
+ * ====================== ISOCHRONY / LEAKAGE
  * ==================
  *
  * Isochrony of IRS (Description.tex:1385-1393, 2138-2166; Security.tex
@@ -81,7 +81,7 @@
  * deterministic function of (tau, n), both public.  Specifically: (a) R is
  * abort-free  => exactly tau R-transitions per RejectSample; (b) the only
  * signing-level variability is the OUTER Sign loop count, gated by the
- * PUBLIC norm test ||(z_1,z_2')||_2 <= B_v (P11); that count leaks only
+ * PUBLIC norm test ||(z_1,z_2')||_2 <= B_v; that count leaks only
  * the public emitted-distribution acceptance rate beta, never the secret
  * -- because the emitted response z = y + StretchS(sk) c' is EXACTLY
  * centered Gaussian D_{R,r} independent of sk (M_6 = 1 exact step,
@@ -94,7 +94,7 @@
  * Therefore the entire IRS path is isochronous and the ONLY observable is
  * the emitted distribution, which is secret-independent by construction.
  *
- * SECRET vs PUBLIC classification (for P13 SECRET_PUBLIC_AUDIT):
+ * SECRET vs PUBLIC classification (for the secret/public audit):
  *   SECRET : seed_y (and the whole IRS ctx), sk_tilde, t=<y,v>, V,
  * ell/frac/a, flag, the input y and output z coefficients. PUBLIC : c
  * (recomputed by the verifier from seedC), tau, n, the Sign outer-loop
@@ -119,10 +119,10 @@
 /*
  * RejectSample (Algorithm alg:RejectSample).  Apply tau transitions to y,
  * one per nonzero challenge coefficient, in strict ascending index order
- * j = 0..n-1 (K5).
+ * j = 0..n-1.
  *
  *   ctx       IRS XOF context, ALREADY initialized with
- * DS_IRS(0x09)||seed_y by the caller (K2); mutated by every SamplerU
+ * DS_IRS(0x09)||seed_y by the caller; mutated by every SamplerU
  * squeeze. z         output response, KVEC polys (z = y + sk_tilde . c').
  *   y         masking sample, KVEC polys (may alias z -> handled: z is
  * filled from y first). c         single binary challenge poly with

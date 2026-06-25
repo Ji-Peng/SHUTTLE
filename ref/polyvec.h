@@ -1,9 +1,9 @@
 /*
- * polyvec.h -- vector-level XOF-driven sampling surface for SHUTTLE (P07).
+ * polyvec.h -- vector-level XOF-driven sampling surface for SHUTTLE.
  *
  * This header owns the deterministic seed expanders and the 16-lane
- * matrix/vector samplers that sit between the unified XOF layer (P02) and
- * the top-level KeyGen/Sign orchestration (P11):
+ * matrix/vector samplers that sit between the unified XOF layer and
+ * the top-level KeyGen/Sign orchestration:
  *
  *     expand_seeds          (DS 0x00, xof256, single one-shot)
  *     expand_signing_seeds  (DS 0x01, xof256, single one-shot)
@@ -13,13 +13,13 @@
  *     sample_y              (DS 0x08, xof256, 16 lanes; wide Gaussian r)
  *
  * It pins the exact per-attempt PRNG byte schedule, the 16-lane stream
- * partition, the OUTPUT-indexed sign stream (K9), the cursor-advance
- * determinism rule (K6/K8), and the batch-orchestration plumbing
+ * partition, the OUTPUT-indexed sign stream, the cursor-advance
+ * determinism rule, and the batch-orchestration plumbing
  * (gauss_stream) so that ref == avx2 == avx512 is byte-exact within each
- * MODE.  It is the KAT-fragile heart of the scheme (K2/K6/K7/K8/K9).
+ * MODE.  It is the KAT-fragile heart of the scheme.
  *
  * ===================================================================== *
- *  THE NGCC DRBG NO-RATE-CURSOR RULE (binding; K6) -- read this.         *
+ *  THE NGCC DRBG NO-RATE-CURSOR RULE (binding) -- read this.         *
  * ===================================================================== *
  * Under NGCC_MODE the SM3 Hash-DRBG behind xof256_squeeze has NO sub-call
  * rate cursor: every squeeze is a FRESH `SM3_DRNG_Generate` that produces
@@ -63,8 +63,9 @@
 #include "xof.h"
 
 /* RNDBYTES: the per-signature randomness length fed to ExpandSigningSeeds.
- * For deterministic/KAT signing this is a fixed value owned by P11 (Sign);
- * P07 only fixes the byte LENGTH (= SEEDBYTES, the Dilithium rnd width).
+ * For deterministic/KAT signing this is a fixed value owned by Sign;
+ * this header only fixes the byte LENGTH (= SEEDBYTES, the Dilithium rnd
+ * width).
  */
 #ifndef RNDBYTES
 #    define RNDBYTES SEEDBYTES
@@ -97,7 +98,7 @@ void expand_signing_seeds(uint8_t seedY[SEEDBYTES],
  * ===================================================================== */
 /* agen : coeff-domain, EM polys, every coeff in [0,q).
  * hAgen: NTT-domain, EM*ELL polys, every coeff in [0,q).  hAgen is written
- * in canonical (ref ascending-index == bit-reversed) NTT order (K1); the
+ * in canonical (ref ascending-index == bit-reversed) NTT order; the
  * scalar ref needs no nttunpack (the AVX forks import via
  * poly_ntt_import).
  */
@@ -137,11 +138,11 @@ void sample_y(poly y[KVEC], const uint8_t seedY[SEEDBYTES]);
  *  squeeze; gs_ensure refills (bumping the refill counter and re-initing *
  *  a fresh ctx) when the cursor would run past `avail`.  The whole       *
  *  mini-batch tail is requested at once so the cursor advances           *
- *  identically across backends (K6/K8). */
+ *  identically across backends. */
 /* The wide-sampler lane chunk is KVEC*n/16 coeffs; its OUTPUT-indexed sign
  * stream is therefore (KVEC*n/16 + 7)/8 bytes (+ AVX512 LE64 read pad).  A
  * stream block must hold that sign stream plus one full mini-batch so the
- * "draw the whole tail up front" rule (K6/K8) fits in one squeeze. */
+ * "draw the whole tail up front" rule fits in one squeeze. */
 #define SIGN_BYTES_PER_CHUNK (((KVEC * N / XOF_STREAMS) + 7) / 8)
 #define GAUSS_STREAM_BLOCK \
     (MINIBATCH_RAND_BYTES + SIGN_BYTES_PER_CHUNK + SIGN_PAD_AVX512 + 64)
@@ -163,7 +164,7 @@ void gauss_stream_init(gauss_stream *gs, uint8_t tag, const uint8_t *seed,
 void gs_ensure(gauss_stream *gs, size_t need);
 /* Produce a flat run of `count` wide-Gaussian samples into dst[0..count).
  * The OUTPUT-indexed sign stream covers exactly these `count` outputs and
- * is squeezed up front (K9); the wide mini-batches then fill them. `count`
+ * is squeezed up front; the wide mini-batches then fill them. `count`
  * is the lane chunk width KVEC*n/16 (<= GAUSS_STREAM_BLOCK-worth of
  * signs).
  */

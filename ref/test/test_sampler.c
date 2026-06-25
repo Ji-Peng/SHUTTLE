@@ -1,5 +1,5 @@
 /*
- * test_sampler.c -- build-verify for the P05 96-bit RCDT base sampler
+ * test_sampler.c -- build-verify for the 96-bit RCDT base sampler
  * (scalar reference).  Pure C99, self-contained (a tiny xorshift PRNG; no
  * external RNG / XOF), builds with only sampler.c + reduce.c.
  *
@@ -9,7 +9,7 @@
  *       SHUTTLE/ref/test/test_sampler.c SHUTTLE/ref/sampler.c \
  *       SHUTTLE/ref/reduce.c -DSHUTTLE_MODE=<m>
  *
- * Coverage (05-BaseSampler.md test plan + the prompt's checklist):
+ * Coverage:
  *   (1) SCALAR FOLD == eq|lt textbook reference  (the demo_basesampler.c
  *       `ref_count` cross-check): cdt_scan96 per-sample output ==
  * ref_count over 4e6 random + boundary cases (limb == threshold, all-0xFF,
@@ -27,10 +27,11 @@
  * table-implied value to a loose tolerance (catches a table-load / layout
  * bug). (6) BATCH-EQUIV: sampler_sigma2 / noise_magnitude_batch over a
  * 32-sample grouped mini-batch is BIT-IDENTICAL to 32 independent
- * single-sample cdt_scan96 calls (and to ref_count) -- the K10
- * cross-backend contract checked here against the scalar oracle. (7)
+ * single-sample cdt_scan96 calls (and to ref_count) -- the
+ * cross-backend byte-exactness contract checked here against the scalar
+ * oracle. (7)
  * FLIP-COMMUTE identity: (Z+b)^K == (Z^K)+b over 4e6 random (Z,b) -> 0
- *       counterexamples (justifies the M6 AVX2 borrow fold).
+ *       counterexamples (justifies the AVX2 borrow fold).
  *
  * The constant-time STRUCTURAL gate (objdump: no idiv, scan is cmov/setcc
  * not secret-dependent jumps) is run outside this driver by the build
@@ -423,7 +424,7 @@ static int test_distribution(void)
 /* ============================================================ *
  * (6) batch-equiv: sampler_sigma2 / noise_magnitude_batch over *
  *     a 32-sample grouped mini-batch == 32 single cdt_scan96   *
- *     calls == ref_count (bit-identical; the K10 oracle).      *
+ *     calls == ref_count (bit-identical; the scalar oracle).   *
  * ============================================================ */
 static int test_batch_equiv(void)
 {
@@ -526,7 +527,7 @@ int main(void)
     printf("[6] batch entry == N independent scalar calls\n");
     report("batch == N singles", test_batch_equiv());
 
-    printf("[7] flip-commute identity (M6 AVX2 justification)\n");
+    printf("[7] flip-commute identity (AVX2 justification)\n");
     report("flip-commute identity", test_flip_commute());
 
     /* per-mode selector sanity: RCDT_NOISE_S/E + entries resolve to the

@@ -9,16 +9,15 @@
  * per-coeff ring arithmetic that must stay byte-exact with the asm
  * backends.  Every add/sub is reduced because for the unsigned valley sets
  * (q=61441 / 59393) 2q exceeds 2^16, so a bare uint16 add would wrap.
- * Mirrors Lithium-Code/ref/reduce.h.
  *
  *  (2) The int32 SIGNED scheme-domain Barrett helpers (reduce32 / caddq /
  *      freeze / caddq2 / reduce_mod_2q): these run on the raw scheme
  *      coefficients (poly.coeffs is int32) and on SECRET NTT residues, so
  * they are division-free and constant-time (a compile-time Barrett
  * reciprocal, no runtime `/` or `%`; see reduce.c).  reduce_mod_2q is the
- * general mod-2q canonicalizer consumed by LiftToModTwoQ (P09).
+ * general mod-2q canonicalizer consumed by LiftToModTwoQ.
  *
- * Per-set Q / DQ come from params.h (P01), selected by SHUTTLE_MODE.  The
+ * Per-set Q / DQ come from params.h, selected by SHUTTLE_MODE.  The
  * NTT-domain Montgomery constants (QINV = q^-1 mod 2^16, MONT = 2^16 mod
  * q, NINV_TOMONT = n^-1*R^2 mod q) are NOT in params.h -- they are an
  * internal detail of the NTT layer -- so reduce.h derives them here
@@ -38,7 +37,7 @@
  *    QINV         = -q^-1 mod 2^16                             *
  *    NINV_TOMONT  = n^-1 * (2^16 mod q)^2 mod q                *
  *                                                              *
- *  NOTE on QINV sign: this C core uses the Lithium/Dilithium   *
+ *  NOTE on QINV sign: this C core uses the Dilithium-style     *
  *  "+m*q" Montgomery form (m = a*QINV; t = (a + m*q) >> 16),   *
  *  which requires QINV = -q^-1 mod 2^16 = 2^16 - (q^-1 mod     *
  *  2^16) = 15359 / 61439 / 59391.  This is DISTINCT from the   *

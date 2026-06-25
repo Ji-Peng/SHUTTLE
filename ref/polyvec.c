@@ -1,17 +1,17 @@
 /*
  * polyvec.c -- vector-level XOF-driven sampling surface (PURE SCALAR
- *              REFERENCE; the KAT oracle).  P07.
+ *              REFERENCE; the KAT oracle).
  *
  * Implements ExpandSeeds / ExpandSigningSeeds / ExpandA / ExpandS /
- * SampleC / SampleDGauss / SampleY.  The AVX2/AVX512 forks (M6) must be
+ * SampleC / SampleDGauss / SampleY.  The AVX2/AVX512 forks must be
  * byte-identical to this scalar oracle within each MODE.
  *
  * Read polyvec.h FIRST for the binding NGCC-DRBG no-rate-cursor rule and
  * the 16-stream nonce layout: every logical stream draws its whole byte
  * budget in ONE squeeze; refills re-init a fresh ctx with a 2-byte refill
  * counter appended to the nonce.  This is what keeps ref==avx2==avx512
- * byte-exact (K6) and what makes the cursor advance independent of any
- * early rejection break (K6/K8).
+ * byte-exact and what makes the cursor advance independent of any
+ * early rejection break.
  *
  * ===================================================================== *
  *  PINNED PRNG byte schedules (KAT-NORMATIVE)                            *
@@ -187,7 +187,7 @@ static void uniform_reject_chunk(uniform_stream *us, uint16_t *dst,
 }
 
 /* ===================================================================== *
- *  ExpandA (DS 0x02, xof128, 16 lanes; A_gen direct in NTT domain, K1)  *
+ *  ExpandA (DS 0x02, xof128, 16 lanes; A_gen direct in NTT domain)      *
  * ===================================================================== */
 void expand_a(poly16 agen[EM], poly16 hAgen[EM * ELL],
               const uint8_t seedA[SEEDBYTES])
@@ -224,7 +224,7 @@ void expand_a(poly16 agen[EM], poly16 hAgen[EM * ELL],
  * ===================================================================== */
 /* gauss_stream services ExpandS (noise mini-batches) and SampleY (wide
  * mini-batches).  Both consume their per-lane stream as a sequence of
- * fixed-size mini-batches whose whole tail is drawn up front (K6/K8).  The
+ * fixed-size mini-batches whose whole tail is drawn up front.  The
  * struct is declared in polyvec.h.  GAUSS_STREAM_BLOCK is sized to hold a
  * SampleY poly's sign stream + one wide mini-batch, the larger of the two
  * uses; ExpandS mini-batches (NOISE_MINIBATCH_RAND_BYTES = 392) fit too.
@@ -284,8 +284,8 @@ void gs_ensure(gauss_stream *gs, size_t need)
 /* One noise mini-batch: cdt_scan96 over `Z`/`entries` (NOISE_BATCH=32),
  * then a 2-bit-per-candidate tail (bit0 sign, bit1 zero-fold), 4
  * cand/byte; the WHOLE NOISE_MINIBATCH_RAND_BYTES (392) is consumed up
- * front so the cursor advances independently of the cnt==want early break
- * (K6/K8). Appends accepted signed coeffs to dst[*cnt..]; stops at `want`.
+ * front so the cursor advances independently of the cnt==want early break.
+ * Appends accepted signed coeffs to dst[*cnt..]; stops at `want`.
  */
 static void noise_minibatch(gauss_stream *gs, int32_t *dst, size_t *cnt,
                             size_t want, const uint32_t Z[][3],
@@ -307,7 +307,7 @@ static void noise_minibatch(gauss_stream *gs, int32_t *dst, size_t *cnt,
             dst[(*cnt)++] = r;
     }
     gs->pos +=
-        NOISE_MINIBATCH_RAND_BYTES; /* WHOLE tail consumed (K6/K8) */
+        NOISE_MINIBATCH_RAND_BYTES; /* WHOLE tail consumed */
 }
 
 void expand_s(poly s1s2[ELL + EM],
@@ -398,14 +398,14 @@ void sample_c(poly *c, const uint8_t seedC[CHALLENGESEEDBYTES])
  * ===================================================================== */
 /* gauss_stream_chunk: produce a flat run of `count` wide-Gaussian samples
  * (the lane chunk KVEC*n/16).
- *   1. up-front OUTPUT-indexed sign stream: (count+7)/8 bytes (K9) -- ONE
+ *   1. up-front OUTPUT-indexed sign stream: (count+7)/8 bytes -- ONE
  *      bit per output, indexed by the running accept counter.
  *   2. mini-batches of GAUSS_BATCH candidates until `count` accepted:
  *        - cdt_scan96(x[32], buf+pos) over RCDT_Z (advance 384)
  *        - y[32] = buf[pos..pos+32]   (advance 32; Y_BITS=8 byte copy)
  *        - p_hat[32] via approx_exp_accept_q64_x4 (8 groups of 4)
  *        - per-candidate gauss_finalize, tail at buf+pos+8*j (advance 256)
- *      The whole MINIBATCH_RAND_BYTES is consumed up front (K6/K8). */
+ *      The whole MINIBATCH_RAND_BYTES is consumed up front. */
 void gauss_stream_chunk(gauss_stream *gs, int32_t *dst, size_t count)
 {
     uint8_t signs[SIGN_BYTES_PER_CHUNK + SIGN_PAD_AVX512];
@@ -480,7 +480,7 @@ void gauss_stream_chunk(gauss_stream *gs, int32_t *dst, size_t count)
             }
             PROF_STOP(PT_G_FINAL, t_fin);
         }
-        gs->pos += MINIBATCH_RAND_BYTES; /* WHOLE tail consumed (K6/K8) */
+        gs->pos += MINIBATCH_RAND_BYTES; /* WHOLE tail consumed */
     }
 }
 

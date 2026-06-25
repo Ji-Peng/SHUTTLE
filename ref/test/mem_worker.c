@@ -1,6 +1,6 @@
 /*
  * mem_worker.c -- a minimal one-shot keygen + sign + verify worker for the
- * peak-memory measurement (P14).  Run under massif:
+ * peak-memory measurement.  Run under massif:
  *   valgrind --tool=massif --stacks=yes --massif-out-file=massif.out \
  *            --quiet ./mem_worker
  * The massif.out parser (tools/peak_mem.sh) then takes the max mem_heap_B
@@ -11,8 +11,8 @@
  *   maxrss_kib=<n>
  * so tools/peak_mem.sh can fall back to it and label peak_source=maxrss.
  *
- * Exactly ONE keygen+sign+verify cycle is run (NWORK, override-able) so the
- * massif heap/stack high-water reflects a single signature path, not a
+ * Exactly ONE keygen+sign+verify cycle is run (NWORK, override-able) so
+ * the massif heap/stack high-water reflects a single signature path, not a
  * benchmark loop (a benchmark loop would still plateau, but one cycle is
  * the cleanest peak).  A non-zero return from any sig_* aborts.
  *

@@ -1,9 +1,9 @@
 /*
  * rounding.h -- CompressY / StretchS / RoundB / mod-2q lift / hint / norm
- *               gates for SHUTTLE (P09).
+ *               gates for SHUTTLE.
  *
  * This is the compression and commitment substrate that sits between the
- * samplers (P05-P08) and the top-level KeyGen/Sign/Verify (P11).  It owns:
+ * samplers and the top-level KeyGen/Sign/Verify.  It owns:
  *
  *   - LSB / LiftToModTwoQ        (alg:LSB, alg:lift22Q)
  *   - CompressY / StretchS       (alg:compress-y, alg:stretch-s)
@@ -11,32 +11,32 @@
  * roundB_update_s2
  *   - the mod-2q commitment lift (mat_mul_2q signer / mat_mul_z1_2q
  * verifier)
- *   - MakeHint / UseHint         (LIVE mod-q UseHint, MS-B5; alg:makehint,
+ *   - MakeHint / UseHint         (LIVE mod-q UseHint; alg:makehint,
  *                                 alg:usehint 1326-1344)
  *   - the two-norm gates         (compare-of-squares, no sqrt, no float)
  *
- * CONSTANT-TIME / no-float / no-div discipline (Overview 4.4/4.7):
+ * CONSTANT-TIME / no-float / no-div discipline:
  *   - All round-to-nearest divides on SECRET-derived data use a magic
  *     reciprocal (round_div_taway) or a power-of-two shift -- NEVER a
  *     hardware idiv / `% const`.
  *   - The mod-2q reductions use ONE masked conditional add/subtract (not
  * the general reduce_mod_2q Barrett), matching the AVX2/AVX512 lift so the
- *     SIMD forks are byte-exact (K10).
+ *     SIMD forks are byte-exact.
  *   - The non-power-of-2 `mod H_h` in MakeHint/UseHint is a FOLD of an
  *     in-range difference via branchless masked add/subtract, NOT a wrap
- *     (K14: range-CHECK-then-reject lives on the DECODE side, P04/P10).
+ *     (range-CHECK-then-reject lives on the DECODE side).
  *   - The norm gates compare INTEGER squared L2 against an integer-square
  *     bound, accumulated in int64 (no sqrt, no float, no data-dependent
  *     branch; the caller branches on the PUBLIC accept/reject outcome).
  *
- * Three K-risks live here:
- *   K13 (MS-C3): the mod-2q parity correction uses the RAW coefficient
+ * Three subtle correctness risks live here:
+ *   (1) the mod-2q parity correction uses the RAW coefficient
  *                parity `x0 & 1`, NOT `freeze(x0) & 1` (freeze adds odd q
  * to negatives, flipping their parity).  This is THE gotcha that makes the
- * SIMD lift byte-exact to scalar. K14 (MS-C4): the hint range [0,H_h) is
+ * SIMD lift byte-exact to scalar. (2) the hint range [0,H_h) is
  * non-power-of-2 (30/120/58); the MakeHint/UseHint `mod H_h` folds an
  * in-range difference and `highbits_reduced` never over-reduces -- it
- * produces only canonical [0,H_h) hints. MS-B5      : implement the LIVE
+ * produces only canonical [0,H_h) hints. (3) implement the LIVE
  * mod-q UseHint (Description.tex 1326-1344) ONLY; the commented-out mod-2q
  * block (1346-1363) is dead and gives wrong results.
  */
@@ -104,7 +104,7 @@ void stretch_s(poly out[KVEC], const poly in[KVEC]);
  *       int32, no wrap.  The resulting norm^2 ~ B_k^2 ~ 85k-88k (int64).
  *
  *   (2) Sign sk_tilde = StretchS(sk_full): the SAME secret, so the SAME
- *       per-coeff bound <= 144.  sk_tilde feeds IRS (P08) with V =
+ *       per-coeff bound <= 144.  sk_tilde feeds IRS with V =
  *       ||sk_tilde||^2 <= B_k^2 ~ 88000.
  *
  * The translation identities hold UNCONDITIONALLY over Z:
@@ -133,7 +133,7 @@ void roundB_update_s2(poly pkb[EM], poly ep[EM], const poly pkb0[EM],
                       const poly e[EM]);
 
 /* ---------------------------------------------------------------------- *
- *  mod-2q commitment products (the lift; K13)                            *
+ *  mod-2q commitment products (the lift)                                 *
  * ----------------------------------------------------------------------
  */
 
@@ -144,7 +144,7 @@ void roundB_update_s2(poly pkb[EM], poly ep[EM], const poly pkb0[EM],
  *   Ahat[EM*ELL]  : the hAgen block (NTT-domain, [0,q)), indexed
  * [i*ELL+j].
  *
- * Pipeline (mirrors Lithium polyvec.c mat_mul_2q):
+ * Pipeline:
  *   1. forward-NTT the fresh compressed mask y' (poly_ntt over freeze'd
  *      poly16 copies); the public bhat/Ahat are already NTT-domain.
  *   2. compute_t: t_i = -bhat_i . y'_0 + sum_j Ahat[i][j] . y'_{1+j}  (mod
@@ -153,7 +153,7 @@ void roundB_update_s2(poly pkb[EM], poly ep[EM], const poly pkb0[EM],
  *   3. add the e-block (+ y'_{1+ELL+i}, the 2*I_m contribution), freeze
  * [0,q).
  *   4. the lift, per coeff:  v = 2*t ; for i==0 v += q*(y'_0[k] & 1)  (RAW
- *      parity, K13) ; v -= ((DQ-1-v)>>31) & DQ   (ONE masked conditional
+ *      parity) ; v -= ((DQ-1-v)>>31) & DQ   (ONE masked conditional
  *      subtract; v in [0,3q) -> [0,2q)).
  *
  * comY has EM components (the commitment vector length). */
@@ -164,7 +164,7 @@ void mat_mul_2q(poly comY[EM], const poly yp[KVEC], const poly16 bhat[EM],
  * (length Z1LEN = 1+ELL, NO e-block), the binary challenge c, and the
  * NARROWER matrix (NO 2*I_m block).  This fuses UseHint steps 1-2: the
  * `- q*c*j mod q` then LiftToModTwoQ.  Per coeff for i==0:
- *   v += q*(z1[0][k] & 1) - q*(c[k] & 1)     (RAW parities, K13)
+ *   v += q*(z1[0][k] & 1) - q*(c[k] & 1)     (RAW parities)
  *   v in [-q,3q): mod-2q via one masked ADD then one masked SUBTRACT. */
 void mat_mul_z1_2q(poly comY_tilde[EM], const poly z1[Z1LEN],
                    const poly *c, const poly16 bhat[EM],
@@ -180,7 +180,7 @@ void mat_mul_z1_2q(poly comY_tilde[EM], const poly z1[Z1LEN],
  * shift), then ONE masked subtract folds into [0,H_h).  NO idiv, NO %.
  * The +alpha_h/2 round can reach H_h (x near 2q-1), so the single >= H_h
  * masked subtract is REQUIRED -- but at most one (b <= H_h, never >=
- * 2H_h), so this is a FOLD, not a general mod H_h (K14). */
+ * 2H_h), so this is a FOLD, not a general mod H_h. */
 int32_t highbits_reduced(int32_t x);
 
 /* hbvalue(bucket) = alpha_h * bucket. */
@@ -193,8 +193,8 @@ int32_t hbvalue(int32_t bucket);
  */
 void make_hint(poly h[EM], const poly comY[EM], const poly z2[EM]);
 
-/* UseHint (verifier, LIVE mod-q variant, MS-B5; alg:usehint 1326-1344).
- * The caller (Verify, P11) first runs mat_mul_z1_2q to get comY_tilde in
+/* UseHint (verifier, LIVE mod-q variant; alg:usehint 1326-1344).
+ * The caller (Verify) first runs mat_mul_z1_2q to get comY_tilde in
  * [0,2q) (UseHint steps 1-2 fused into the matrix product), then use_hint
  * does steps 3-5, per pk poly i, per coeff:
  *   comY_h   = (h + highbits(comY_tilde)) mod H_h          in [0,H_h)
@@ -225,7 +225,7 @@ void recon_comY0p(poly *comY0p, const poly *z0, const poly *c);
 int64_t poly_array_sqnorm(const poly *v, unsigned int len);
 
 /* KeyGen window: returns 1 iff BK_LOW_SQ <= ||StretchS(1,s,e')||^2 <=
- * BK_SQ (closed interval, inclusive both ends -- MS-D2).  Input is the
+ * BK_SQ (closed interval, inclusive both ends).  Input is the
  * STRETCHED vector (alpha_1*1, alpha_s*s, alpha_e*e'), KVEC long. */
 int keygen_norm_ok(const poly stretched[KVEC]);
 
@@ -234,7 +234,7 @@ int keygen_norm_ok(const poly stretched[KVEC]);
 int response_norm_ok(const poly z1[Z1LEN], const poly z2p[EM]);
 
 /* ====================================================================== *
- *  Norm int64-overflow analysis (NORM) *
+ *  Norm int64-overflow analysis *
  * ====================================================================== *
  * poly_array_sqnorm accumulates sum_k c_k^2 over all polys in int64.
  *
@@ -245,16 +245,16 @@ int response_norm_ok(const poly z1[Z1LEN], const poly z2p[EM]);
  *
  * (b) Sign/Verify gate ||(z1,z2')||^2 <= B_v^2 ~ 6.3e8.  The VERIFIER sees
  *     attacker-chosen z, so the bound must hold over ALL int32 coeffs that
- *     survive sigDecode's per-coeff range checks (P10).  With each z coeff
+ *     survive sigDecode's per-coeff range checks.  With each z coeff
  *     bounded to its modelled support (~2^15), c_k^2 < 2^30, and over <=
  *     (1+ELL+EM)*n = 6144 coeffs the sum < 2^43 -- no int64 overflow.
  *     OVERFLOW GUARD: even at the full int32 range |c_k| < 2^31 a single
  *     c_k^2 < 2^62 and a few terms would overflow int64; the
- * implementation therefore RELIES on sigDecode's per-coeff range bound (->
- * needs P10 sigDecode range bound) to keep the running sum < 2^53.  The
+ * implementation therefore RELIES on sigDecode's per-coeff range bound to
+ * keep the running sum < 2^53.  The
  * norm gate is NOT a substitute for the decode-side range checks.
  *
- * Inclusivity (MS-D2): Sign rejects on strict `> B_v` => response_norm_ok
+ * Inclusivity: Sign rejects on strict `> B_v` => response_norm_ok
  * returns 1 iff sqnorm <= BV_SQ; Verify accepts on `<=` -- same boundary.
  * Since the norm-square is an integer and B_v^2 is non-integer,
  * `<= floor(B_v^2)` == `<= B_v^2` exactly.

@@ -1,24 +1,25 @@
 /*
- * avx2/poly_ntt.c -- AVX2 fork of the NTT shim (P03), behind USE_AVX2_NTT.
+ * avx2/poly_ntt.c -- AVX2 fork of the NTT shim, behind USE_AVX2_NTT.
  *
- * === M6 wiring (byte-exactness milestone) ===
- * At M6 the SCHEME (sign.c / polyvec.c / rounding.c, all symlinked SCALAR)
- * runs unmodified.  The scalar ExpandA writes the cached matrix hAgen in
- * CANONICAL (ref bit-reversed) NTT order and -- crucially -- never calls
- * poly_ntt_import on it (that import is an M9 AVX-fork step; see the
- * comment at ref/polyvec.c:212).  The scalar sign.c then forms NTT-domain
- * products poly_pointwise_montgomery(hAgen, poly_ntt(s)).  For that
- * product to be correct BOTH operands must share one NTT order AND one
- * Montgomery scaling convention.  hAgen is fixed at the canonical/scalar
- * convention, so the scheme-facing shim ops here MUST also be the
- * canonical/scalar convention.
+ * === Scalar-dispatch wiring (byte-exactness) ===
+ * In the byte-exact configuration the SCHEME (sign.c / polyvec.c /
+ * rounding.c, all symlinked SCALAR) runs unmodified.  The scalar ExpandA
+ * writes the cached matrix hAgen in CANONICAL (ref bit-reversed) NTT order
+ * and -- crucially -- never calls poly_ntt_import on it (that import is
+ * the AVX-fork step).  The scalar sign.c then forms NTT-domain products
+ * poly_pointwise_montgomery(hAgen, poly_ntt(s)).  For that product to be
+ * correct BOTH operands must share one NTT order AND one Montgomery
+ * scaling convention.  hAgen is fixed at the canonical/scalar convention,
+ * so the scheme-facing shim ops here MUST also be the canonical/scalar
+ * convention.
  *
  * Therefore the scheme-facing shim entries (poly_ntt / poly_invntt_tomont
  * / poly_pointwise_montgomery / poly_ntt_canonical) dispatch to the
  * per-config s<n>_*_ref scalar kernels.  This makes the AVX2 build's
  * integrated KAT BYTE-EXACT to the reference (ref==avx2==avx512), which is
- * the whole M6 gate. poly_ntt_import is a no-op (poly_ntt already emits
- * canonical == the order the scheme expects; nothing to unpack).
+ * the whole byte-exactness gate. poly_ntt_import is a no-op (poly_ntt
+ * already emits canonical == the order the scheme expects; nothing to
+ * unpack).
  *
  * The genuine AVX2 NTT asm kernels (s<n>_ntt_avx / s<n>_invntt_tomont_avx
  * / s<n>_pointwise_avx / s<n>_nttunpack_avx + the signed canonicalization)
@@ -26,8 +27,8 @@
  * test/test_ntt_avx.c, which drives them through the poly_ntt_simd_*
  * wrappers exported below.  Wiring those SIMD kernels into the *scheme*
  * hot path (with a forked polyvec.c/sign.c that poly_ntt_imports the
- * canonical hAgen into the AVX2-native slot layout) is the M9 PERF
- * milestone -- it is a perf change, not a correctness one, and it is gated
+ * canonical hAgen into the AVX2-native slot layout) is a later PERF
+ * step -- it is a perf change, not a correctness one, and it is gated
  * on the AVX2 forks of polyvec/sign.
  *
  * === The AVX2 SIMD kernels (exercised by test_ntt_avx via the *_simd_*
@@ -36,7 +37,7 @@
  *   - SIGNED q15361 (SHUTTLE_MODE==128): ntt/invntt take (poly, qdata,
  * ztab, z0/z0inv, scale); pointwise (c,a,b,qdata); plus s256_reduce_avx.
  * The signed invntt leaves a lazy ~2q value; reduce_avx + a conditional +q
- * for negative lanes canonicalizes it to [0,q) (K10).
+ * for negative lanes canonicalizes it to [0,q).
  *   - UNSIGNED q61441/q59393: ntt/invntt take (poly, qdata, ztab, cross,
  * ninv); pointwise (c,a,b,qdata); invntt already yields [0,q). poly16
  * (uint16_t[N]) is reinterpret-cast to int16_t* at each backend call;
@@ -57,7 +58,7 @@ static void ensure_init(void)
 }
 
 /* ===================================================================== *
- *  Scheme-facing shim: CANONICAL / scalar convention (M6 byte-exact).    *
+ *  Scheme-facing shim: CANONICAL / scalar convention (byte-exact).      *
  * ===================================================================== */
 
 void poly_ntt(poly16 *a)
@@ -90,11 +91,11 @@ void poly_ntt_canonical(poly16 *a)
 
 void poly_ntt_import(poly16 *a)
 {
-    /* No-op: poly_ntt already emits canonical order at M6 (the scheme's
+    /* No-op: poly_ntt already emits canonical order (the scheme's
      * NTT-domain operands all share it), so there is nothing to unpack.
      * The real AVX2 nttunpack lives in poly_ntt_simd_import below and is
-     * exercised by test_ntt_avx; it becomes the scheme path at M9 (forked
-     * polyvec/sign).
+     * exercised by test_ntt_avx; it becomes the scheme path once the
+     * polyvec/sign forks wire it in.
      */
     (void)a;
 }
@@ -103,7 +104,7 @@ void poly_ntt_import(poly16 *a)
  *  AVX2 SIMD kernels, exported for byte-exactness validation             *
  *  (test/test_ntt_avx.c).  These are the genuine vectorized NTT; they    *
  *  are proven bit-identical to the scalar oracle above, which is what    *
- *  authorizes wiring them into the scheme hot path at M9.                *
+ *  authorizes wiring them into the scheme hot path later.               *
  * ===================================================================== */
 
 #if SHUTTLE_NTT_SIGNED

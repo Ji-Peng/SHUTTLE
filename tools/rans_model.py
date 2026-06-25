@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""rans_model.py -- shared probability model for the SHUTTLE rANS generators
-(P10).
+"""rans_model.py -- shared probability model for the SHUTTLE rANS generators.
 
 This is the single source of truth for the THREE static rANS source laws of
-SHUTTLE's signature compression, ported from the Lithium reference
+SHUTTLE's signature compression, ported from the reference
 ``tools/rans_model.py`` but re-targeted to SHUTTLE's mechanism, which differs
-on four counts (research/08-rans.md Sec.9):
+on four counts:
 
-  * TWO distinct split widths ``b0 != bs`` (block-adaptive), not Lithium's
+  * TWO distinct split widths ``b0 != bs`` (block-adaptive), not the reference's
     single uniform ``T``;
-  * THREE logical tables ``(Q0, Qs, h)``, not Lithium's two ``(ZH, HINT)`` --
-    Q0 and Qs share the masking Gaussian but have very different effective
-    std-devs (r/alpha_1 vs r/alpha_s), so they need separate supports/freqs;
-  * the hint law buckets with size ``alpha_h`` (not Lithium's ``tau``) and is
-    reduced ``mod H_h`` into the contiguous range ``[0, H_h)`` -- so unlike
-    Lithium's signed ``[-M, M]`` hint alphabet, the SHUTTLE hint alphabet is
-    the FULL ``[0, H_h)`` (the mod wrap makes negative crossings land near
-    ``H_h``; coding the whole range keeps every honest ``h`` in-support and
-    guarantees no CDF-hole -- Description.tex:2333-2354);
-  * the overflow reserve targets ``2^-35`` per stream, not Lithium's
+  * THREE logical tables ``(Q0, Qs, h)``, not the reference's two
+    ``(ZH, HINT)`` -- Q0 and Qs share the masking Gaussian but have very
+    different effective std-devs (r/alpha_1 vs r/alpha_s), so they need
+    separate supports/freqs;
+  * the hint law buckets with size ``alpha_h`` (not the reference's ``tau``)
+    and is reduced ``mod H_h`` into the contiguous range ``[0, H_h)`` -- so
+    unlike the reference's signed ``[-M, M]`` hint alphabet, the SHUTTLE hint
+    alphabet is the FULL ``[0, H_h)`` (the mod wrap makes negative crossings
+    land near ``H_h``; coding the whole range keeps every honest ``h``
+    in-support and guarantees no CDF-hole -- Description.tex:2333-2354);
+  * the overflow reserve targets ``2^-35`` per stream, not the reference's
     ``2^-100`` (SigSize.py).
 
 The three source laws (Description.tex:2316-2357), in the logical symbol order
@@ -40,21 +40,20 @@ The three source laws (Description.tex:2316-2357), in the logical symbol order
 The PMFs are HARD-TRUNCATED at the per-block tail-cut supports B_z0, B_zs, B_z2
 (~11 sigma, chosen in tail_cut()); the discarded one-dimensional Gaussian tail
 mass is far below the 2^-35 rANS overflow budget, and the signer's norm gate
-(B_v) guarantees no accepted signature carries a coordinate outside the support
-(MS-A3, Open Q7).
+(B_v) guarantees no accepted signature carries a coordinate outside the support.
 
 ALL math here is deterministic and reproducible; the quantizer tie-break
 (largest-`raw`, lowest index) pins the spec's under-specified "adjust the
-largest-residual symbol until sum == M" rule (MS-A1).
+largest-residual symbol until sum == M" rule.
 
 This module is a LIBRARY (no output of its own); gen_rans_tables.py and
 SigSize.py import it.  Run `python3 rans_model.py` for a self-check that prints
 the per-set entropies / supports.
 
-EMPIRICAL re-validation hook (M4): every PMF builder accepts an optional
+EMPIRICAL re-validation hook: every PMF builder accepts an optional
 `hist` dict {symbol: count}; if given, the empirical histogram REPLACES the
 theoretical PMF (normalized), so the generators can be re-run against real
-Sign output (P11) without code changes -- see q0_pmf/qs_pmf/hint_pmf.
+Sign output without code changes -- see q0_pmf/qs_pmf/hint_pmf.
 """
 import math
 
@@ -82,7 +81,7 @@ TAILCUT_SIGMA = 11.0
 #   q     : modulus  (only used for H_h cross-check)
 #   Hh    : 2(q-1)/alpha_h  (hint range; NON power of two)
 #   lam   : security level (challengeSeedBytes = lam/4)
-#   target: spec sig-size target (MS-A6)
+#   target: spec sig-size target
 SETS = {
     "128": dict(n=256,  lenS=3, lenE=3, r=825, a1=90,  asec=10, ae=5, ah=1024,
                 q=15361, Hh=30,  lam=128, target=1005),
@@ -138,7 +137,7 @@ def _hist_to_pmf(hist):
 
 def q0_pmf(r, a1, b0, hist=None):
     """Q0 quotient PMF: peel b0 low bits off z0 = round(y/alpha_1).
-    If `hist` (empirical {Q0:count}) is given it overrides the theory (M4)."""
+    If `hist` (empirical {Q0:count}) is given it overrides the theory."""
     if hist is not None:
         return _hist_to_pmf(hist)
     sigma = r / a1
@@ -148,7 +147,7 @@ def q0_pmf(r, a1, b0, hist=None):
 
 def qs_pmf(r, asec, bs, hist=None):
     """Qs quotient PMF: peel bs low bits off z_s = round(y/alpha_s).
-    If `hist` (empirical {Qs:count}) is given it overrides the theory (M4)."""
+    If `hist` (empirical {Qs:count}) is given it overrides the theory."""
     if hist is not None:
         return _hist_to_pmf(hist)
     sigma = r / asec
@@ -166,8 +165,8 @@ def hint_pmf(r, ae, ah, Hh, hist=None):
     The mod wrap sends negative crossings near H_h, so the support is bimodal
     (near 0 AND near H_h).  Coding the WHOLE [0, H_h) range (every symbol gets
     f_s >= 1) keeps any honest h in-support and gives the no-CDF-hole
-    guarantee.  If `hist` (empirical {h:count}) is given it overrides theory
-    (M4)."""
+    guarantee.  If `hist` (empirical {h:count}) is given it overrides
+    theory."""
     if hist is not None:
         return _hist_to_pmf(hist)
     sigma2 = r / ae
@@ -190,13 +189,13 @@ def hint_pmf(r, ae, ah, Hh, hist=None):
     return {k: v / s for k, v in out.items()}
 
 
-# ---- deterministic quantizer (MS-A1 tie-break) ---------------------------
+# ---- deterministic quantizer (tie-break) ---------------------------------
 
 def quantize(pmf, lo, hi):
     """Quantize a PMF on the contiguous alphabet [lo, hi] to integer
     frequencies summing to exactly PROB_SCALE (= M), every entry >= 1.
 
-    Tie-break (DETERMINISTIC, pins MS-A1): f(s) = max(1, round(PMF(s)*M));
+    Tie-break (DETERMINISTIC): f(s) = max(1, round(PMF(s)*M));
     add the residual M - sum(f) to the SINGLE largest-`raw` bucket; on a tie
     take the LOWEST index (Python max(range, key=...) returns the first max).
     Returns (syms, freqs) or raises if the alphabet starves (sum of forced
@@ -237,7 +236,7 @@ def cost_moments(freqs, pmf_vals):
     return mu, m2 - mu * mu
 
 
-# ---- pinned split widths (MS-A1; size-optimization sweep result) ---------
+# ---- pinned split widths (size-optimization sweep result) ----------------
 # Chosen by the (b0, bs) sweep in SigSize.py to MINIMIZE the realized sig size
 # (= challengeSeedBytes + 2 + R + raw-low-bits).  The heuristic
 # b ~ floor(log2 sigma) - 1 gives b0 = {2,1,1}, bs = {5,6,7}; the realized

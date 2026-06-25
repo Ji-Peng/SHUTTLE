@@ -22,10 +22,10 @@
  *   @@AUTOGEN:bounds@@  <- tools/gen_bounds.py
  *       BK_SQ, BK_LOW_SQ, BV_SQ  (exact integer squared-norm thresholds)
  *
- * Later plans (P03 NTT, P04 packing, P05/P06 samplers, P10 rANS, P11 sign)
- * consume these macros; the ApproxExp/ApproxLog structural constants are
- * owned by the autogen headers approx_exp_poly.h / approx_log_poly.h (see
- * Overview 12.6) and are NOT re-declared here under shorter names.
+ * The NTT, packing, sampler, rANS, and sign modules consume these macros;
+ * the ApproxExp/ApproxLog structural constants are owned by the autogen
+ * headers approx_exp_poly.h / approx_log_poly.h and are NOT re-declared
+ * here under shorter names.
  */
 
 #ifndef SHUTTLE_PARAMS_H
@@ -120,7 +120,7 @@
 #define KAPPA_B 57
 
 /* ============================================================= *
- *  Shared seed / hash length macros (Overview 12.3)             *
+ *  Shared seed / hash length macros                            *
  * ============================================================= */
 #define SEEDBYTES (LAMBDA / 8) /* seedA, xi: 16 / 32 / 64 */
 #define CHALLENGESEEDBYTES \
@@ -187,7 +187,7 @@
  * ============================================================= */
 /* @@AUTOGEN:bounds@@ BEGIN */
 /* EXACT integer squared-norm thresholds (see tools/gen_bounds.py +
- * tools/log/bounds_derivation.txt).  Inclusive-gate rule (MS-D2):
+ * tools/log/bounds_derivation.txt).  Inclusive-gate rule:
  *   KeyGen accept iff BK_LOW_SQ <= norm_sq <= BK_SQ  (B_k' <= ||.|| <=
  * B_k) Sign/Verify accept iff norm_sq <= BV_SQ          (||.|| <= B_v,
  * SHARED) SHUTTLE-128: BK_LOW_SQ=84100 <= ||.||^2 <= BK_SQ=87060,
@@ -236,7 +236,7 @@
 /* @@AUTOGEN:bounds@@ END */
 
 /* ============================================================= *
- *  Domain-separation tags (Overview 4.2 / 12.4; one byte each)  *
+ *  Domain-separation tags (one byte each)                      *
  * ============================================================= */
 #define DS_EXPAND_SEEDS 0x00   /* ExpandSeeds                    */
 #define DS_EXPAND_SIGNING 0x01 /* ExpandSigningSeeds             */
@@ -250,7 +250,7 @@
 #define DS_IRS 0x09            /* IRS / R / SamplerU (seed_y)    */
 
 /* ============================================================= *
- *  Shared sampler / convolution constants (Overview 2, no #if)  *
+ *  Shared sampler / convolution constants (no #if)             *
  * ============================================================= */
 #define THETA \
     96 /* BaseSampler CDT precision bits (3x32 limbs)            */
@@ -262,23 +262,23 @@
 #define WIDE_RCDT_LEN \
     36 /* wide RCDT table length = ceil(11*sigma_s)     */
 
-/* IRS R-test constants (P08).  TWO_RSQ = 2 r^2; TWO_RSQ_LN2 = 2 r^2 ln 2
- * (K12: ApproxLog returns log2, a single multiply by this restores ln U).
+/* IRS R-test constants.  TWO_RSQ = 2 r^2; TWO_RSQ_LN2 = 2 r^2 ln 2
+ * (ApproxLog returns log2, a single multiply by this restores ln U).
  * TWO_RSQ_LN2 is documented here as the exact real; the Q-fixed integer
- * form is pinned by P08, never a runtime float. */
+ * form is pinned in irs.c, never a runtime float. */
 #define TWO_RSQ \
     (2L * RY * RY) /* = 2 * 825^2 = 1361250                    */
 /* TWO_RSQ_LN2 = 943546.5995372256 (2 r^2 ln 2); stored as a fixed-point
- * integer by P08 (see irs.c), reproducible from RY. */
+ * integer in irs.c, reproducible from RY. */
 
 /* ============================================================= *
- *  ApproxExp / ApproxLog structural cross-checks (Overview 12.6) *
+ *  ApproxExp / ApproxLog structural cross-checks                *
  * ============================================================= */
 /* The authoritative ApproxExp/ApproxLog structural constants live in the
  * autogen headers approx_exp_poly.h (SHUTTLE_EXP_POLY_*) and
  * approx_log_poly.h (SHUTTLE_LOG_POLY_*).  params.h does NOT independently
  * re-declare them.  The EXPECTED-value comments below are an audit anchor
- * for the spec table; P06 wires the real cross-check _Static_asserts once
+ * for the spec table; the real cross-check _Static_asserts are wired once
  * those headers are included by a TU that also includes params.h:
  *   SHUTTLE_EXP_POLY_SQUARINGS == 7,  _SPLIT == 128,  _DEGREE == 8,
  *   _X_MAX == 36,  _Y_MAX == 255  (ApproxExp t7d8 Q64).
@@ -286,7 +286,7 @@
  * 62 (ApproxLog g2d13 Q62). */
 
 /* ============================================================= *
- *  Derived structural-size macros (mirror Lithium; Overview 12) *
+ *  Derived structural-size macros                              *
  * ============================================================= */
 #define KVEC (1 + ELL + EM) /* z / secret vector length: 7/6/6 */
 #define Z1LEN (1 + ELL)     /* z_1 length: 4/4/4               */
@@ -310,10 +310,9 @@
  */
 #define CRYPTO_PUBLICKEYBYTES (SEEDBYTES + EM * POLYPK_PACKEDBYTES)
 
-/* CRYPTO_SECRETKEYBYTES (MS-A4: CONFIRMED at P04).  The realized skEncode
- * layout (packing.c pack_sk) sums EXACTLY to this expression, which equals
- * the P01 planning estimate 2288/3680/7104; pack_sk carries a
- * _Static_assert that its byte cursor lands here, and t_pack
+/* CRYPTO_SECRETKEYBYTES.  The realized skEncode layout (packing.c pack_sk)
+ * sums EXACTLY to this expression, which equals 2288/3680/7104; pack_sk
+ * carries a _Static_assert that its byte cursor lands here, and t_pack
  * asserts/reports the realized length per mode.  Mirrors the skEncode
  * layout: seedA(SEEDBYTES) + EM*POLYPK_PACKEDBYTES (b/alpha_b body)
  *   + K(CHALLENGESEEDBYTES) + tr(CHALLENGESEEDBYTES)
@@ -324,10 +323,9 @@
      ELL * POLYS_PACKEDBYTES + EM * POLYE_PACKEDBYTES +    \
      EM * POLYPK_PACKEDBYTES)
 
-/* Per-set hard size pins (drift gate, P04).  PK_SIZE_EXPECT /
- * SK_SIZE_EXPECT are the spec/MS-A4 byte counts; the _Static_asserts below
- * fail the build if any field-width or vector-length edit silently moves a
- * key size. */
+/* Per-set hard size pins (drift gate).  PK_SIZE_EXPECT / SK_SIZE_EXPECT
+ * are the spec byte counts; the _Static_asserts below fail the build if
+ * any field-width or vector-length edit silently moves a key size. */
 #if SHUTTLE_MODE == 128
 #    define PK_SIZE_EXPECT 1264
 #    define SK_SIZE_EXPECT 2288
@@ -340,8 +338,8 @@
 #endif
 
 /* CRYPTO_BYTES: the rANS-variable signature length bound returned by
- * sig_get_sn_len_bytes().  P10 pins RANS_RESERVED_BYTES (the 2^-35
- * per-stream overflow reserve), so the realized compact signature is the
+ * sig_get_sn_len_bytes().  RANS_RESERVED_BYTES (the 2^-35 per-stream
+ * overflow reserve) is pinned, so the realized compact signature is the
  * FIXED length SIG_PACKED_BYTES = CHALLENGESEEDBYTES + 2 +
  * RANS_RESERVED_BYTES
  *                      + POLYZ_LO_PACKEDBYTES
@@ -349,16 +347,16 @@
  * These EXCEED the spec-table targets 1005/2155/4552 because the
  * source-law entropy of (Q0,Qs,h) plus the raw low bits already exceeds
  * those targets (even the Shannon floor is ~1115/2316/4866 B): the table
- * values are ASPIRATIONAL pending M4 empirical re-validation (MS-A6, Open
- * Q3).  We round SIG_PACKED_BYTES up to a 64-byte multiple for head-room;
- * pack_sig static-asserts SIG_PACKED_BYTES <= CRYPTO_BYTES.  Realized sig
- * length == SIG_PACKED_BYTES <= CRYPTO_BYTES. */
+ * values are aspirational pending empirical re-validation.  We round
+ * SIG_PACKED_BYTES up to a 64-byte multiple for head-room; pack_sig
+ * static-asserts SIG_PACKED_BYTES <= CRYPTO_BYTES.  Realized sig length ==
+ * SIG_PACKED_BYTES <= CRYPTO_BYTES. */
 #if SHUTTLE_MODE == 128
-#    define CRYPTO_BYTES 1216 /* >= SIG_PACKED_BYTES 1183 (MS-A6) */
+#    define CRYPTO_BYTES 1216 /* >= SIG_PACKED_BYTES 1183 */
 #elif SHUTTLE_MODE == 256
-#    define CRYPTO_BYTES 2432 /* >= SIG_PACKED_BYTES 2417 (MS-A6) */
+#    define CRYPTO_BYTES 2432 /* >= SIG_PACKED_BYTES 2417 */
 #elif SHUTTLE_MODE == 512
-#    define CRYPTO_BYTES 5056 /* >= SIG_PACKED_BYTES 5001 (MS-A6) */
+#    define CRYPTO_BYTES 5056 /* >= SIG_PACKED_BYTES 5001 */
 #endif
 
 /* ============================================================= *
@@ -368,7 +366,7 @@ _Static_assert(KVEC == 1 + ELL + EM, "KVEC must equal 1+ELL+EM");
 _Static_assert(Z1LEN == 1 + ELL, "Z1LEN must equal 1+ELL");
 _Static_assert(DQ == 2 * Q, "DQ must equal 2*Q");
 
-/* Packed-field byte-alignment (P04): every PolyToBytes output field in
+/* Packed-field byte-alignment: every PolyToBytes output field in
  * this scheme is a whole number of bytes with NO padding bits (N*d % 8 ==
  * 0 for d in {d_b, d_s, d_e, d_h, 1}).  The generic zero-pad flush in
  * poly_to_bytes is implemented anyway for any future d, but these assert
@@ -382,11 +380,11 @@ _Static_assert(N* DH_BITS % 8 == 0,
 _Static_assert(N % 8 == 0, "comY_0 field (N*1) has no padding bits");
 
 /* Hard size pins (drift gate): a field-width / vector-length edit that
- * moves pk or sk away from the spec/MS-A4 byte count fails the build here.
+ * moves pk or sk away from the spec byte count fails the build here.
  */
 _Static_assert(CRYPTO_PUBLICKEYBYTES == PK_SIZE_EXPECT,
                "pk size must match the spec table (1264/1952/3648)");
 _Static_assert(CRYPTO_SECRETKEYBYTES == SK_SIZE_EXPECT,
-               "sk size must match MS-A4 (2288/3680/7104)");
+               "sk size must match the spec table (2288/3680/7104)");
 
 #endif /* SHUTTLE_PARAMS_H */

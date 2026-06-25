@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""SigSize.py -- rANS reservation + signature-size model for SHUTTLE (P10).
+"""SigSize.py -- rANS reservation + signature-size model for SHUTTLE.
 
 Emits, per param set, into @@AUTOGEN:rans_meta@@ of ref/rans.h:
   * RANS_B0, RANS_BS  -- the low-bit split widths (size-optimization sweep)
   * RANS_RESERVED_BYTES -- the per-stream overflow reserve at 2^-35
 
-THE RESERVE (MS-A2).  The merged rANS stream has n_b = n*(1 + lenS + lenE)
+THE RESERVE.  The merged rANS stream has n_b = n*(1 + lenS + lenE)
 symbols.  Per symbol the COST is ell(s) = -log2(f_s/M) using the QUANTIZED
 table; the DISTRIBUTION averaging that cost is the TRUE emission PMF (rounded-
 Gaussian peel for Q0/Qs incl. tails, full bucket-crossing for the hint).  With
@@ -14,13 +14,13 @@ Gaussian peel for Q0/Qs incl. tails, full bucket-crossing for the hint).  With
     sigma_b = sqrt(sum_i n_i * Var_{p_i}[ell_i]) / 8
     R       = ceil( mu_b + max( Phi^{-1}(1-2^-35) * sigma_b , Bernstein(2^-35) ) )
 
-Phi^{-1}(1-2^-35) ~ 6.86 (replaces Lithium's 11.489 = Phi^{-1}(1-2^-100)).  The
+Phi^{-1}(1-2^-35) ~ 6.86 (vs 11.489 = Phi^{-1}(1-2^-100) at a 2^-100 target).  The
 Bernstein delta bounds the heavy upper tail of the bounded per-symbol cost
 ell(s) in [0, prob_bits].  R is the size of the fixed reserved `com` region; a
 stream that exceeds R triggers an out-of-support-style Sign restart (probability
-<= 2^-35 per stream, MS-A2).
+<= 2^-35 per stream).
 
-THE SIZE (MS-A6).  The realized compact signature length is
+THE SIZE.  The realized compact signature length is
     sig = challengeSeedBytes + (2 + R) + Rlow,
     Rlow = ceil(n*b0/8) + ceil(lenS*n*bs/8)          (per-block ceil; b0 != bs)
 We also report the EXPECTED length (using mu_b instead of R) and the Shannon
@@ -177,8 +177,8 @@ def main():
     log.append("Reserve R sized for 2^-35 per-stream overflow "
                "(Phi^{-1}(1-2^-35)~6.86,")
     log.append("Bernstein p=2^-35).  Sizes are APPROXIMATE (theoretical PMFs); "
-               "M4 re-validates")
-    log.append("against empirical Sign output and re-pins.")
+               "re-validated empirically")
+    log.append("against empirical Sign output and re-pinned.")
     log.append("")
     blocks = []
     summary = []
@@ -216,7 +216,7 @@ def main():
         print("  Rlow=%dB  est sig=%dB (target %d, delta %+d)" %
               (sm["Rlow"], sm["sig"], tgt, sm["sig"] - tgt))
         print("  [expected sig ~%.0fB (mu_b); entropy floor ~%.0fB; both "
-              "exceed the target -> targets are aspirational, MS-A6]" %
+              "exceed the target -> targets are aspirational]" %
               (sm["exp_sig"], sm["ent_floor"]))
         log.append("=== SHUTTLE-%s (b0=%d bs=%d) ===" % (sec, b0, bs))
         log.append("  sweep optimum == PINNED_SPLIT (b0=%d,bs=%d): OK" %
@@ -250,7 +250,7 @@ def main():
     print("\nPatched @@AUTOGEN:rans_meta@@ in %s" % path)
     print("  NOTE: sizes are approximate (theoretical PMFs); the entropy "
           "floor exceeds")
-    print("  the spec targets -> MS-A6 flagged aspirational (M4 re-validates "
+    print("  the spec targets -> targets flagged aspirational (re-validated "
           "empirically).")
     print("  audit log: tools/log/sigsize.txt")
     return 0

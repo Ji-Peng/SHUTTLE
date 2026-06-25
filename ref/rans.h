@@ -1,11 +1,11 @@
 /*
- * rans.h -- static byte-renormalized rANS entropy coder for SHUTTLE (P10).
+ * rans.h -- static byte-renormalized rANS entropy coder for SHUTTLE.
  *
  * Compresses the signature triple (seedC, z_1, hint) into the on-wire
  * `com` packet.  THREE static models (Q0, Qs, hint) coded into ONE merged
  * RANS_N-way interleaved byte stream; byte-exact between the Python golden
  * model (tools/rans.py) and this C reference.  See ref/rans.c for the
- * codec and agent/SHUTTLE-NGCC/Plan/10-rANS.md for the full design.
+ * codec.
  *
  * REPRODUCIBLE CONSTANTS.  The tables in @@AUTOGEN:rans_tables@@ and the
  * meta in @@AUTOGEN:rans_meta@@ are emitted by reproducible Python
@@ -28,7 +28,7 @@
  *       RANS_B0, RANS_BS (low-bit split widths) and RANS_RESERVED_BYTES
  *       (per-stream overflow reserve at 2^-35), per param set.
  *
- * CONSTANT-TIME POSTURE (D6).  The codec runs on PUBLIC, post-signing data
+ * CONSTANT-TIME POSTURE.  The codec runs on PUBLIC, post-signing data
  * (the signature IS the output; the secret y is gone by serialization
  * time).  So the data-dependent renorm `while` loops and `pos` bounds in
  * enc_put/dec_get are NOT a CT violation -- there is no secret-dependent
@@ -44,21 +44,21 @@
 
 #include "params.h"
 
-/* ---- engine macros (pinned; MS-A1) -----------------------------------
+/* ---- engine macros (pinned) ------------------------------------------
  */
 /* State interval I = [L, 256L) = [2^23, 2^31).  Byte renorm (8-bit). */
 #define RANS_L (1u << 23)
 /* RANS_N: interleaved streams.  N=2 hides the ~5-cyc reciprocal-multiply
  */
-/* latency (Lithium measured N=1 -> N=2 = 1.38x, N>=4 no gain); FLUSH = 4N
+/* latency (measured N=1 -> N=2 = 1.38x, N>=4 no gain); FLUSH = 4N
  */
-/* = 8 bytes.  Reused for SHUTTLE (Open Q6). */
+/* = 8 bytes. */
 #define RANS_INTERLEAVED_STREAMS 2
 #define RANS_INTERLEAVED_MASK (RANS_INTERLEAVED_STREAMS - 1)
 #if (RANS_INTERLEAVED_STREAMS & RANS_INTERLEAVED_MASK) != 0
 #    error "RANS_INTERLEAVED_STREAMS must be a power of two"
 #endif
-/* M = 2^PROB_BITS = 1024.  prob_bits=10 (Open Q5): every SHUTTLE alphabet
+/* M = 2^PROB_BITS = 1024.  prob_bits=10: every SHUTTLE alphabet
  */
 /* is <= 256 with f_s >= 1 achievable at M=1024, so no bump to 12 is
  * needed.*/
@@ -991,14 +991,14 @@ static const uint8_t RANS_HINT_SLOT[1024] = {
 #endif
 /* @@AUTOGEN:rans_meta@@ END */
 
-/* 2-byte rlen field + zero-padded reserved com region (D3 packet layout).
+/* 2-byte rlen field + zero-padded reserved com region (packet layout).
  */
 #define RANS_BLOCK_BYTES (2 + RANS_RESERVED_BYTES)
 
-/* ---- physical signature layout sizes (MS-A5; D3) ---------------------
+/* ---- physical signature layout sizes ---------------------------------
  */
-/* The raw low-bit body R: per-block ceil because b0 != bs (differs from
- * the Lithium single-T body).  z0 block = 1 poly of b0-bit lows; z_s block
+/* The raw low-bit body R: per-block ceil because b0 != bs (differs from a
+ * single-width body).  z0 block = 1 poly of b0-bit lows; z_s block
  * = ELL polys of b_s-bit lows.  All bit-packed LSB-first (PolyToBytes
  * convention).
  */
@@ -1013,12 +1013,11 @@ static const uint8_t RANS_HINT_SLOT[1024] = {
  *   + raw low-bit body (POLYZ_LO_PACKEDBYTES).
  * The com region is fixed-size (zero-padded), so pack_sig output is
  * EXACTLY this length.  This is the value sig_get_sn_len_bytes() should
- * return; see MS-A6 (the params.h CRYPTO_BYTES placeholder must be >=
- * this). */
+ * return (the params.h CRYPTO_BYTES placeholder must be >= this). */
 #define SIG_PACKED_BYTES \
     (CHALLENGESEEDBYTES + RANS_BLOCK_BYTES + POLYZ_LO_PACKEDBYTES)
 
-/* RAW (un-rANS'd) signature length, for the M3 validation packers:
+/* RAW (un-rANS'd) signature length, for the validation packers:
  *   seedC + z1 (Z1LEN polys, 2 bytes/coeff) + hint (EM polys, d_h bits).
  * The hint uses DH_BITS so its range-checked decode recovers [0,H_h). */
 #define SIG_RAW_Z1_PACKEDBYTES (2u * N)

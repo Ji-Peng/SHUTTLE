@@ -1,5 +1,5 @@
 /*
- * test_approx.c -- P06 integration test for the ApproxExp / ApproxLog
+ * test_approx.c -- integration test for the ApproxExp / ApproxLog
  * wrappers (ref/approx_exp.h, ref/approx_log.h).
  *
  * This is the in-tree, quadmath-FREE companion to the authoritative
@@ -12,18 +12,18 @@
  *   ApproxExp:
  *     (a) shuttle_exp_accept_poly_q64 over the full (x,y) grid
  * [0,36]x[0,255]; (b) the 4-way batch shuttle_exp_accept_poly_q64_x4 is
- * BIT-IDENTICAL to four scalar calls (K10); (c) the documented per-set
- * acceptance gates eta_max (Security.txt) are emitted, flagging the thin
- * SHUTTLE-512 margin (R3).
+ * BIT-IDENTICAL to four scalar calls (byte-exact); (c) the documented
+ * per-set acceptance gates eta_max (Security.txt) are emitted, flagging
+ * the thin SHUTTLE-512 margin.
  *
  *   ApproxLog:
  *     (d) shuttle_log2_frac_q62 over a dense mantissa grid: the
- * constant-time full-table scan result == a direct-indexed Horner (K10 CT
+ * constant-time full-table scan result == a direct-indexed Horner (the CT
  * contract); (e) the 2-way batch shuttle_log2_frac_q62_x2 == two scalar
- * calls (K10); (f) the c_{0,0}=0 pin: shuttle_log2_frac_q62(0,0) == 0
- * bit-exactly (ApproxLog(0,1)=0).
+ * calls (byte-exact); (f) the c_{0,0}=0 pin: shuttle_log2_frac_q62(0,0) ==
+ * 0 bit-exactly (ApproxLog(0,1)=0).
  *
- * Build (matches the P06 spec, NO -lquadmath, NO __int128 in this TU):
+ * Build (NO -lquadmath, NO __int128 in this TU):
  *   gcc -std=c99 -Wpedantic -Wall -Wextra -Werror -O2 \
  *       -I SHUTTLE/ref -I SHUTTLE/ref/tools \
  *       SHUTTLE/ref/test/test_approx.c \
@@ -148,8 +148,8 @@ int main(void)
     /* (c): per-set acceptance gates the measured 2^-54.4857 must clear
      * (tools/log/Security.txt).  Reported as integer bit-margins (no
      * float): margin = 54.4857 - bits(eta_max).  All positive => PASS; the
-     * SHUTTLE-512 margin (~1.52 bits) is the thinnest -- flag it (watch
-     * item R3). */
+     * SHUTTLE-512 margin (~1.52 bits) is the thinnest -- flag it as a
+     * watch item. */
     {
         /* eta_max bits per set, x100 to keep integers (Security.txt).  The
          * measured precision is 54.4857 bits -> 5449 at 2-dp (rounds up).

@@ -1,7 +1,7 @@
 /*
  * t_params.c - structural self-check for the SHUTTLE parameter headers.
  *
- * Compile-and-run gate (P01-T13): prints the key per-set constants for the
+ * Compile-and-run gate: prints the key per-set constants for the
  * built SHUTTLE_MODE and compile-time-asserts the structural invariants
  * (vector lengths, the H_h / mask-width / 2n-th-root relations, and the exact
  * public-key sizes pk == 1264 / 1952 / 3648).
@@ -29,7 +29,7 @@ _Static_assert(CHALLENGE_PACKEDBYTES == (N + 7) / 8, "CHALLENGE_PACKEDBYTES == (
 _Static_assert(CRYPTO_PUBLICKEYBYTES == SEEDBYTES + EM * POLYPK_PACKEDBYTES,
                "pk == SEEDBYTES + EM*POLYPK_PACKEDBYTES");
 
-/* Per-set pinned public-key sizes (the headline P01 acceptance check). */
+/* Per-set pinned public-key sizes (the headline acceptance check). */
 #if SHUTTLE_MODE == 128
 _Static_assert(CRYPTO_PUBLICKEYBYTES == 1264, "pk(128) == 1264");
 _Static_assert(N == 256 && Q == 15361 && ELL == 3 && EM == 3 && KVEC == 7,

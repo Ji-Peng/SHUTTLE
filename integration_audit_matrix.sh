@@ -1,5 +1,5 @@
 #!/bin/sh
-# Full integration audit gate (P13-T5): cross-backend differential fuzz plus
+# Full integration audit gate: cross-backend differential fuzz plus
 # the perf-review-checklist plumbing. Catches "functional-clean but backend-
 # divergent on some input" (the ML-DSA AABBCC bug class).
 #

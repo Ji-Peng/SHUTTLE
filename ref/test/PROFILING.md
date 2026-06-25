@@ -1,10 +1,10 @@
-# SHUTTLE reference per-component profiling (P14 / M8)
+# SHUTTLE reference per-component profiling
 
 Per-component cycle and randomness breakdown of the SHUTTLE `ref/` (pure-scalar) KeyGen / Sign / Verify, produced by `make profile` (`-DPROF_TIME -DPROF_RAND`, drivers `test/speed_profile.c` + `test/prof.c`). This markdown is the hand-curated mirror of the machine-generated `test/profiling.txt`; the raw cycle/byte numbers and the `MACHINFO` banner live there. Numbers below are cycles/op averaged over NKG=200 keygen / NSIG=600 sign+verify iterations on the machine noted at the bottom; treat the absolute cycles as indicative (the box is an unpinned WSL2 host) and the **percentages** as the load-bearing result.
 
 Method note: per-op cycles are the sum of the instrumented top-level `PT_*` buckets (each `rdtscp`-bracketed, ~50-cycle probe overhead), not wall-clock. A profiled run of one primitive leaves only that primitive's buckets non-zero, so each section below is self-contained. Sign's per-iteration buckets are charged across all rejection retries (the `(calls …)` count exceeds NSIG by the retry factor), so the per-op figure already includes the expected restart cost.
 
-The child sub-buckets `PT_NTT_FWD/PW/INV`, `PT_G_*` (BaseSampler / ApproxExp), and `PT_SAMPLERU / PT_APPROXLOG` are defined in the `PT_*` enum and appear in the report, but their probes live inside `sampler.c` / `irs.c` / `rounding.c` (owned by P06 / P08 / P09); the P14 probes inserted into `sign.c` / `polyvec.c` report the parent-phase granularity, which already isolates the dominant `SAMPLE_Y` / `IRS` / `COMMIT` split that M9 needs. Those rows show `0.00% of parent` until their owning plans fill them.
+The child sub-buckets `PT_NTT_FWD/PW/INV`, `PT_G_*` (BaseSampler / ApproxExp), and `PT_SAMPLERU / PT_APPROXLOG` are defined in the `PT_*` enum and appear in the report, but their probes live inside `sampler.c` / `irs.c` / `rounding.c`; the probes inserted into `sign.c` / `polyvec.c` report the parent-phase granularity, which already isolates the dominant `SAMPLE_Y` / `IRS` / `COMMIT` split that the optimization work needs. Those rows show `0.00% of parent` until the probes inside those components are filled in.
 
 ## Sign — % of sign total
 
@@ -25,7 +25,7 @@ SHUTTLE-256, sign:
 | makehint | 0.16 | 0.33 |
 | setup (skDecode/tr/mu) | 0.31 | 0.63 |
 
-Reading: the three plausible M9 hot spots — NTT (`commitment`), the samplers (`sample_y` + `irs`), and `rANS` — resolve overwhelmingly in favour of the samplers. `commitment` is only $\sim 2\text{--}5\%$ and `rANS` is $\sim 1\%$, so the NTT and the rANS encode are NOT where Sign's time goes; the wide-Gaussian sampler and the IRS loop are (combined $\sim 66\%$ SHA3 / $\sim 66\%$ NGCC). The `rANS` row carries the per-iteration `sigEncode`; its tiny share confirms rANS is not a Sign hot spot even though it is the only source of Sign's latency *tail* (the out-of-support restart).
+Reading: the three plausible optimization hot spots — NTT (`commitment`), the samplers (`sample_y` + `irs`), and `rANS` — resolve overwhelmingly in favour of the samplers. `commitment` is only $\sim 2\text{--}5\%$ and `rANS` is $\sim 1\%$, so the NTT and the rANS encode are NOT where Sign's time goes; the wide-Gaussian sampler and the IRS loop are (combined $\sim 66\%$ SHA3 / $\sim 66\%$ NGCC). The `rANS` row carries the per-iteration `sigEncode`; its tiny share confirms rANS is not a Sign hot spot even though it is the only source of Sign's latency *tail* (the out-of-support restart).
 
 ## Verify — % of verify total
 
@@ -41,7 +41,7 @@ SHUTTLE-256, verify:
 | normcheck (z reconstruct) | ~1 | ~3 |
 | usehint/lsb | ~0.5 | ~1 |
 
-Reading: Verify is structurally cheap (its `mat_mul_z1_2q` spans only $1+\ell$ columns, omitting the $2 I_m$ block) — but under NGCC it is almost entirely `EXPAND_A` because re-expanding $\hat A$ from the SM3 DRBG dwarfs everything else. The SHA3 column shows the true Verify cost split once the XOF is fast. This is the single largest NGCC-vs-SHA3 divergence and the clearest M9 lever (see the XOF finding below).
+Reading: Verify is structurally cheap (its `mat_mul_z1_2q` spans only $1+\ell$ columns, omitting the $2 I_m$ block) — but under NGCC it is almost entirely `EXPAND_A` because re-expanding $\hat A$ from the SM3 DRBG dwarfs everything else. The SHA3 column shows the true Verify cost split once the XOF is fast. This is the single largest NGCC-vs-SHA3 divergence and the clearest optimization lever (see the XOF finding below).
 
 ## KeyGen — % of keygen total
 
@@ -64,11 +64,11 @@ Findings:
 
 - **ExpandA squeezes a fixed 65536 B/sig** regardless of mode, $\sim 42\%$ of all randomness, and re-runs on every Sign and Verify. This is the uniform-$\hat A$ rejection-sampling buffer. It is the single biggest PRNG-budget item and the obvious target for caching $\hat A$ across the Sign retry loop (it is loop-invariant) — though the current code already expands it once per Sign call, not per iteration, so this is a Verify/throughput lever, not a per-iteration one.
 - **No obvious over-squeeze waste within a context.** The `gauss` 86.7 KB is the wide-Gaussian draw (large by design: $\sigma$ is wide and the BLISS convolution consumes uniform $y$ bits plus rejection-tail bytes); `challenge`/`irs`/`setup` are all small and proportionate to their fixed seed/squeeze lengths. No context shows a zero where it must squeeze, and none is inflated relative to its algorithmic need.
-- The fine `PU_*` consumption rows (signs / sigma_s / y / rej_tail / SamplerU) are zero in this snapshot because those probes are owned by P06/P08 (sampler.c / irs.c), outside the P14 sign.c/polyvec.c probe scope; the rows are wired and will populate when those plans insert `PROF_USE`.
+- The fine `PU_*` consumption rows (signs / sigma_s / y / rej_tail / SamplerU) are zero in this snapshot because those probes live in `sampler.c` / `irs.c`, outside the `sign.c`/`polyvec.c` probe scope; the rows are wired and will populate when those components insert `PROF_USE`.
 
 ## The XOF finding (NGCC SM3 DRBG vs SHA3 SHAKE)
 
-The dominant cross-mode result, straight from `speed.txt`: NGCC_MODE (the mandated SM3 Hash-DRBG placeholder) is $\sim 3\text{--}5\times$ slower than SHA3_MODE (SHAKE) on every primitive, because the SM3 DRBG emits only 32 B per SM3 block and is markedly slower per byte than Keccak. SHUTTLE-256 verify median is $\sim 2.5\text{M}$ cycles (NGCC) vs $\sim 1.0\text{M}$ (SHA3); Sign median $\sim 8.0\text{M}$ vs $\sim 3.9\text{M}$. The profiler attributes this to the XOF-bound buckets (`EXPAND_A`, `SAMPLE_Y`, `CHALLENGE`). This is expected and documented (the SM3 backend is an ICCS placeholder, MS-C5); it means the NGCC perf numbers are XOF-bound, and the M9 SIMD work on the samplers will move the needle most under SHA3, while a faster NGCC hash (future round) is the bigger NGCC lever.
+The dominant cross-mode result, straight from `speed.txt`: NGCC_MODE (the mandated SM3 Hash-DRBG placeholder) is $\sim 3\text{--}5\times$ slower than SHA3_MODE (SHAKE) on every primitive, because the SM3 DRBG emits only 32 B per SM3 block and is markedly slower per byte than Keccak. SHUTTLE-256 verify median is $\sim 2.5\text{M}$ cycles (NGCC) vs $\sim 1.0\text{M}$ (SHA3); Sign median $\sim 8.0\text{M}$ vs $\sim 3.9\text{M}$. The profiler attributes this to the XOF-bound buckets (`EXPAND_A`, `SAMPLE_Y`, `CHALLENGE`). This is expected and documented (the SM3 backend is an ICCS placeholder); it means the NGCC perf numbers are XOF-bound, and the SIMD work on the samplers will move the needle most under SHA3, while a faster NGCC hash (future round) is the bigger NGCC lever.
 
 ## Per-mode end-to-end totals (median cycles, ref scalar)
 

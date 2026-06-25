@@ -1,5 +1,5 @@
 /*
- * symmetric_avx512.c -- AVX512 lane-batched XOF variant bodies (P02-T6).
+ * symmetric_avx512.c -- AVX512 lane-batched XOF variant bodies.
  *
  * Implements xof128/256_avx512_init/squeeze on top of the N-way
  * primitives. Same contract as symmetric_avx2.c (lengths shared, pointer
@@ -37,7 +37,7 @@
  * is the (public) squeeze length, never secret, so the divide would be safe
  * regardless -- but keeping it a constant divisor keeps the constant-time
  * scanner (tools/ct_scan.py) clean now that this TU sits on the secret-seeded
- * ExpandS/SampleY path via the M9 N-way batched refill
+ * ExpandS/SampleY path via the N-way batched refill
  * (USE_AVX512_XOF_NWAY). */
 #    define SHAKEX8_SQUEEZE_BODY(out, out_len, st, RATE, SQBLK)              \
         do {                                                                \

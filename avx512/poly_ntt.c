@@ -1,28 +1,29 @@
 /*
- * avx512/poly_ntt.c -- AVX-512 fork of the NTT shim (P03), behind
+ * avx512/poly_ntt.c -- AVX-512 fork of the NTT shim, behind
  * USE_AVX512_NTT.  Opt-in (built only by the AVX512 targets).
  *
- * === M6 wiring (byte-exactness milestone) ===
- * Identical rationale to avx2/poly_ntt.c: at M6 the SCHEME
- * (sign.c/polyvec.c/ rounding.c, all symlinked SCALAR) runs unmodified.
- * The scalar ExpandA emits the cached matrix hAgen in CANONICAL order and
- * never imports it (that import is the M9 AVX-fork step).  So the
- * scheme-facing shim ops MUST be the canonical/scalar convention for the
- * NTT-domain products to be correct, which makes the AVX-512 build's
- * integrated KAT BYTE-EXACT to the reference -- the M6 gate.
+ * === Scalar-dispatch wiring (byte-exactness) ===
+ * Identical rationale to avx2/poly_ntt.c: in the byte-exact configuration
+ * the SCHEME (sign.c/polyvec.c/ rounding.c, all symlinked SCALAR) runs
+ * unmodified.  The scalar ExpandA emits the cached matrix hAgen in
+ * CANONICAL order and never imports it (that import is the AVX-fork step).
+ * So the scheme-facing shim ops MUST be the canonical/scalar convention
+ * for the NTT-domain products to be correct, which makes the AVX-512
+ * build's integrated KAT BYTE-EXACT to the reference -- the byte-exactness
+ * gate.
  * poly_ntt_import is a no-op.
  *
  * The genuine AVX-512 NTT asm kernels are validated byte-exact to the
  * scalar oracle by test/test_ntt_avx512.c (via the poly_ntt_simd_*
- * wrappers below). Wiring them into the scheme hot path is the M9 perf
- * milestone (forked polyvec/sign that poly_ntt_imports the canonical
+ * wrappers below). Wiring them into the scheme hot path is a later perf
+ * step (forked polyvec/sign that poly_ntt_imports the canonical
  * hAgen).
  *
  * The AVX-512 kernel family is UNIFORM across all three configs:
  *   ntt/invntt: (poly, qdata, ztab, scale);  pointwise: (c,a,b,qdata).
  * For q59393 (n=1024) this is the 2x512-coeff SUPERBLOCK kernel; the
  * wrapper does not see that -- the entry signature is identical.  q15361
- * (signed) needs a centered->[0,q) canonicalization after invntt (K10);
+ * (signed) needs a centered->[0,q) canonicalization after invntt;
  * the AVX-512 invntt has no reduce_avx export so it is open-coded.
  */
 #include "poly_ntt.h"
@@ -37,7 +38,7 @@ static void ensure_init(void)
 }
 
 /* ===================================================================== *
- *  Scheme-facing shim: CANONICAL / scalar convention (M6 byte-exact).    *
+ *  Scheme-facing shim: CANONICAL / scalar convention (byte-exact).      *
  * ===================================================================== */
 
 void poly_ntt(poly16 *a)
@@ -67,7 +68,7 @@ void poly_ntt_canonical(poly16 *a)
 void poly_ntt_import(poly16 *a)
 {
     (void)
-        a; /* no-op at M6 (poly_ntt is canonical); real nttunpack below */
+        a; /* no-op (poly_ntt is canonical); real nttunpack below */
 }
 
 /* ===================================================================== *

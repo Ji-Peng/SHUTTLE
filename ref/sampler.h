@@ -1,6 +1,6 @@
 /*
  * sampler.h -- 96-bit reverse-CDT (RCDT) discrete-Gaussian BASE sampler
- *              (scalar reference; P05).
+ *              (scalar reference).
  *
  * This header owns the RCDT *kernel* contract: the constant-time 96-bit
  * borrow-FOLD compare `cdt_scan96`, the two table-parameterized entry
@@ -12,10 +12,10 @@
  * selection of WHICH physical noise table feeds s (sigma_1) and e
  * (sigma_2).
  *
- * It does NOT own: the wide-sampler uniform-y / ApproxExp Bernoulli accept
- * (P06/P07), the keygen vector loop that consumes the magnitudes, nor the
- * sign / zero-fold fold (P07).  This file exposes only the RAW unsigned
- * magnitude scan; the caller (P07) does the +/- sign and the 1/2 zero-fold
+ * It does NOT own: the wide-sampler uniform-y / ApproxExp Bernoulli
+ * accept, the keygen vector loop that consumes the magnitudes, nor the
+ * sign / zero-fold fold.  This file exposes only the RAW unsigned
+ * magnitude scan; the caller does the +/- sign and the 1/2 zero-fold
  * rejection from a separate tail-byte field (see the contract in
  * sampler.c).
  *
@@ -24,7 +24,7 @@
  * arrays; they are MODE-INDEPENDENT for the wide table (sigma_s = 825/256)
  * and per-sigma for the three noise tables (sigma in {0.85, 0.9, 1.0}).
  *
- *   ===================  INV-NOMAX (table invariant, K11)
+ *   ===================  INV-NOMAX (table invariant)
  * =================== Every threshold row's MID and HIGH 32-bit limb is !=
  * 0xFFFFFFFF (the LOW limb is unconstrained -- it never receives an
  * incoming borrow).  This is what makes the single-compare borrow-FOLD
@@ -45,9 +45,11 @@
 
 #include "params.h" /* SHUTTLE_MODE, THETA, WIDE_RCDT_LEN */
 
-/* ---- batch sizes (carried over from the 93-bit Lithium baseline; both
+/* ---- batch sizes (carried over from the prior 93-bit baseline; both
  * must be whole 16-sample units so the AVX2 16-lane / AVX512 32-lane SIMD
- * forks tile the mini-batch exactly -- K6/K7). ---- */
+ * forks tile the mini-batch exactly -- byte-budget / lane-equivalence).
+ * ----
+ */
 #define GAUSS_BATCH 32
 #define NOISE_BATCH 32
 _Static_assert(GAUSS_BATCH % 16 == 0,
@@ -55,9 +57,10 @@ _Static_assert(GAUSS_BATCH % 16 == 0,
 _Static_assert(NOISE_BATCH % 16 == 0,
                "NOISE_BATCH must be a whole number of 16-sample units");
 
-/* ---- per-sample / per-mini-batch random-byte budgets (K7).  Each sample
- * is THETA/8 = 12 bytes (3 x 32-bit limbs); the 93-bit baseline masked off
- * 3 bits, the 96-bit version uses the full 12 bytes (same budget). ---- */
+/* ---- per-sample / per-mini-batch random-byte budgets.  Each sample
+ * is THETA/8 = 12 bytes (3 x 32-bit limbs); the prior 93-bit baseline
+ * masked off 3 bits, the 96-bit version uses the full 12 bytes (same
+ * budget). ---- */
 #define CDT96_SAMPLE_BYTES \
     (THETA / 8) /* 12 bytes / sample (3x32-bit limbs) */
 _Static_assert(CDT96_SAMPLE_BYTES == 12,
@@ -66,7 +69,7 @@ _Static_assert(CDT96_SAMPLE_BYTES == 12,
 #define SIGMA2_RAND_BYTES (GAUSS_BATCH * CDT96_SAMPLE_BYTES) /* 384 */
 #define NOISE_CDT_BYTES (NOISE_BATCH * CDT96_SAMPLE_BYTES)   /* 384 */
 /* 4 candidates share one tail byte: bit0 = sign, bit1 = zero-fold
- * (LSB-first); P07 consumes the whole tail block up front for
+ * (LSB-first); the caller consumes the whole tail block up front for
  * cross-backend determinism. */
 #define NOISE_TAIL_BYTES (NOISE_BATCH / 4) /* 8   */
 #define NOISE_MINIBATCH_RAND_BYTES \
@@ -74,26 +77,26 @@ _Static_assert(CDT96_SAMPLE_BYTES == 12,
 
 /* ---- AVX2 sign-flip / borrow mask K (see sampler.c flip-commute lemma).
  * The scalar reference does not use it; it is the canonical name shared
- * with the M6 SIMD forks (sketched in sampler.c comments). ---- */
+ * with the SIMD forks (sketched in sampler.c comments). ---- */
 #define CDT96_FLIP 0x80000000U
 
 /* ===================================================================== *
- *  Wide-Gaussian (SampleDGauss / SampleY) mini-batch sizing macros (P07) *
+ *  Wide-Gaussian (SampleDGauss / SampleY) mini-batch sizing macros       *
  *                                                                        *
  *  These are PURE DERIVATIONS (closed-form from GAUSS_BATCH and N) -- no *
  *  magic numbers.  They live here (next to GAUSS_BATCH) rather than in   *
- *  params.h so the P01 @@AUTOGEN@@ / check-consts regions are untouched; *
+ *  params.h so the @@AUTOGEN@@ / check-consts regions are untouched;     *
  *  the divisibility invariants are re-asserted below and in polyvec.c.   *
  *                                                                        *
  *  The wide sampler draws candidates in GAUSS_BATCH-sized mini-batches:  *
  *    - SIGMA_S_RAND_BYTES : 12-byte rho_u per candidate (BaseSampler     *
  *      magnitude, grouped 96B/8-sample limb layout; == SIGMA2_RAND_BYTES)*
  *    - Y_RAND_BYTES       : one full byte y per candidate (k=256,        *
- *      Y_BITS=8, so a plain byte copy, unlike Lithium's 7-bit pack)      *
+ *      Y_BITS=8, so a plain byte copy, unlike a 7-bit pack)              *
  *    - GAUSS_RAND_BYTES   : the 8-byte (full 64-bit) Bernoulli tail u    *
  *  The whole mini-batch tail is consumed up front so ref==avx2==avx512   *
  *  advance the cursor identically regardless of any early coefcnt==N     *
- *  break (K6/K8).                                                        *
+ *  break (the consumed-bytes determinism rule).                          *
  * ===================================================================== */
 #define SIGMA_S_RAND_BYTES (GAUSS_BATCH * CDT96_SAMPLE_BYTES) /* 384 */
 #define Y_RAND_BYTES (GAUSS_BATCH)                            /* 32  */
@@ -108,7 +111,8 @@ _Static_assert(Y_RAND_BYTES == GAUSS_BATCH,
                "k=256 => one full byte of y per candidate (Y_BITS=8)");
 
 /* One OUTPUT-indexed sign bit per emitted coefficient, squeezed up front
- * (K9).  The magnitude sign of the k-th accepted output is
+ * (the output-indexed sign convention).  The magnitude sign of the k-th
+ * accepted output is
  * signs[(coefcnt+k)>>3] >> ((coefcnt+k)&7) & 1.  AVX512 over-reads an
  * 8-byte LE window in gauss_finalize_batch, hence SIGN_PAD_AVX512. */
 #define SIGN_BYTES_PER_POLY ((N + 7) / 8)
@@ -122,7 +126,7 @@ _Static_assert(Y_RAND_BYTES == GAUSS_BATCH,
  * e': SHUTTLE-128: (sigma_1, sigma_2) = (0.85, 0.85)  -> both -> 0.85
  * table (9) SHUTTLE-256: (sigma_1, sigma_2) = (0.90, 1.00)  -> 0.90 (10)
  * / 1.00 (11) SHUTTLE-512: (sigma_1, sigma_2) = (0.90, 0.90)  -> both ->
- * 0.90 table (10) (mapping from 00-Overview.md sigma_1/sigma_2 rows; RCDT
+ * 0.90 table (10) (the per-set sigma_1/sigma_2 mapping; RCDT
  * lengths L_{0.85}=9, L_{0.90}=10, L_{1.0}=11.)
  *
  * RCDT_NOISE_S / RCDT_NOISE_E expand to the table symbol names defined in
@@ -198,7 +202,7 @@ static inline int32_t ct_sel_i32(uint32_t bit, int32_t a, int32_t b)
  * (group*96 + j*32 + lane*4, group = s>>3, lane = s&7) from `rand` and
  * writes `batch` int32 magnitudes to `out` in sample order. Constant-time:
  * the loop count is the PUBLIC table length, no secret-dependent
- * branch/index/shift. The scalar reference; the M6 SIMD forks supply
+ * branch/index/shift. The scalar reference; the SIMD forks supply
  * cdt_scan96_avx2 / cdt_scan96_avx512 (bit-identical). */
 void cdt_scan96(int32_t *out, const uint8_t *rand, const uint32_t Z[][3],
                 int entries, int batch);
@@ -206,12 +210,13 @@ void cdt_scan96(int32_t *out, const uint8_t *rand, const uint32_t Z[][3],
 /* Wide masking / BLISS base sampler magnitude scan (RCDT_Z,
  * sigma_s=825/256), GAUSS_BATCH samples; reads SIGMA2_RAND_BYTES from
  * `rand`.  The uniform-y / ApproxExp accept / sign that turn this
- * magnitude into a signed y-coefficient are P06/P07. */
+ * magnitude into a signed y-coefficient live in the wide-sampler caller.
+ */
 void sampler_sigma2(int32_t *z_out, const uint8_t *rand);
 
 /* Keygen secret-noise magnitude scan over a noise table (RCDT_NOISE_S /
  * RCDT_NOISE_E), NOISE_BATCH samples; reads NOISE_CDT_BYTES from `rand`.
- * Returns RAW unsigned magnitudes; the caller (P07) applies the sign and
+ * Returns RAW unsigned magnitudes; the caller applies the sign and
  * the 1/2 zero-fold rejection from the tail bytes.  Generalized to take
  * the table
  * + entries because SHUTTLE-256 needs TWO distinct noise tables. */
@@ -219,7 +224,7 @@ void noise_magnitude_batch(int32_t *m_out, const uint8_t *rand,
                            const uint32_t Z[][3], int entries);
 
 /* ===================================================================== *
- *  Wide-Gaussian per-candidate finalize (P07; SampleDGauss step 5-8)    *
+ *  Wide-Gaussian per-candidate finalize (SampleDGauss step 5-8)         *
  *                                                                       *
  *  Combines the BaseSampler magnitude x, the uniform low byte y, the    *
  *  Q64 ApproxExp accept threshold p_hat, the 8-byte (full 64-bit)       *
@@ -228,7 +233,7 @@ void noise_magnitude_batch(int32_t *m_out, const uint8_t *rand,
  *  from the (PUBLIC, masking-sampler) accept count.  Returns the {0,1}  *
  *  accept flag; on accept *out holds (-1)^sign * (WIDE_K*x + y).        *
  *                                                                       *
- *  Byte schedule pinned (P07-T8): u is the FULL 64-bit little-endian    *
+ *  Byte schedule pinned: u is the FULL 64-bit little-endian             *
  *  value of the 8-byte tail; accept iff u < p_hat (spec step 5/6, scale *
  *  2^64).  The z==0 zero-fold (spec step 7) is realized WITHOUT an extra *
  *  byte: a z==0 candidate is kept only when its OUTPUT sign bit is 0     *
@@ -237,16 +242,17 @@ void noise_magnitude_batch(int32_t *m_out, const uint8_t *rand,
  *  ~always true there, so the sign-bit fold is effectively independent  *
  *  of u -- mass-correct to the ApproxExp rel-err (~2^-54).  This keeps   *
  *  the per-candidate tail at exactly GAUSS_RAND_BYTES = 8 (fixed-size,   *
- *  K6/K8) and the magnitude sign OUTPUT-indexed (K9). */
+ *  the consumed-bytes determinism rule) and the magnitude sign           *
+ *  OUTPUT-indexed. */
 int gauss_finalize(int32_t *out, int32_t x, int32_t y, uint64_t p_hat,
                    const uint8_t tail[8], uint32_t sign_bit);
 
 /* ===================================================================== *
- *  Vectorized SIGN-INDEPENDENT gauss finalize precompute (M9; SIMD only) *
+ *  Vectorized SIGN-INDEPENDENT gauss finalize precompute (SIMD only)     *
  * ===================================================================== *
  *  Vectorizes the per-candidate part of gauss_finalize that does NOT     *
  *  depend on the OUTPUT-indexed sign bit (which is only known one accept *
- *  at a time, K9): over a whole GAUSS_BATCH mini-batch it computes, for  *
+ *  at a time): over a whole GAUSS_BATCH mini-batch it computes, for      *
  *  every candidate j in [0,GAUSS_BATCH),                                 *
  *                                                                        *
  *      cand[j]    = WIDE_K*x[j] + y[j]            (256x+y, int32, exact) *

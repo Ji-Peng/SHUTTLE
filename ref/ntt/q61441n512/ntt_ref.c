@@ -15,7 +15,7 @@
  */
 #include "ntt_ref.h"
 
-/* SHUTTLE namespacing (P03): the bare `R` macro is renamed per config so two
+/* SHUTTLE namespacing: the bare `R` macro is renamed per config so two
  * configs' ntt_ref.c never collide if ever pulled into one TU.  The public
  * functions/externs are aliased to s512_* by ntt_ref.h. */
 #define S512_R 65536u

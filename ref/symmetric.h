@@ -11,8 +11,8 @@
  *
  * This header additionally declares:
  *   - the avx2/avx512 lane-batched variant prototypes (bodies live in the
- *     backend TUs symmetric_avx2.c / symmetric_avx512.c, which P07 may
- * grow; the prototypes are pinned here so ExpandA/ExpandS/SampleY can be
+ *     backend TUs symmetric_avx2.c / symmetric_avx512.c; the prototypes
+ * are pinned here so ExpandA/ExpandS/SampleY can be
  * written against a stable contract);
  *   - the 16-stream partition helper (shuttle_xof_passes), the documented,
  *     backend-invariant mapping of 16 logical streams onto physical lanes.
@@ -25,9 +25,9 @@
  *     The *8 is the BYTES->BITS shim: get_random_number takes a BIT length
  *     (drng.h), our API takes BYTES.  We only ever request whole bytes, so
  * the MSB-first partial-byte masking inside get_random_number NEVER fires
- * on our plumbing path (K3 is sidestepped here; sub-byte reads remain the
- *     consumers' concern -- SamplerU, P08).
- *       xof128_* alias xof256_* verbatim (the 128/256 collapse, MS-C5).
+ * on our plumbing path (sub-byte reads remain the
+ *     consumers' concern -- e.g. SamplerU).
+ *       xof128_* alias xof256_* verbatim (the 128/256 collapse).
  *
  *   SHA3_MODE: xof_ctx == keccak_state (fips202.{c,h}).
  *       xof128_* = SHAKE128 (rate 168), xof256_* = SHAKE256 (rate 136),
@@ -46,25 +46,25 @@
 #include "xof.h" /* xof_ctx, the four scalar prototypes, lane-count macros */
 
 /* ===================================================================== *
- *  16-stream partition helper (K6) -- the heart of cross-backend KAT     *
+ *  16-stream partition helper -- the heart of cross-backend KAT          *
  *  stability.  PURE arithmetic; no I/O, no PRNG state; safe in any TU. *
  * ===================================================================== */
 
 /*
- * THE FIXED 16-STREAM FLOW (K6).  Read this carefully -- it is the single
+ * THE FIXED 16-STREAM FLOW.  Read this carefully -- it is the single
  * invariant that lets SM3-AVX512 (16 lanes), SM3-AVX2 (8 lanes),
  * Keccak-AVX512 (8 lanes), Keccak-AVX2 (4 lanes) and the scalar reference
  * (1 lane) all consume the IDENTICAL pseudorandom bytes in the IDENTICAL
  * order.
  *
  * A producer (ExpandA over the A-matrix sub-streams, ExpandS over the
- * secret components, SampleY over n/lane, ... -- all owned by P07) does
+ * secret components, SampleY over n/lane, ...) does
  * three things:
  *
  *  (1) PARTITION work into exactly XOF_STREAMS (=16) logical streams, each
  *      seeded by  tag || seed || IntegerToBytes(stream_idx, 2)  (the exact
- *      nonce encoding is P07's; the 16-way partition count is mandated
- * here).
+ *      nonce encoding is the producer's; the 16-way partition count is
+ * mandated here).
  *
  *  (2) FILL physical lanes by mapping logical streams onto lanes across
  *      XOF_NUM_PASSES(LANES) passes.  Pass p handles logical streams
@@ -82,14 +82,14 @@
  * (stream_of(k))* bytes_per_stream.  The byte content of logical stream i
  * is independent of how many physical lanes ran.
  *
- *  CRITICAL (K6 -- the KAT-killer): the per-lane cursor MUST advance by
+ *  CRITICAL (the KAT-killer): the per-lane cursor MUST advance by
  * the WHOLE squeeze granularity (XOF_SQUEEZE_GRANULARITY_BYTES) per
  * refill, INDEPENDENT of any early break in rejection sampling.  I.e.
  * consume the full mini-batch tail up-front so that ref (1 lane) and AVX
  * (N lanes) request the same NUMBER of bytes from each stream even when
- * one lane accepts early.  This mirrors Lithium's poly_uniform_chunkx8 /
- * reject_block discipline: refill a whole block, then reject within it;
- * never short-squeeze.
+ * one lane accepts early.  The discipline is the standard chunked
+ * uniform/reject-block pattern: refill a whole block, then reject within
+ * it; never short-squeeze.
  *
  * shuttle_xof_passes(lanes) returns XOF_NUM_PASSES(lanes); use it for the
  * loop bound so the "16 / LANES passes" rule is centralized and auditable.

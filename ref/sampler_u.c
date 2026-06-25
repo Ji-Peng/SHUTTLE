@@ -3,9 +3,9 @@
  *
  * Draws U ~ Uniform(0,1] as an exponent+mantissa pair off the IRS XOF
  * stream and returns (frac_q62 = log2(b), a) so the caller can form
- * log2(U) = frac/2^62 - a (see sampler_u.h for the full contract, K3
+ * log2(U) = frac/2^62 - a (see sampler_u.h for the full contract, the
  * MSB-first bit schedule, and the (a,frac) return rationale).  The
- * ApproxLog kernel is reused from approx_log.h (P06); this file owns only
+ * ApproxLog kernel is reused from approx_log.h; this file owns only
  * the MSB-first extraction, the (j, x_q64) split, and the byte schedule.
  *
  * Constant-time: the two bit-extraction helpers are branchless; clz over
@@ -20,11 +20,11 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "approx_log.h" /* approx_log2_frac_q62{,_x2} (P06 kernel) */
+#include "approx_log.h" /* approx_log2_frac_q62{,_x2} (ApproxLog kernel) */
 #include "params.h"
 #include "test/prof.h" /* PT_SAMPLERU / PT_APPROXLOG -- ((void)0) unless PROF_TIME */
 
-/* Compile-time pins of the SamplerU byte/bit schedule (K3). */
+/* Compile-time pins of the SamplerU byte/bit schedule. */
 _Static_assert(KAPPA_A == 80,
                "SamplerU exponent block is 80 bits = 10 bytes");
 _Static_assert(KAPPA_B == 57,
@@ -132,7 +132,7 @@ static void mantissa_split(uint64_t m, uint32_t *j, uint64_t *x_q64)
  * sampler_u_decode -- the PURE (no-XOF) SamplerU decode of one 18-byte
  * block (10 exponent bytes rho_a + 8 mantissa bytes rho_b) into ell = (a,
  * frac_q62). Factored out of sampler_u() so the bulk-buffer IRS path
- * (reject_sample, K2) can squeeze the whole TAU*18 stream ONCE and decode
+ * (reject_sample) can squeeze the whole TAU*18 stream ONCE and decode
  * each transition's 18-byte slice here, with NO byte-cursor dependence on
  * the call structure.  This is the decode oracle shared by
  * ref/avx2/avx512: it touches no ctx, so the bytes are pinned entirely by
@@ -182,7 +182,7 @@ void sampler_u_x2(xof_ctx *ctx, sampler_u_res out[2])
     uint64_t m0, m1;
 
     /* Squeeze in the EXACT order of two sequential sampler_u() calls so
-     * the ctx byte cursor is bit-identical (S9): a0, b0, a1, b1. */
+     * the ctx byte cursor is bit-identical: a0, b0, a1, b1. */
     xof256_squeeze(ctx, rho_a0, SAMPLER_U_RHO_A_BYTES);
     xof256_squeeze(ctx, rho_b0, SAMPLER_U_RHO_B_BYTES);
     xof256_squeeze(ctx, rho_a1, SAMPLER_U_RHO_A_BYTES);
@@ -196,7 +196,7 @@ void sampler_u_x2(xof_ctx *ctx, sampler_u_res out[2])
     mantissa_split(m1, &sel[1], &xq[1]);
 
     approx_log2_frac_q62_x2(sel, xq,
-                            frac); /* both log2(b) at once (P06)   */
+                            frac); /* both log2(b) at once          */
     out[0].frac_q62 = frac[0];
     out[1].frac_q62 = frac[1];
 }

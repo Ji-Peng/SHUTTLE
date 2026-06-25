@@ -1,6 +1,5 @@
 /*
- * polyvec.c -- vector-level XOF-driven sampling surface (AVX2 FORK).  P07
- * / M9.
+ * polyvec.c -- vector-level XOF-driven sampling surface (AVX2 FORK).
  *
  * =========================================================================
  *  What this is
@@ -20,7 +19,7 @@
  *      ~83% of Verify -- the headline lever.)
  *
  *   2. ExpandS / SampleY BaseSampler magnitude scan goes through the AVX2
- *      cdt_scan96 (the P05 sampler.c fork), which is bit-identical to the
+ *      cdt_scan96 (the sampler.c fork), which is bit-identical to the
  *      scalar borrow chain.  The wide-Gaussian finalize, the
  * zero-fold/sign logic and the ApproxExp Bernoulli
  * (approx_exp_accept_q64_x4) are kept scalar (cheap per candidate, already
@@ -52,11 +51,11 @@
 #endif
 
 /* ===================================================================== *
- *  N-way batched XOF refill (M9, USE_AVX2_XOF_NWAY)                      *
+ *  N-way batched XOF refill (USE_AVX2_XOF_NWAY)                          *
  * ===================================================================== *
  *
  *  ExpandA / ExpandS / SampleY each partition their work into the fixed
- *  XOF_STREAMS (=16) logical streams (K6).  The scalar reference fills the
+ *  XOF_STREAMS (=16) logical streams.  The scalar reference fills the
  *  16 lanes one at a time with 16 SEQUENTIAL single-stream xof128/256
  *  squeezes -- and profiling shows that squeeze (the SM3/SHAKE XOF) is the
  *  dominant cost of ExpandA (~83% of Verify, ~25% of Sign) and a large
@@ -69,7 +68,7 @@
  * batched passes (2 passes of 8-way SM3, or 4 passes of 4-way SHAKE)
  * instead of 16 sequential single-stream squeezes.
  *
- *  WHY THIS IS BYTE-EXACT (lane-equivalence -- P02-verified, K6):
+ *  WHY THIS IS BYTE-EXACT (lane-equivalence, test-verified):
  *  lane k of an N-way init+squeeze over the per-lane nonce
  *      tag || seed || LE16(stream_idx) || LE16(refill)
  *  produces the IDENTICAL byte stream as the scalar xof128/256 over the
@@ -109,7 +108,8 @@ _Static_assert(
  * (tag||seed||LE16(t)||LE16(0)); `nonce_len` is shared (the producer
  * builds them all the same length).  `dst[t]` receives `block_len` bytes
  * for stream t.  `use_xof128` selects the 128 (public, ExpandA) vs 256
- * family; under NGCC_MODE the two collapse to the same SM3 DRBG (MS-C5).
+ * family; under NGCC_MODE the two collapse to the same SM3 DRBG (the
+ * 128/256 XOF collapse).
  *
  * Lane k of pass p serves logical stream (p*XOF_LANES_AVX2 + k), matching
  * shuttle_xof_stream_of() -- so dst[stream_idx] gets lane k's bytes, which
@@ -281,7 +281,7 @@ static uint16_t us_next_candidate(uniform_stream *us)
 /* compact8 -- BMI2 pdep/pext compaction of accepted uint16 candidates.
  * `m` is the 8-bit accept mask (bit k = candidate k of this 128-bit half).
  * Compacts the surviving uint16 to the front of `o`, returns popcount(m).
- * Identical to the Lithium reject_block_avx2 helper; stores a full 8 u16
+ * Stores a full 8 u16
  * (trailing lanes garbage the caller overwrites -- the bulk loop
  * guarantees
  * >= 8 slots of headroom).  Byte-exact to the scalar accept order: pext
@@ -345,7 +345,7 @@ static size_t uniform_reject_block_avx2(uint16_t *dst, size_t *cnt,
  * sub-16 remainder inside the current buffer and any refill boundary fall
  * back to the scalar us_next_candidate path -- so the consumed bytes, the
  * candidate order, the mask and the unsigned-q test are identical, and the
- * accepted stream matches the scalar oracle exactly (K10). */
+ * accepted stream matches the scalar oracle exactly (constant-time). */
 static void uniform_reject_chunk(uniform_stream *us, uint16_t *dst,
                                  size_t count)
 {
@@ -390,7 +390,7 @@ static void uniform_reject_chunk(uniform_stream *us, uint16_t *dst,
 }
 
 /* ===================================================================== *
- *  ExpandA (DS 0x02, xof128, 16 lanes; A_gen direct in NTT domain, K1)  *
+ *  ExpandA (DS 0x02, xof128, 16 lanes; A_gen direct in NTT domain)     *
  * ===================================================================== */
 void expand_a(poly16 agen[EM], poly16 hAgen[EM * ELL],
               const uint8_t seedA[SEEDBYTES])
@@ -413,7 +413,7 @@ void expand_a(poly16 agen[EM], poly16 hAgen[EM * ELL],
 #if defined(USE_AVX2_XOF_NWAY) && defined(__AVX2__)
     /* N-WAY BATCHED INITIAL FILL: draw the refill==0 UNIFORM_BLOCK of all
      * XOF_STREAMS lanes N-at-a-time (8-way SM3 / 4-way SHAKE), byte-exact
-     * to 16 sequential scalar us_fill() (lane-equivalence, K6).  ExpandA
+     * to 16 sequential scalar us_fill() (lane-equivalence).  ExpandA
      * is the headline lever: this replaces 16 sequential xof128 squeezes
      * -- the dominant cost of Verify (~83%) and a big chunk of Sign --
      * with XOF_STREAMS/XOF_LANES_AVX2 batched squeezes.  Then the (already
@@ -523,7 +523,7 @@ void gs_ensure(gauss_stream *gs, size_t need)
  * Subsequent (rare) continuation refills then run the scalar gs_ensure
  * path with refill = 2,3,... -- byte-identical to ref.  Lane k of the
  * N-way squeeze over nonce(stream s, rc=1) equals the scalar xof256 over
- * the same nonce (lane-equivalence, K6).
+ * the same nonce (lane-equivalence).
  *
  * `gss[t]` must already be gauss_stream_init()'d (tag/seed/lane set). */
 static void gs_batch_first_fill(gauss_stream gss[XOF_STREAMS])
@@ -558,7 +558,7 @@ static void gs_batch_first_fill(gauss_stream gss[XOF_STREAMS])
  * AVX2 cdt_scan96 from the sampler.c fork, bit-identical to scalar), then
  * a 2-bit-per-candidate tail (bit0 sign, bit1 zero-fold), 4 cand/byte; the
  * WHOLE NOISE_MINIBATCH_RAND_BYTES (392) is consumed up front so the
- * cursor advances independently of the cnt==want early break (K6/K8).
+ * cursor advances independently of the cnt==want early break.
  * Identical to ref. */
 static void noise_minibatch(gauss_stream *gs, int32_t *dst, size_t *cnt,
                             size_t want, const uint32_t Z[][3],
@@ -579,7 +579,7 @@ static void noise_minibatch(gauss_stream *gs, int32_t *dst, size_t *cnt,
             dst[(*cnt)++] = r;
     }
     gs->pos +=
-        NOISE_MINIBATCH_RAND_BYTES; /* WHOLE tail consumed (K6/K8) */
+        NOISE_MINIBATCH_RAND_BYTES; /* WHOLE tail consumed */
 }
 
 void expand_s(poly s1s2[ELL + EM],
@@ -605,7 +605,7 @@ void expand_s(poly s1s2[ELL + EM],
     /* N-WAY BATCHED INITIAL FILL: prime all 16 gauss_streams, then draw
      * their first GAUSS_STREAM_BLOCK N-at-a-time (xof256: 8-way SM3 /
      * 4-way SHAKE) instead of 16 sequential single-stream squeezes.
-     * Byte-exact to ref (lane-equivalence, K6); the per-lane BaseSampler
+     * Byte-exact to ref (lane-equivalence); the per-lane BaseSampler
      * scan + zero-fold/ sign logic is then run on each pre-filled buffer
      * exactly as scalar. */
     {
@@ -698,17 +698,17 @@ void sample_c(poly *c, const uint8_t seedC[CHALLENGESEEDBYTES])
  *
  *   (A) scalar per-lane: gauss_stream_chunk() drives ONE lane to
  * completion, refilling its own buffer with the scalar single-stream
- * gs_ensure -> gs_fill (one xof256 squeeze per refill).  This is the M6
- * reference path and the malloc-failure fallback.
+ * gs_ensure -> gs_fill (one xof256 squeeze per refill).  This is the
+ * scalar reference path and the malloc-failure fallback.
  *
- *   (B) N-way round-robin (M9, the headline lever): sample_y() drives ALL
+ *   (B) N-way round-robin (the headline lever): sample_y() drives ALL
  * 16 lanes in LOCKSTEP -- every round, the lanes that still need bytes are
  *       refilled N-AT-A-TIME (8-way SM3 / 4-way SHAKE) via
  * xof_nway_fill16, then each not-yet-done lane consumes from its freshly
  * topped-up buffer.  Lanes finish at different rounds (per-lane rejection
  * makes R_k vary); finished lanes simply stop consuming.
  *
- *  WHY (B) IS BYTE-EXACT TO (A) (consumed-bytes invariance, K6/K8):
+ *  WHY (B) IS BYTE-EXACT TO (A) (consumed-bytes invariance):
  *  lane k's gauss_stream is the deterministic byte schedule
  *      xof256(0x08 || seedY || LE16(k) || LE16(refill)),  refill = 1,2,...
  *  consumed in a fixed sign-stream prefix + GAUSS_BATCH mini-batches with
@@ -719,14 +719,14 @@ void sample_c(poly *c, const uint8_t seedC[CHALLENGESEEDBYTES])
  * computed moves -- (A) makes them one scalar squeeze at a time, (B) makes
  * the not-done lanes' next blocks N-at-a-time.  The N-way SM3/SHAKE
  * kernels were proven byte-for-byte equal to the scalar xof256 over the
- * same nonce (lane-equivalence, P02/test_xof_nway).  So the bytes lane k
+ * same nonce (lane-equivalence, test_xof_nway).  So the bytes lane k
  * CONSUMES -- and therefore every sampled coefficient and the KAT hash --
  * are unchanged.  Extra N-way bytes produced for already-finished lanes in
  * a round are simply UNUSED (harmless: the KAT depends only on the bytes
  * each lane CONSUMES). */
 
 /* gs_load_sign_stream: consume the up-front OUTPUT-indexed sign stream
- * (K9) from the lane buffer into `signs` (signbytes = (count+7)/8).  PURE
+ * from the lane buffer into `signs` (signbytes = (count+7)/8).  PURE
  * buffer operation -- the caller MUST have ensured >= signbytes are
  * resident.  The AVX512 +SIGN_PAD_AVX512 over-read window stays zero
  * (caller zero-inits signs). */
@@ -741,8 +741,8 @@ static void gs_load_sign_stream(gauss_stream *gs, uint8_t *signs,
  * buffer, appending accepted coeffs to dst[*coefcnt..count).  PURE buffer
  * operation -- the caller MUST have ensured >= MINIBATCH_RAND_BYTES are
  * resident.  The whole MINIBATCH_RAND_BYTES is consumed up front (cursor
- * advances independent of the coefcnt==count early break, K6/K8).  This is
- * the EXACT scalar body extracted verbatim from the M6 gauss_stream_chunk,
+ * advances independent of the coefcnt==count early break).  This is
+ * the EXACT scalar body extracted verbatim from gauss_stream_chunk,
  * shared by the scalar (A) and N-way (B) paths so they cannot diverge. */
 static void gs_consume_minibatch(gauss_stream *gs, int32_t *dst,
                                  size_t *coefcnt, size_t count,
@@ -783,9 +783,9 @@ static void gs_consume_minibatch(gauss_stream *gs, int32_t *dst,
         PROF_START(t_fin);
 #if defined(USE_AVX2_SAMPLER) && defined(__AVX2__) && \
     !defined(GAUSS_FINALIZE_SCALAR)
-        /* M9: vectorize the SIGN-INDEPENDENT precompute (cand / negcand /
-         * accept / z0) over the whole mini-batch; the OUTPUT-indexed sign
-         * (K9), zero-fold and compaction stay in the cheap scalar tail
+        /* vectorize the SIGN-INDEPENDENT precompute (cand / negcand /
+         * accept / z0) over the whole mini-batch; the OUTPUT-indexed sign,
+         * zero-fold and compaction stay in the cheap scalar tail
          * below.  Byte-exact to GAUSS_BATCH scalar gauss_finalize calls
          * (see gauss_finalize_batch's precision+security block). */
         int32_t cand[GAUSS_BATCH], negcand[GAUSS_BATCH];
@@ -820,13 +820,13 @@ static void gs_consume_minibatch(gauss_stream *gs, int32_t *dst,
 #endif
         PROF_STOP(PT_G_FINAL, t_fin);
     }
-    gs->pos += MINIBATCH_RAND_BYTES; /* WHOLE tail consumed (K6/K8) */
+    gs->pos += MINIBATCH_RAND_BYTES; /* WHOLE tail consumed */
 }
 
 /* gauss_stream_chunk: scalar per-lane path (A) -- produce a flat run of
  * `count` wide-Gaussian samples, refilling this lane's buffer one scalar
- * xof256 squeeze at a time.  Byte-identical to the M6 reference; kept for
- * the non-USE_AVX2_XOF_NWAY build and the malloc-failure fallback. */
+ * xof256 squeeze at a time.  Byte-identical to the scalar reference; kept
+ * for the non-USE_AVX2_XOF_NWAY build and the malloc-failure fallback. */
 void gauss_stream_chunk(gauss_stream *gs, int32_t *dst, size_t count)
 {
     uint8_t signs[SIGN_BYTES_PER_CHUNK + SIGN_PAD_AVX512];
@@ -862,7 +862,7 @@ void gauss_stream_chunk(gauss_stream *gs, int32_t *dst, size_t count)
  *  `count` accepted), but yields back to the driver whenever its buffer is
  *  too short for the next step, so the driver can batch that refill N-way
  *  across all lanes that need one.  `signs` is per-lane (OUTPUT-indexed
- * sign stream, K9). */
+ * sign stream). */
 typedef struct {
     int32_t *dst;     /* this lane's output slice              */
     size_t count;     /* coeffs to produce for this lane (wy)  */

@@ -1,6 +1,6 @@
 /*
  * test_kat.c -- self-contained deterministic KAT regression baseline for
- * SHUTTLE (P12, the M5 correctness capstone).
+ * SHUTTLE (the correctness capstone).
  *
  * This is the AUTHORITATIVE regression hash.  It replays the EXACT NGCC
  * KAT_SIG.c byte protocol (the three SM3 Hash-DRBG chains drng_seed /
@@ -149,7 +149,7 @@ int main(void)
             break;
         }
         if (snl > sn_len_cap) {
-            printf("FAIL[%d]: Sn_Len %llu > sn buffer cap %llu (MS-A6)\n", i,
+            printf("FAIL[%d]: Sn_Len %llu > sn buffer cap %llu\n", i,
                    snl, sn_len_cap);
             fails++;
         }

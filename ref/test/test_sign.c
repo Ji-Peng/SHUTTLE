@@ -1,6 +1,6 @@
 /*
  * test_sign.c -- SCALAR (reference backend) end-to-end correctness for the
- * SHUTTLE P11 top-level KeyGen / Sign / Verify orchestration (M2/M3 gate).
+ * SHUTTLE top-level KeyGen / Sign / Verify orchestration.
  *
  * Build (per mode m in 128/256/512), NGCC_MODE (default), RAW packing:
  *   gcc -O2 -std=c99 -Wall -Wextra -I. -Itools -Intt/<qset> \
@@ -11,7 +11,7 @@
  *       drng.c auxfunc.c -o out/test_sign_<m>
  *   (drop -DSIG_RAW to exercise the rANS wire format.)
  *
- * Coverage (11-KeyGen-Sign-Verify.md test plan):
+ * Coverage:
  *   (a) keygen -> pk size 1264/1952/3648 + sk size 2288/3680/7104.
  *   (b) keygen norm-window gate triggers: accept rate ~34/47/38 % over
  * many keygens (kappa retry distribution sane). (c) sign(m) -> sig; (d)
@@ -19,7 +19,7 @@
  * a byte) and a tampered message (return -1); a wrong siglen returns -2.
  *   (f) determinism: same (xi, m, rnd) -> same pk/sk/sig.
  *   (g) batch of 50 keygen+sign+verify -> 100 % verify-accept.
- *   (h) kappa-timing (K4) smoke: a forced-rnd run is deterministic.
+ *   (h) kappa-timing smoke: a forced-rnd run is deterministic.
  */
 
 #include <stdint.h>
@@ -138,7 +138,8 @@ int main(void)
         }
         /* Sanity band: the gate must actually trigger (rate well below
          * 100%) yet keygen must converge (rate well above 0).  The exact
-         * per-mode figure is validated against the Python ref in M5; here
+         * per-mode figure is validated against the Python ref separately;
+         * here
          * we only assert the gate is live and in a plausible 15-70% band.
          */
         if (accept_rate >= 0.95 || accept_rate <= 0.05) {

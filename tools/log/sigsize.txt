@@ -1,8 +1,8 @@
 SigSize.py -- SHUTTLE rANS reserve + sig-size model (reproducible)
 
 Reserve R sized for 2^-35 per-stream overflow (Phi^{-1}(1-2^-35)~6.86,
-Bernstein p=2^-35).  Sizes are APPROXIMATE (theoretical PMFs); M4 re-validates
-against empirical Sign output and re-pins.
+Bernstein p=2^-35).  Sizes are APPROXIMATE (theoretical PMFs); re-validated empirically
+against empirical Sign output and re-pinned.
 
 === SHUTTLE-128 (b0=2 bs=6) ===
   sweep optimum == PINNED_SPLIT (b0=2,bs=6): OK

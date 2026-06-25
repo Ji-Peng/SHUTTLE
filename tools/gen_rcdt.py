@@ -13,7 +13,7 @@ fill, RCDT = total - CDT, drop terminal zeros -- and additionally:
       GAUSS0_96_3x32 for all four sigmas);
   (b) ASSERTs the INV-NOMAX table invariant on EVERY emitted row -- the mid and
       high limbs must differ from 0xFFFFFFFF so the constant-time borrow-FOLD
-      compare cannot wrap (K11).  If a future regeneration ever hits 0xFFFFFFFF
+      compare cannot wrap.  If a future regeneration ever hits 0xFFFFFFFF
       in a mid/high limb, the documented fix is a +/-1 ulp nudge of that
       threshold (a ~2^-96 probability change, negligible for the Renyi /
       stddev quality) followed by re-running this generator's assert -- see the

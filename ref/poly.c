@@ -1,17 +1,17 @@
 /*
  * poly.c -- scheme-domain polynomial arithmetic helpers + the fused
- * public-key unpack (P04).
+ * public-key unpack.
  *
  * These wrap the per-coefficient reduce.{c,h} primitives over the signed
  * int32 `poly` type.  Every loop is fixed-length (N) and the underlying
  * reduce32 / caddq / freeze are division-free, masked-correction Barrett
  * (constant-time): so the helpers contain NO data-dependent branch, index,
  * shift count, or hardware divide -- they run on possibly-secret s/e'/NTT
- * residues and must satisfy the P13 ct-scan.
+ * residues and must satisfy the constant-time scan.
  *
  * The NTT shim entry points (poly_ntt / poly_invntt_tomont /
  * poly_pointwise_montgomery / poly_ntt_canonical / poly_ntt_import) live
- * in poly_ntt.c, not here (P03 owns them).
+ * in poly_ntt.c, not here.
  */
 #include "poly.h"
 
@@ -143,7 +143,7 @@ int64_t poly_sqnorm(const poly *a)
  *
  * The bit reader uses the SAME data-independent LSB-first byte-schedule
  * accumulator as bytes_to_poly (packing.c): no per-bit branch, no
- * data-dependent shift count -> KAT-stable, constant-time (K10).
+ * data-dependent shift count -> KAT-stable, constant-time.
  */
 void unpack_pk_bn(poly b[EM], const uint8_t *packed)
 {

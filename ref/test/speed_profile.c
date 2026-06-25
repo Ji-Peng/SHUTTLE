@@ -1,6 +1,6 @@
 /*
  * speed_profile.c -- per-component time + randomness breakdown of the
- * SHUTTLE keygen / sign / verify path (P14).
+ * SHUTTLE keygen / sign / verify path.
  *
  * Build with the profiler enabled:  make profile
  *   (-DPROF_TIME -DPROF_RAND).  Runs NKG keygens / NSIG signs / NSIG

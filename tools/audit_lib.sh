@@ -1,7 +1,7 @@
 #!/bin/sh
-# audit_lib.sh -- shared build recipe for the P13 audit drivers.
+# audit_lib.sh -- shared build recipe for the security audit drivers.
 #
-# The P13 harness owns DISJOINT new files and does NOT edit the per-backend
+# The audit harness owns DISJOINT new files and does NOT edit the per-backend
 # Makefiles, so the audit scripts compile their own self-contained driver
 # binaries here (using the same flags the production Makefiles use). Sourced by
 # security_audit_matrix.sh / integration_audit_matrix.sh / run_dudect_*.sh.
@@ -34,7 +34,7 @@ audit_sign_srcs() {
     backend=$1; mode=$2; xof=$3
     qs=$(audit_qset "$mode") || return 1
     # Scheme spine (symlinked scalar in avx2/avx512; poly_ntt.c is the SIMD shim
-    # there). Identical file list across backends (the M6 single-source design).
+    # there). Identical file list across backends (the single-source design).
     spine="sign.c polyvec.c sampler.c sampler_u.c irs.c rounding.c packing.c poly.c poly_ntt.c reduce.c rans.c approx_exp.c approx_log.c symmetric.c"
     # XOF backend.
     if [ "$xof" = sha3 ]; then

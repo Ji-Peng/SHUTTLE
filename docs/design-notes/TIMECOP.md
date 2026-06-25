@@ -1,6 +1,6 @@
 # TIMECOP / Valgrind Variable-Latency Notes (SHUTTLE-NGCC)
 
-This note records the TIMECOP setup for SHUTTLE and its methodology. Patched Valgrind is **dynamic** confirmation of the KyberSlash variable-latency property; it complements, and does NOT replace, the **static** object-code constant-time scan (`ct_scan_matrix.sh` -> `tools/ct_scan.py`) and the statistical `dudect-sign` harness. SHUTTLE port of `Lithium-Code/docs/design-notes/TIMECOP.md`.
+This note records the TIMECOP setup for SHUTTLE and its methodology. Patched Valgrind is **dynamic** confirmation of the KyberSlash variable-latency property; it complements, and does NOT replace, the **static** object-code constant-time scan (`ct_scan_matrix.sh` -> `tools/ct_scan.py`) and the statistical `dudect-sign` harness.
 
 The `ref` and `avx2` backends run under Valgrind; the `avx512` backend cannot (Valgrind 3.23 SIGILLs on EVEX/AVX-512/VBMI2) and is covered statically instead.
 
@@ -33,7 +33,7 @@ seedA(SEEDBYTES) + EM*POLYPK_PACKEDBYTES (b body)
   + ELL*(secret s) + EM*(secret e')
 ```
 
-so the harness marks `masterSeed` and the trailing `ELL*(secret s) + EM*(secret e')` region UNDEFINED, and keeps `seedA`, the `b` body, and `tr` DEFINED. Under NGCC_MODE the signing randomness is drawn from `drng_algorithm` (SM3 Hash-DRBG); the harness taints the `rnd` bytes that feed `rhoprime` and the IRS `0x09 || seed_y` stream (Overview 4.2, K2). Public `seedA`, cached `bn`, message, verifier inputs, and the produced signature (after signing) are kept defined/declassified.
+so the harness marks `masterSeed` and the trailing `ELL*(secret s) + EM*(secret e')` region UNDEFINED, and keeps `seedA`, the `b` body, and `tr` DEFINED. Under NGCC_MODE the signing randomness is drawn from `drng_algorithm` (SM3 Hash-DRBG); the harness taints the `rnd` bytes that feed `rhoprime` and the IRS `0x09 || seed_y` stream. Public `seedA`, cached `bn`, message, verifier inputs, and the produced signature (after signing) are kept defined/declassified.
 
 ## avx512 = SKIP (exit 3), not FAIL
 
@@ -55,9 +55,9 @@ TIMECOP is an **optional, integrated** audit workflow:
 - It is wired in as an **opt-in**: `TIMECOP=1 ./run_tests.sh` appends `tools/timecop/run_all.sh` (ref + avx2 across all modes) after the standard gates.
 - The static object-code CT scan remains the mandatory owner of the no-variable-latency-division and no-secret-gather properties for **all** backends; the TIMECOP smoke is the dynamic cross-check for the backends Valgrind can run (`ref`, `avx2`).
 
-## Float-exp variant note (P13-T12)
+## Float-exp variant note
 
-SHUTTLE is integer-only by default (Overview 4.7). There is **no opt-in float / IFMA exp path**: no `approx_exp_avx2.c` / `approx_exp_avx512ifma.c`, no `-DAVX2_EXP` / `-DAVX512IFMA_EXP`. Therefore `tools/ct_scan.py --include-optional` is a documented no-op (adds no variant), and the `check-kat-avx2exp` / `check-kat-avx512ifma` gates do not exist for SHUTTLE.
+SHUTTLE is integer-only by default. There is **no opt-in float / IFMA exp path**: no `approx_exp_avx2.c` / `approx_exp_avx512ifma.c`, no `-DAVX2_EXP` / `-DAVX512IFMA_EXP`. Therefore `tools/ct_scan.py --include-optional` is a documented no-op (adds no variant), and the `check-kat-avx2exp` / `check-kat-avx512ifma` gates do not exist for SHUTTLE.
 
 ## Environment
 

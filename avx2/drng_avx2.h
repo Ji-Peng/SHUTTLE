@@ -18,8 +18,8 @@ software is used for any other purposes.
  * the 8-way sm3hash_avx2() core. Output is byte-identical to running the
  * scalar init_random_number()/get_random_number() once per lane.
  *
- * Per the brief: seed_len_bytes / random_number_len_bits are SHARED across
- * the 8 lanes; seed[] / random_number[] are per-lane.
+ * By the N-way contract: seed_len_bytes / random_number_len_bits are
+ * SHARED across the 8 lanes; seed[] / random_number[] are per-lane.
  *
  * Caller contract (NOTHING is validated): all 8 lane pointers must be
  * non-NULL; seed[k] holds >= seed_len_bytes bytes; random_number[k] holds

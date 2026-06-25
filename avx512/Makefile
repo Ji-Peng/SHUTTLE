@@ -5,7 +5,7 @@
 #   make check-kat       # build test_kat; assert recorded KAT (ref==avx2==avx512)
 #   make check-refill    # force multi-way XOF continuation-squeeze; KAT unchanged
 #   make check-consts    # reproducibility/drift gate (params/bounds + vendored NTT)
-#   make sm3-test        # legacy SM3 16-way XOF/DRNG byte-exactness test (P02)
+#   make sm3-test        # legacy SM3 16-way XOF/DRNG byte-exactness test
 #   make clean
 #
 # Mirrors avx2/Makefile but its flags drop -mno-avx512f and add -mavx512* (the
@@ -14,13 +14,14 @@
 # (steps outside the literal NGCC perf flag set; AVX-512 perf is local-only).
 #
 # Shared algorithm/KAT source is SYMLINKED from ../ref (single source of truth;
-# materialized by ../tools/mklinks.sh).  At M6 the AVX-512-specific REAL files
-# are ONLY: config.h, poly_ntt.c (the SIMD NTT shim fork) + the per-mode
-# vendored ntt_avx512.S / ntt_consts_avx512.c (q59393n1024 uses the 2x512
-# superblock), and the AVX-only / N-way XOF files.  Everything else --
-# including the would-be-fork scalar sources and the NGCC infra -- is symlinked
-# scalar.  Because the AVX NTT is byte-exact and the scalar scheme logic is
-# identical to ref, the avx512 KAT hash EQUALS the ref hash (the M6 gate).
+# materialized by ../tools/mklinks.sh).  At the byte-exactness milestone the
+# AVX-512-specific REAL files are ONLY: config.h, poly_ntt.c (the SIMD NTT shim
+# fork) + the per-mode vendored ntt_avx512.S / ntt_consts_avx512.c (q59393n1024
+# uses the 2x512 superblock), and the AVX-only / N-way XOF files.  Everything
+# else -- including the would-be-fork scalar sources and the NGCC infra -- is
+# symlinked scalar.  Because the AVX NTT is byte-exact and the scalar scheme
+# logic is identical to ref, the avx512 KAT hash EQUALS the ref hash (the
+# byte-exactness gate).
 
 MODES ?= 128 256 512
 # Full ref test matrix (mirrors ref/Makefile TESTS) with the SCALAR-only NTT
@@ -33,7 +34,7 @@ CC    ?= gcc
 
 # avx2 perf flags MINUS -mno-avx512f, PLUS the AVX-512 subsets (F/BW/DQ/VL +
 # VBMI2).  -std=c99 -Wpedantic warns on intrinsics/asm; tolerated on the perf
-# build (Overview 10).
+# build.
 CFLAGS ?= -O3 -march=x86-64 -mavx2 -mtune=native -fomit-frame-pointer \
           -std=c99 -Wpedantic -Wall -Wextra -mbmi2 -mpopcnt \
           -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx512vbmi2 \
@@ -52,13 +53,14 @@ MODEFLAG =
 endif
 
 # XOF source list, MODE-dependent (identical link set to ref: the symlinked
-# scalar scheme code calls only the SCALAR xof128/256 primitives at M6).  The
-# KAT harness always seeds via the SM3 Hash-DRBG, so a SHA3_MODE KAT binary
-# needs drng.c+auxfunc.c IN ADDITION to the SHAKE backend.
+# scalar scheme code calls only the SCALAR xof128/256 primitives at the
+# byte-exactness milestone).  The KAT harness always seeds via the SM3
+# Hash-DRBG, so a SHA3_MODE KAT binary needs drng.c+auxfunc.c IN ADDITION to
+# the SHAKE backend.
 ifeq ($(MODE),SHA3)
 XOF_SRCS = symmetric.c fips202.c
 KAT_XOF  = symmetric.c fips202.c ../ref/drng.c ../ref/auxfunc.c
-# N-way (8-way SHAKE) XOF kernels used by the M9 ExpandA/ExpandS/SampleY
+# N-way (8-way SHAKE) XOF kernels used by the later-step ExpandA/ExpandS/SampleY
 # batched refills (USE_AVX512_XOF_NWAY).  Appended whenever polyvec.c links.
 # symmetric_avx512.c = the xof*_avx512_* wrappers; fips202x8.c +
 # keccakf1600x8.c = the 8-way Keccak.  (Scalar fips202.c already in XOF_SRCS
@@ -67,7 +69,7 @@ NWAY_XOF = symmetric_avx512.c fips202x8.c keccakf1600x8.c
 else
 XOF_SRCS = symmetric.c ../ref/drng.c ../ref/auxfunc.c
 KAT_XOF  = $(XOF_SRCS)
-# N-way (16-way SM3) XOF kernels for the M9 batched refills.
+# N-way (16-way SM3) XOF kernels for the later-step batched refills.
 # symmetric_avx512.c = the xof*_avx512_* wrappers; drng_avx512.c = the 16-way
 # SM3 Hash-DRBG; auxfunc_avx512.c = the 16-way SM3 core it calls.  (Scalar
 # drng.c/auxfunc.c already in XOF_SRCS for the seeding DRBG.)
@@ -115,7 +117,8 @@ QSET_256 = q61441n512
 QSET_512 = q59393n1024
 NTTGEN   = ../tools/ntt
 
-# Recorded canonical KAT hashes (shared: ref == avx2 == avx512; the M6 gate).
+# Recorded canonical KAT hashes (shared: ref == avx2 == avx512; the
+# byte-exactness gate).
 # IDENTICAL to ref/Makefile; re-record in lock-step on output-changing diffs.
 KAT_128_NGCC = 17804390083148342413
 KAT_256_NGCC = 18125615567653405523
@@ -174,8 +177,9 @@ check-kat:
 	  else echo "  FAIL: KAT-$$m ($(MODELABEL),avx512) got $$got want $$exp"; fail=1; fi; \
 	done; [ $$fail -eq 0 ] && echo "check-kat: avx512 KAT matches recorded (ref==avx512)" || exit 1
 
-# Force-exercise the multi-way XOF continuation-squeeze (refill) path; at M6 the
-# scheme runs the scalar XOF so this is a no-op KAT rerun (load-bearing at M9).
+# Force-exercise the multi-way XOF continuation-squeeze (refill) path; at the
+# byte-exactness milestone the scheme runs the scalar XOF so this is a no-op KAT
+# rerun (load-bearing once the N-way SIMD XOF kernels land).
 check-refill:
 	@$(MAKE) MODES="$(MODES)" MODE="$(MODE)" CFLAGS="$(CFLAGS) -DGAUSS8X_INIT=4 -DNOISE8X_INIT=4" TESTS="test_kat" all >/dev/null
 	@echo "== forced multi-way refill: KAT must be unchanged =="
@@ -205,7 +209,7 @@ check-consts:
 	  else echo "  skip: $$qs vendored AVX-512 NTT not present"; fi; \
 	done
 	@rm -rf $(BINDIR)/ntt_regen
-	@echo "check-consts: P01 + P03 (AVX-512 NTT) constants reproducible"
+	@echo "check-consts: params + AVX-512 NTT constants reproducible"
 
 # Legacy SM3 16-way XOF/DRNG byte-exactness test (16-way AVX-512 vs scalar ref).
 SM3_AVX512 := -mavx512f -mavx512bw -mavx512dq -mavx512vl -mbmi2
@@ -213,10 +217,10 @@ sm3-test:
 	@mkdir -p $(BINDIR)
 	@$(CC) -O3 -std=c99 -Wall -Wextra $(SM3_AVX512) -I../ref \
 	   test_avx512.c auxfunc_avx512.c ../ref/auxfunc.c -o $(BINDIR)/sm3_test_avx512 2>/dev/null \
-	   && $(BINDIR)/sm3_test_avx512 || echo "sm3-test: build deferred (P02 sources)"
+	   && $(BINDIR)/sm3_test_avx512 || echo "sm3-test: build deferred (SM3 sources)"
 	@$(CC) -O3 -std=c99 -Wall -Wextra $(SM3_AVX512) -I../ref \
 	   test_drng_avx512.c drng_avx512.c auxfunc_avx512.c ../ref/drng.c -o $(BINDIR)/sm3_test_drng_avx512 2>/dev/null \
-	   && $(BINDIR)/sm3_test_drng_avx512 || echo "sm3-test(drng): build deferred (P02 sources)"
+	   && $(BINDIR)/sm3_test_drng_avx512 || echo "sm3-test(drng): build deferred (SM3 sources)"
 
 # ===================================================================== #
 #  Speed / profile benchmarks (mirror the `all` per-mode build: $qs ->   #

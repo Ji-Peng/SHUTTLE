@@ -1,5 +1,5 @@
 /*
- * t_reduce.c -- correctness + constant-time gates for reduce.{c,h} (P03).
+ * t_reduce.c -- correctness + constant-time gates for reduce.{c,h}.
  *
  * Asserts (fails=0 required):
  *   - reduce32 / freeze / reduce_mod_2q / caddq / caddq2 are BIT-IDENTICAL

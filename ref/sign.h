@@ -1,14 +1,13 @@
 /*
- * sign.h -- top-level KeyGen / Sign / Verify orchestration for SHUTTLE
- *           (P11, the M2/M3 capstone).
+ * sign.h -- top-level KeyGen / Sign / Verify orchestration for SHUTTLE.
  *
  * These three functions are the spine of the scheme: every subroutine
- * (P02-P10) is glued together here in the EXACT order the spec algorithm
+ * is glued together here in the EXACT order the spec algorithm
  * blocks mandate (Description.tex KeyGen alg:keygen-internal, Sign
  * alg:sign-internal, Verify alg:verify-internal).  sign.c owns NO
  * subroutine math -- it is pure control flow + the two derived-matrix
  * builds (the Sign-side full A-hat with the 2*I_m block, the Verify-side
- * narrower A1-hat without it) + the kappa-counter timing (K4).
+ * narrower A1-hat without it) + the kappa-counter timing.
  *
  * The prototypes below are IDENTICAL to the NIST/SUPERCOP entry points
  * already declared in api.h (mangled per SHUTTLE_MODE x backend through
@@ -24,11 +23,11 @@
  * randomness (xi for KeyGen, rnd for Sign) from the global drng_algorithm
  * and maps these return codes onto the NGCC contract (verify reject = -1).
  *
- * M3 milestone: by default sign.c is compiled with -DSIG_RAW, which
+ * By default sign.c is compiled with -DSIG_RAW, which
  * selects the fixed-length RAW signature packing (pack_sig_raw /
  * unpack_sig_raw) over the rANS codec (pack_sig / unpack_sig).  RAW
  * packing NEVER fails, so the entire KeyGen->Sign->Verify pipeline can be
- * proven correct BEFORE the rANS size question (MS-A6) is resolved.  Drop
+ * proven correct independently of the rANS size question.  Drop
  * -DSIG_RAW to exercise the real rANS wire format (it round-trips
  * identically; only the byte length differs).
  */

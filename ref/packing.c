@@ -1,6 +1,6 @@
 /*
- * packing.c -- byte primitives + scheme (de)serialization for SHUTTLE
- * (P04).  Pure C99 scalar; the KAT oracle for the wire format.
+ * packing.c -- byte primitives + scheme (de)serialization for SHUTTLE.
+ * Pure C99 scalar; the KAT oracle for the wire format.
  *
  * See packing.h for the full API + bit/byte-order contract.  Everything
  * here is constant-time in the sense that matters: the byte SCHEDULE
@@ -62,7 +62,7 @@ uint64_t bytes_to_integer(const uint8_t *in, unsigned len)
 
 /* poly_to_bytes / bytes_to_poly: the LSB-first d-bit packer with a
  * bit-accumulator whose byte schedule depends only on the loop index (the
- * Lithium bitpack/bitunpack idiom).  For every SHUTTLE field N*d is a
+ * standard bitpack/bitunpack idiom).  For every SHUTTLE field N*d is a
  * multiple of 8 (asserted in params.h), so the flush emits exactly N*d/8
  * full bytes with no padding bits -- but the generic zero-pad flush is
  * implemented so the code is correct for any future d. */
@@ -109,7 +109,7 @@ void bytes_to_poly(poly *w, const uint8_t *in, unsigned d)
 }
 
 /* ====================================================================== *
- *  ct_range_reject (K14)                                                 *
+ *  ct_range_reject                                                       *
  * ======================================================================
  */
 
@@ -219,7 +219,7 @@ void pack_sk(uint8_t sk[CRYPTO_SECRETKEYBYTES],
     }
 
     /* The byte cursor is data-independent; it must land exactly at the
-     * declared sk size (MS-A4 drift guard). */
+     * declared sk size (layout-drift guard). */
     _Static_assert(SEEDBYTES + (size_t)EM * POLYPK_PACKEDBYTES +
                            2 * CHALLENGESEEDBYTES +
                            (size_t)ELL * POLYS_PACKEDBYTES +
@@ -317,7 +317,7 @@ int unpack_com(poly *comY_h, poly *comY_0,
      * H_h = 30/120/58 is NOT a power of two and d_h=5/7/6 over-covers it,
      * so the gap [H_h, 2^d_h) is a non-empty per-coeff reject region.  We
      * range-CHECK then REJECT -- we do NOT reduce mod H_h (that would
-     * break injectivity -> SUF-CMA).  K14. */
+     * break injectivity -> SUF-CMA). */
     bytes_to_poly(comY_h, in, DH_BITS);
     for (k = 0; k < N; ++k)
         fail |= ct_range_reject(comY_h->coeffs[k], 0, (int32_t)HH - 1);
@@ -333,7 +333,7 @@ int unpack_com(poly *comY_h, poly *comY_0,
 }
 
 /* ====================================================================== *
- *  Signature serialization (sigEncode / sigDecode)  -- P10               *
+ *  Signature serialization (sigEncode / sigDecode)                       *
  * ====================================================================== *
  *
  *  Symbol counts (logical order Q0 ++ Qs ++ h, polynomial-major then
@@ -364,7 +364,7 @@ static inline int32_t sig_join_z(int32_t head, int32_t low, int b)
 }
 
 /* pack_sig_zlow / unpack_sig_zlow: the raw low-bit body R, LSB-first per
- * the PolyToBytes convention (P04).  Each poly's N coeffs contribute b low
+ * the PolyToBytes convention.  Each poly's N coeffs contribute b low
  * bits. A 64-bit accumulator handles b up to 7 with margin (b0=2, b_s<=7).
  */
 static void pack_sig_zlow(uint8_t *out, const poly *z1i, int b)
@@ -417,7 +417,7 @@ static void sig_clear_outputs(poly z1[Z1LEN], poly h[EM])
     memset(h, 0, (size_t)EM * sizeof h[0]);
 }
 
-/* ---- RAW path (M3 validation; un-rANS'd) ---- */
+/* ---- RAW path (validation; un-rANS'd) ---- */
 void pack_sig_raw(uint8_t *sig, const uint8_t seedC[CHALLENGESEEDBYTES],
                   const poly z1[Z1LEN], const poly h[EM])
 {
@@ -458,8 +458,8 @@ int unpack_sig_raw(uint8_t seedC[CHALLENGESEEDBYTES], poly z1[Z1LEN],
         }
         p += SIG_RAW_Z1_PACKEDBYTES;
     }
-    /* hint: decode d_h-bit fields, RANGE-CHECK each into [0,H_h) (K14:
-     * never reduce mod H_h -- range-CHECK then reject). */
+    /* hint: decode d_h-bit fields, RANGE-CHECK each into [0,H_h)
+     * (never reduce mod H_h -- range-CHECK then reject). */
     for (i = 0; i < EM; i++) {
         bytes_to_poly(&h[i], p, DH_BITS);
         for (k = 0; k < N; k++)
@@ -473,7 +473,7 @@ int unpack_sig_raw(uint8_t seedC[CHALLENGESEEDBYTES], poly z1[Z1LEN],
     return 0;
 }
 
-/* ---- Production path (M4; rANS com + raw z-low) ---- */
+/* ---- Production path (rANS com + raw z-low) ---- */
 /* Gather the merged symbol arrays from (z1, h): Q0 from z1[0], Qs from
  * z1[1..ELL], hint from h[0..EM-1]. */
 static void sig_gather_symbols(const poly z1[Z1LEN], const poly h[EM],
@@ -503,7 +503,7 @@ int pack_sig(uint8_t *sig, const uint8_t seedC[CHALLENGESEEDBYTES],
     int i;
     int32_t q0[SIG_NQ0], qs[SIG_NQS], hh[SIG_NH];
 
-    /* (1) seedC verbatim prefix (MS-A5). */
+    /* (1) seedC verbatim prefix. */
     memcpy(p, seedC, CHALLENGESEEDBYTES);
     p += CHALLENGESEEDBYTES;
 
@@ -516,7 +516,7 @@ int pack_sig(uint8_t *sig, const uint8_t seedC[CHALLENGESEEDBYTES],
     size_t rlen;
     if (shuttle_rans_encode(rp, &rlen, RANS_RESERVED_BYTES, q0, qs, hh,
                             SIG_NQ0, SIG_NQS, SIG_NH) != 0)
-        return -2; /* out-of-support / overflow: signer retries (K4). */
+        return -2; /* out-of-support / overflow: signer retries. */
     /* Zero the padding tail [rlen, RESERVED) so every signature byte is
      * authenticated (the verifier requires it zero -> no malleability). */
     memset(rp + rlen, 0, RANS_RESERVED_BYTES - rlen);
@@ -553,8 +553,8 @@ int unpack_sig(uint8_t seedC[CHALLENGESEEDBYTES], poly z1[Z1LEN],
     memcpy(seedC, p, CHALLENGESEEDBYTES);
     p += CHALLENGESEEDBYTES;
 
-    /* (2) rlen + reserved com region.  Outer-container checks (rANS.tex
-     * "outer format"): rlen <= RESERVED, and every padding byte zero. */
+    /* (2) rlen + reserved com region.  Outer-container checks: rlen <=
+     * RESERVED, and every padding byte zero. */
     size_t rlen = (size_t)p[0] | ((size_t)p[1] << 8);
     p += 2;
     const uint8_t *rp = p;
@@ -579,8 +579,8 @@ int unpack_sig(uint8_t seedC[CHALLENGESEEDBYTES], poly z1[Z1LEN],
 
     /* (3) place decoded heads into z1, hint into h.  Per-block SUPPORT is
      * already guaranteed by the SLOT lookup (decoded quotient lands in
-     * [LO, LO+N)); we additionally RANGE-CHECK the hint into [0,H_h) (K14:
-     * range-CHECK then reject, NEVER mod H_h). */
+     * [LO, LO+N)); we additionally RANGE-CHECK the hint into [0,H_h)
+     * (range-CHECK then reject, NEVER mod H_h). */
     for (int k = 0; k < N; k++)
         z1[0].coeffs[k] = q0[k];
     for (i = 0; i < ELL; i++)
@@ -605,11 +605,12 @@ int unpack_sig(uint8_t seedC[CHALLENGESEEDBYTES], poly z1[Z1LEN],
         p += (RANS_ZS_LO_PACKEDBYTES / ELL);
     }
 
-    /* (5) byte-for-byte RE-ENCODE check (the SHUTTLE injectivity addition,
-     * K15): re-encode the recovered (z1,hint) and require the com bytes to
-     * match the input exactly.  A decoded triple that re-encodes to a
-     * different byte string would be a malleable alias.  Together with the
-     * padding-zero + terminal-state checks this makes sigDecode injective.
+    /* (5) byte-for-byte RE-ENCODE check (the SHUTTLE injectivity
+     * addition): re-encode the recovered (z1,hint) and require the com
+     * bytes to match the input exactly.  A decoded triple that re-encodes
+     * to a different byte string would be a malleable alias.  Together
+     * with the padding-zero + terminal-state checks this makes sigDecode
+     * injective.
      */
     {
         int32_t r0[SIG_NQ0], rs[SIG_NQS], rh[SIG_NH];

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""rans.py -- byte-exact reference rANS engine for SHUTTLE (P10).
+"""rans.py -- byte-exact reference rANS engine for SHUTTLE.
 
-GOLDEN reference the C ref/rans.c must match byte-for-byte; it is also the P12
+GOLDEN reference the C ref/rans.c must match byte-for-byte; it is also the
 KAT oracle seed.
 
 Engine: 32-bit state x, L = 2^23 renorm lower bound, 8-bit renormalization,
@@ -9,7 +9,7 @@ prob_bits = 10 (each frequency table sums to 1024), RANS_N = 2 interleaved
 streams.  The merged symbol stream is (Q0[.], Qs[.], h[.]) in logical order;
 symbol t is coded on rANS state t % RANS_N.  Encode pushes in REVERSE t (so
 decode pulls forward t); flush writes state 0 first (lands LAST) so decode
-reads state N-1 first.  This is the same engine as the Lithium reference but
+reads state N-1 first.  This is the same engine as the reference but
 with THREE tables (Q0, Qs, hint) instead of two.
 
 A "table" is dict(freqs, cdf, sym_lo, n) over a contiguous alphabet

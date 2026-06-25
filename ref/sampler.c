@@ -1,6 +1,6 @@
 /*
  * sampler.c -- 96-bit reverse-CDT (RCDT) discrete-Gaussian base sampler
- *              (PURE SCALAR REFERENCE; the KAT oracle).  P05.
+ *              (PURE SCALAR REFERENCE; the KAT oracle).
  *
  * =========================================================================
  *  What this samples
@@ -28,8 +28,8 @@
  * sampler.h.
  *
  * =========================================================================
- *  The 96-bit borrow chain (K11) -- why the borrow-FOLD form, why
- * INV-NOMAX
+ *  The 96-bit borrow chain (the table invariant) -- why the borrow-FOLD
+ * form, why INV-NOMAX
  * =========================================================================
  * A 96-bit unsigned compare v <_u Z is a borrow chain low->high limb.  The
  * textbook "less-or-(equal-and-borrow)" definition is
@@ -72,7 +72,7 @@
  * bit 32).
  *
  * =========================================================================
- *  Constant-time (K7, K10, K11)
+ *  Constant-time
  * =========================================================================
  *   - Loop count = public `entries` (table length).  No early-out on v or
  * z.
@@ -91,7 +91,7 @@
  * unconstrained values.
  *
  * =========================================================================
- *  M6 SIMD design sketch (NOT built here -- this pass is scalar ref only)
+ *  SIMD design sketch (NOT built here -- this pass is scalar ref only)
  * =========================================================================
  * The avx2/avx512 forks (BaseSampler.tex sec5/sec6, demo_basesampler.c)
  * keep
@@ -109,23 +109,23 @@
  * This deletes the 3 port-0 vpsrld $31 of the 93-bit path (~21% faster on
  * i7-11700K). 16 lanes = two independent 8-lane streams a/b. Both read the
  * SAME grouped byte layout this file reads, so ref==avx2==avx512 is
- * byte-exact over a mini-batch (K10).
+ * byte-exact over a mini-batch (lane-equivalence).
  */
 #include "sampler.h"
 
 #include "rcdt_tables.h" /* SHUTTLE_RCDT_Z, SHUTTLE_RCDT_NOISE_* (static const) */
 
 /*
- * ===================== P13 CT-1 HARDENING (gather defense) ==============
+ * ===================== CT-1 HARDENING (gather defense) =================
  *
  * The scans below (cdt_scan96 / noise_magnitude_batch / gauss_finalize)
  * are data-independent linear sweeps over the PUBLIC RCDT table length and
  * the SEQUENTIAL PRNG byte buffer (the loop index s is a public sample
  * counter; rand+base is a public sequential offset, never a secret-derived
- * index). They are source-level constant-time.  But the P13 brief is
- * explicit: "do NOT rely on the compiler to preserve constant-time."  Some
- * compilers AUTO-VECTORIZE the per-sample LE32 limb reads into a SIMD
- * GATHER -- e.g.
+ * index). They are source-level constant-time.  But the constant-time
+ * policy is explicit: "do NOT rely on the compiler to preserve
+ * constant-time."  Some compilers AUTO-VECTORIZE the per-sample LE32 limb
+ * reads into a SIMD GATHER -- e.g.
  *
  *     clang -Os -march=skylake (and newer clang baselines under -mavx2)
  *
@@ -135,8 +135,9 @@
  * limb VALUES are the loaded data, the ADDRESS is public).  So this is a
  * BENIGN public-index vectorization, NOT a secret-index leak.  But the
  * machine-code CT scanner (tools/ct_scan.py) cannot prove the index is
- * public, so it conservatively (and correctly, per the brief) FLAGS any
- * gather/scatter in a secret-handling object as a VIOLATION.
+ * public, so it conservatively (and correctly, per the constant-time
+ * policy) FLAGS any gather/scatter in a secret-handling object as a
+ * VIOLATION.
  *
  * Fix: the gather is the OUTER per-sample loop being SLP-vectorized to
  * pack 8 independent samples and gather their rand reads.  We force the
@@ -166,8 +167,8 @@
  * group*96 + lane*4 + {0, 32, 64}.  Each group of 8 samples occupies 96
  * bytes (8 lanes x 3 limbs x 4 bytes).  Writes `batch` int32 magnitudes to
  * `out` in sample order.  This is the exact byte schedule the SIMD forks
- * consume (K7), so a scalar mini-batch is byte-identical to the SIMD over
- * the same buffer.
+ * consume (byte-exact), so a scalar mini-batch is byte-identical to the
+ * SIMD over the same buffer.
  */
 void cdt_scan96(int32_t *out, const uint8_t *rand, const uint32_t Z[][3],
                 int entries, int batch)
@@ -182,7 +183,7 @@ void cdt_scan96(int32_t *out, const uint8_t *rand, const uint32_t Z[][3],
         uint32_t v0 = load_le32(rand + base + 0);
         uint32_t v1 = load_le32(rand + base + 32);
         uint32_t v2 = load_le32(rand + base + 64);
-        /* volatile accumulator = gather barrier (P13 CT-1; see the
+        /* volatile accumulator = gather barrier (CT-1; see the
          * gather-defense block at the top of this file). */
         volatile int32_t z = 0;
         int i;
@@ -199,23 +200,23 @@ void cdt_scan96(int32_t *out, const uint8_t *rand, const uint32_t Z[][3],
 }
 
 /* Wide masking / BLISS base sampler (RCDT_Z, sigma_s = 825/256),
- * GAUSS_BATCH samples.  The uniform-y / ApproxExp accept / sign are
- * P06/P07. */
+ * GAUSS_BATCH samples.  The uniform-y / ApproxExp accept / sign live in
+ * the wide-sampler caller. */
 void sampler_sigma2(int32_t *z_out, const uint8_t *rand)
 {
     cdt_scan96(z_out, rand, SHUTTLE_RCDT_Z, RCDT_Z_ENTRIES, GAUSS_BATCH);
 }
 
 /* Keygen secret-noise magnitude scan (RCDT_NOISE_S / RCDT_NOISE_E),
- * NOISE_BATCH samples.  Returns RAW unsigned magnitudes; the caller (P07)
+ * NOISE_BATCH samples.  Returns RAW unsigned magnitudes; the caller
  * applies the sign and the 1/2 zero-fold rejection from the tail bytes.
  *
- * KEYGEN-NOISE PIPELINE CONTRACT (P07 owns the loop; this file owns the
- * magnitude + this contract).  Per candidate j, the caller reads a 2-bit
- * tail field  f = (tailp[j>>2] >> (2*(j&3))) & 3  (bit0 = sign, bit1 =
- * zero-fold, LSB-first; NOISE_TAIL_BYTES = NOISE_BATCH/4 bytes consumed up
- * front, independent of the cnt==N break, so all backends advance
- * identically -- K6), then: reject   = ct_is_zero_u32(m[j]) & (f >> 1); //
+ * KEYGEN-NOISE PIPELINE CONTRACT (the caller owns the loop; this file owns
+ * the magnitude + this contract).  Per candidate j, the caller reads a
+ * 2-bit tail field  f = (tailp[j>>2] >> (2*(j&3))) & 3  (bit0 = sign, bit1
+ * = zero-fold, LSB-first; NOISE_TAIL_BYTES = NOISE_BATCH/4 bytes consumed
+ * up front, independent of the cnt==N break, so all backends advance
+ * identically), then: reject   = ct_is_zero_u32(m[j]) & (f >> 1); //
  * reject z==0 w.p. 1/2 r[cnt]   = ct_sel_i32(f & 1, -m[j], m[j]);     //
  * apply sign cnt     += 1 ^ reject; The induced post-zero-fold SIGNED
  * stddev (the binding SK metric) is pinned per sigma in
@@ -227,7 +228,7 @@ void noise_magnitude_batch(int32_t *m_out, const uint8_t *rand,
 }
 
 /* ===================================================================== *
- *  Wide-Gaussian per-candidate finalize (P07; SampleDGauss step 5-8)    *
+ *  Wide-Gaussian per-candidate finalize (SampleDGauss step 5-8)         *
  * ===================================================================== *
  * See the contract in sampler.h.  Constant-time decomposition:
  *

@@ -9,7 +9,7 @@
  * logic of its own; it mirrors approx_exp.c's role (symbol anchor for
  * -DDISABLE_NAMESPACE, file-map symmetry, future non-inline fallback). The
  * 448-byte kShuttleLogPoly is duplicated per TU (acceptable for ref/; the
- * SIMD single-definition extern-const option is a size-only M6 deferral).
+ * SIMD single-definition extern-const option is a size-only deferral).
  * `static inline` functions and the unreferenced `static const` table do
  * NOT trip -Wunused under -Werror in this TU.
  */

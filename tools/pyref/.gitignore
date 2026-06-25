@@ -2,6 +2,7 @@
 xcheck_dump_*
 rans_oracle_*
 sampler_oracle_*
+sign_dump_*
 m4_dump_*
 __pycache__/
 *.pyc
