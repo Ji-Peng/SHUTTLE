@@ -52,6 +52,39 @@ ZIP_PASSWORD="${SHUTTLE_ZIP_PASSWORD:-hycFkBh+okdvxYX2c5vbOwJGR7fTg/DZ}"
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"   # = the SHUTTLE/ project root
 
+# Compilation intermediates / build artifacts that must NEVER end up in either
+# zip, matched by pattern so they are dropped regardless of the working tree's
+# state (many of these are .gitignore'd, so 'git status' is clean yet they are
+# still present on disk -- and 7z packs the literal filesystem, not git).
+#
+# These 7z '-xr!' switches match a name at ANY depth (recursive). The list is
+# shared by BOTH make_zip calls (the SHUTTLE source snapshot and the NGCC
+# products) so neither archive can carry an artifact. '-xr!' wants a glob, not a
+# path, so e.g. 'out' / 'output' match those directories wherever they appear.
+BUILD_ARTIFACT_EXCLUDES=(
+  '-xr!out'              # per-backend Makefile BINDIR (ref/avx2/avx512)
+  '-xr!output'           # KAT-driver output/ dirs (kat_sig writes here)
+  '-xr!dist'             # pack_ngcc.sh staging dir (its contents are the NGCC zip)
+  '-xr!__pycache__'      # Python generator caches
+  '-xr!.ct_scan_objs'    # CT-scan per-object build cache (test/.ct_scan_objs)
+  '-xr!*.o'              # object files
+  '-xr!*.a'              # static libraries
+  '-xr!*.so'             # shared objects
+  '-xr!*.lo'             # libtool objects
+  '-xr!*.gcda'           # gcov coverage data
+  '-xr!*.gcno'           # gcov coverage notes
+  '-xr!*.gcov'           # gcov reports
+  '-xr!*.pyc'            # compiled Python
+  '-xr!*.massif'         # valgrind massif dumps
+  '-xr!massif.out*'      # valgrind massif dumps
+  '-xr!sign_dump_*'      # tools/pyref C-oracle binaries (no extension)
+  '-xr!rans_oracle_*'    # tools/pyref C-oracle binaries
+  '-xr!sampler_oracle_*' # tools/pyref C-oracle binaries
+  '-xr!xcheck_dump_*'    # tools/pyref C-oracle binaries
+  '-xr!m4_dump_*'        # tools/pyref C-oracle binaries
+  '-xr!kat_sig'          # KAT-driver binary (pack_ngcc / gen_kat build product)
+)
+
 # --- small helpers ----------------------------------------------------------
 
 die() {
@@ -154,7 +187,8 @@ build_archives() {
   (
     cd "$SCRIPT_DIR"
     make_zip "$SHUTTLE_ZIP" . \
-      '-xr!.git' '-xr!.github' '-xr!publish.sh' '-xr!dist'
+      '-xr!.git' '-xr!.github' '-xr!publish.sh' \
+      "${BUILD_ARTIFACT_EXCLUDES[@]}"
   )
 
   # 2) NGCC submission products. Generate them into a throwaway dir OUTSIDE
@@ -175,7 +209,10 @@ build_archives() {
     cd "$NGCC_BUILD"
     local items=(Implementations Test_Vectors)
     [[ -e README ]] && items+=(README)
-    make_zip "$NGCC_ZIP" "${items[@]}"
+    # Same build-artifact excludes as the source snapshot: pack_ngcc.sh's
+    # in-place sanity build is cleaned afterward, but the pattern excludes make
+    # the products zip artifact-free even if a build was interrupted.
+    make_zip "$NGCC_ZIP" "${items[@]}" "${BUILD_ARTIFACT_EXCLUDES[@]}"
   )
 }
 
