@@ -241,4 +241,38 @@ void noise_magnitude_batch(int32_t *m_out, const uint8_t *rand,
 int gauss_finalize(int32_t *out, int32_t x, int32_t y, uint64_t p_hat,
                    const uint8_t tail[8], uint32_t sign_bit);
 
+/* ===================================================================== *
+ *  Vectorized SIGN-INDEPENDENT gauss finalize precompute (M9; SIMD only) *
+ * ===================================================================== *
+ *  Vectorizes the per-candidate part of gauss_finalize that does NOT     *
+ *  depend on the OUTPUT-indexed sign bit (which is only known one accept *
+ *  at a time, K9): over a whole GAUSS_BATCH mini-batch it computes, for  *
+ *  every candidate j in [0,GAUSS_BATCH),                                 *
+ *                                                                        *
+ *      cand[j]    = WIDE_K*x[j] + y[j]            (256x+y, int32, exact) *
+ *      accept[j]  = ( LE64(tail+8j) <_u p_hat[j] )  (0/1, the 64-bit     *
+ *                                                    Bernoulli compare) *
+ *      z0[j]      = ( cand[j] == 0 )              (0/1, the zero-fold) *
+ *      negcand[j] = -cand[j]                                             *
+ *                                                                        *
+ *  EVERY op is an EXACT integer op (no float, no rounding): the 64-bit   *
+ *  UNSIGNED compare is bit-identical to the scalar ct_lt_u64 (avx2: the  *
+ *  high-bit sign-flip + signed cmpgt; avx512: native cmplt_epu64_mask).  *
+ *  So accept[]/z0[]/cand[]/negcand[] are BIT-IDENTICAL to GAUSS_BATCH    *
+ *  scalar gauss_finalize calls; the caller finishes each candidate with  *
+ *  the cheap OUTPUT-indexed-sign zero-fold + compaction (byte-exact      *
+ *  schedule, KAT-preserving).  Constant-time: pure data-oblivious SIMD   *
+ *  arithmetic, no branch / gather / v-dependent index (see sampler.c).   *
+ *                                                                        *
+ *  Defined ONLY in the SIMD forks (avx2/avx512 sampler.c) under          *
+ *  USE_AVX{2,512}_SAMPLER; ref/sampler.c has no SIMD body so it is NOT   *
+ *  declared there.  `accept` and `z0` are written as int32 0/1 flags. */
+#if (defined(USE_AVX2_SAMPLER) && defined(__AVX2__)) || \
+    (defined(USE_AVX512_SAMPLER) && defined(__AVX512F__))
+void gauss_finalize_batch(int32_t *cand, int32_t *negcand, int32_t *accept,
+                          int32_t *z0, const int32_t *x, const int32_t *y,
+                          const uint64_t *p_hat, const uint8_t *tail,
+                          int batch);
+#endif
+
 #endif /* SHUTTLE_SAMPLER_H */

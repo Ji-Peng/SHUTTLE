@@ -503,6 +503,117 @@ static int test_cursor_determinism(void)
     return fail;
 }
 
+/* ===== (g) gauss_finalize_batch == per-candidate gauss_finalize ======= *
+ * SIMD-only: the M9 vectorized SIGN-INDEPENDENT precompute (cand/negcand/
+ * accept/z0) must be BIT-IDENTICAL to GAUSS_BATCH scalar gauss_finalize
+ * calls, for every (x,y,p_hat,tail,sign), including the precision-critical
+ * 64-bit unsigned Bernoulli compare at its hard edges (u == p_hat, u =
+ * p_hat-1, p_hat in {0, 2^64-1}, the high-bit straddle).  We replay the
+ * exact downstream keep + value logic so this exercises the full
+ * finalize, not just the precompute. */
+#if (defined(USE_AVX2_SAMPLER) && defined(__AVX2__)) || \
+    (defined(USE_AVX512_SAMPLER) && defined(__AVX512F__))
+/* tiny deterministic 64-bit PRNG (splitmix64) -- test-only, libm-free. */
+static uint64_t sm64_state;
+static uint64_t sm64(void)
+{
+    uint64_t z = (sm64_state += 0x9E3779B97F4A7C15ULL);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+}
+static int test_finalize_batch_eq_scalar(void)
+{
+    int fail = 0;
+    long iter, mism = 0, n_acc = 0, n_z0 = 0, n_edge = 0;
+    const long NITER = 200000;
+    sm64_state = 0x5117711ECAFEF00DULL ^ (uint64_t)SHUTTLE_MODE;
+    for (iter = 0; iter < NITER; iter++) {
+        int32_t x[GAUSS_BATCH], y[GAUSS_BATCH];
+        uint64_t phat[GAUSS_BATCH];
+        uint8_t tail[GAUSS_BATCH * 8];
+        uint8_t sgnbit[GAUSS_BATCH];
+        int32_t cand[GAUSS_BATCH], negc[GAUSS_BATCH];
+        int32_t acc[GAUSS_BATCH], z0[GAUSS_BATCH];
+        int j, k;
+        for (j = 0; j < GAUSS_BATCH; j++) {
+            uint64_t r = sm64();
+            x[j] = (int32_t)(r % 37);           /* x in [0,36]  */
+            y[j] = (int32_t)((r >> 8) & 0xFFu); /* y in [0,255] */
+            sgnbit[j] = (uint8_t)((r >> 17) & 1u);
+            /* p_hat: mix full-range draws with the Bernoulli hard edges.
+             */
+            {
+                uint64_t p = sm64();
+                int pm = (int)((r >> 20) & 7u);
+                if (pm == 0)
+                    p = 0;
+                else if (pm == 1)
+                    p = ~0ULL;
+                else if (pm == 2)
+                    p = 0x8000000000000000ULL; /* high-bit straddle */
+                else if (pm == 3)
+                    p &= 0xFFFFu; /* small */
+                phat[j] = p;
+                if (pm <= 2)
+                    n_edge++;
+            }
+            /* tail u: usually independent, but sometimes pin u to {p_hat,
+             * p_hat-1, p_hat+1} to stress the exact compare boundary. */
+            {
+                uint64_t u = sm64();
+                int em = (int)((u >> 3) & 7u);
+                if (em == 0)
+                    u = phat[j];
+                else if (em == 1)
+                    u = phat[j] - 1ULL;
+                else if (em == 2)
+                    u = phat[j] + 1ULL;
+                for (k = 0; k < 8; k++)
+                    tail[j * 8 + k] = (uint8_t)(u >> (8 * k));
+            }
+        }
+        /* SIMD precompute over the whole batch. */
+        gauss_finalize_batch(cand, negc, acc, z0, x, y, phat, tail,
+                             GAUSS_BATCH);
+        /* per-candidate scalar oracle + full downstream comparison. */
+        for (j = 0; j < GAUSS_BATCH; j++) {
+            int32_t r_s;
+            uint32_t sgn = sgnbit[j] & 1u;
+            int keep_s = gauss_finalize(&r_s, x[j], y[j], phat[j],
+                                        tail + (size_t)j * 8, sgn);
+            /* reconstruct the SIMD keep + value with the SAME sign logic
+             */
+            uint32_t keep_v =
+                (uint32_t)acc[j] & (1u ^ ((uint32_t)z0[j] & sgn));
+            int32_t r_v = sgn ? negc[j] : cand[j];
+            if ((int)keep_v != keep_s || r_v != r_s) {
+                if (mism < 8)
+                    printf(
+                        "    MISMATCH iter=%ld j=%d x=%d y=%d phat=%llu "
+                        "sgn=%u: scal(keep=%d r=%d) simd(keep=%d r=%d) "
+                        "[acc=%d z0=%d cand=%d]\n",
+                        iter, j, x[j], y[j], (unsigned long long)phat[j],
+                        sgn, keep_s, r_s, (int)keep_v, r_v, acc[j], z0[j],
+                        cand[j]);
+                mism++;
+            }
+            n_acc += (acc[j] != 0);
+            n_z0 += (z0[j] != 0);
+        }
+    }
+    printf(
+        "    gauss_finalize_batch vs scalar: %ld batches x %d cand = %ld "
+        "candidates, %ld accepts, %ld z0, %ld edge p_hat, "
+        "mismatches=%ld\n",
+        NITER, (int)GAUSS_BATCH, NITER * (long)GAUSS_BATCH, n_acc, n_z0,
+        n_edge, mism);
+    if (mism != 0)
+        fail = 1;
+    return fail;
+}
+#endif /* SIMD sampler */
+
 int main(void)
 {
     printf("== test_samplers (SHUTTLE-%d, ref scalar P07) ==\n",
@@ -520,6 +631,12 @@ int main(void)
     report("SampleY batch == scalar loop", test_batch_eq_scalar());
     printf("[f] cursor-advance determinism (K6/K8)\n");
     report("mini-batch fixed cursor advance", test_cursor_determinism());
+#if (defined(USE_AVX2_SAMPLER) && defined(__AVX2__)) || \
+    (defined(USE_AVX512_SAMPLER) && defined(__AVX512F__))
+    printf("[g] gauss_finalize_batch (SIMD) == scalar gauss_finalize\n");
+    report("gauss_finalize_batch bit-exact",
+           test_finalize_batch_eq_scalar());
+#endif
     printf("\n%s (%d failures)\n",
            g_fails ? "FAILURES PRESENT" : "ALL PASS", g_fails);
     return g_fails ? 1 : 0;

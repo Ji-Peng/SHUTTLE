@@ -64,17 +64,16 @@
  * scalar:
  *   - The outer loop count is batch/16 (public) and the inner loop count
  * is the PUBLIC table length `entries`; no early-out on v or z.
- *   - The body is pure SIMD arithmetic (vpcmpltud / vpaddd under a mask) on
- * whole registers -- no branch, no v-indexed memory access (the only loads
- * are the contiguous grouped rand buffer at a PUBLIC sequential offset and
- * the broadcast of the PUBLIC table limb), no v-dependent shift count, no
- *     gather/scatter, no division/modulo, no float.  The {0,1} mask is the
- *     compare result, not a secret index.
- * The AVX-512 path therefore has the SAME (data-independent) timing
- * profile as the scalar oracle; the only data-dependent timing that
- * escapes is the caller's BLISS/zero-fold accept COUNT (a public
- * masking-sampler property, whitelisted in P13), which lives in polyvec.c,
- * not here.
+ *   - The body is pure SIMD arithmetic (vpcmpltud / vpaddd under a mask)
+ * on whole registers -- no branch, no v-indexed memory access (the only
+ * loads are the contiguous grouped rand buffer at a PUBLIC sequential
+ * offset and the broadcast of the PUBLIC table limb), no v-dependent shift
+ * count, no gather/scatter, no division/modulo, no float.  The {0,1} mask
+ * is the compare result, not a secret index. The AVX-512 path therefore
+ * has the SAME (data-independent) timing profile as the scalar oracle; the
+ * only data-dependent timing that escapes is the caller's BLISS/zero-fold
+ * accept COUNT (a public masking-sampler property, whitelisted in P13),
+ * which lives in polyvec.c, not here.
  *
  * NB the scalar fallback path keeps the `volatile z` gather-barrier from
  * the reference (see the long comment below) so that even the `batch % 16`
@@ -144,18 +143,19 @@ static void cdt_scan96_scalar(int32_t *out, const uint8_t *rand,
 
 #if defined(USE_AVX512_SAMPLER) && defined(__AVX512F__)
 /*
- * cdt_scan96_avx512 -- the 16-sample (two grouped 8-lane half-blocks) AVX-512
- * borrow-fold scan over the UNFLIPPED public table Z (no flip; AVX-512 has a
- * native unsigned compare).
+ * cdt_scan96_avx512 -- the 16-sample (two grouped 8-lane half-blocks)
+ * AVX-512 borrow-fold scan over the UNFLIPPED public table Z (no flip;
+ * AVX-512 has a native unsigned compare).
  *
- * `rand` points at the start of two consecutive 96-byte groups (192 bytes):
- *   group g   limbs: rand+{0,32,64}        8 lanes -> out[0..7]
+ * `rand` points at the start of two consecutive 96-byte groups (192
+ * bytes): group g   limbs: rand+{0,32,64}        8 lanes -> out[0..7]
  *   group g+1 limbs: rand+{96,128,160}     8 lanes -> out[8..15]
- * The two 32-byte v-limb halves of a given limb index are gathered into one
- * 64-byte __m512i with a 256-bit insert, so SIMD lane l (0..15) is exactly
- * scalar sample (group g, lane l) for l<8 and (group g+1, lane l-8) for
- * l>=8 -- byte-identical to two scalar groups.  Bit-identical to the scalar
- * borrow chain under INV-NOMAX (see the file header and demo_basesampler.c
+ * The two 32-byte v-limb halves of a given limb index are gathered into
+ * one 64-byte __m512i with a 256-bit insert, so SIMD lane l (0..15) is
+ * exactly scalar sample (group g, lane l) for l<8 and (group g+1, lane
+ * l-8) for l>=8 -- byte-identical to two scalar groups.  Bit-identical to
+ * the scalar borrow chain under INV-NOMAX (see the file header and
+ * demo_basesampler.c
  * ::avx512_count16).
  */
 static void cdt_scan96_avx512(int32_t *out, const uint8_t *rand,
@@ -184,15 +184,20 @@ static void cdt_scan96_avx512(int32_t *out, const uint8_t *rand,
         __m512i Z1 = _mm512_set1_epi32((int)Z[i][1]);
         __m512i Z2 = _mm512_set1_epi32((int)Z[i][2]);
         /* native unsigned compare; fold borrow as a masked +1 on Z (exact
-         * while mid/high limbs <= 0xFFFFFFFE, the INV-NOMAX table invariant) */
-        __mmask16 m = _mm512_cmplt_epu32_mask(v0, Z0); /* b0 = [v0 <_u Z0]   */
+         * while mid/high limbs <= 0xFFFFFFFE, the INV-NOMAX table
+         * invariant) */
+        __mmask16 m =
+            _mm512_cmplt_epu32_mask(v0, Z0); /* b0 = [v0 <_u Z0]   */
         m = _mm512_cmplt_epu32_mask(
-            v1, _mm512_mask_add_epi32(Z1, m, Z1, one)); /* b1=[v1<_u Z1+b0]  */
+            v1,
+            _mm512_mask_add_epi32(Z1, m, Z1, one)); /* b1=[v1<_u Z1+b0]  */
         m = _mm512_cmplt_epu32_mask(
-            v2, _mm512_mask_add_epi32(Z2, m, Z2, one)); /* b2=[v2<_u Z2+b1]  */
-        z = _mm512_mask_add_epi32(z, m, z, one);        /* += b2             */
+            v2,
+            _mm512_mask_add_epi32(Z2, m, Z2, one)); /* b2=[v2<_u Z2+b1]  */
+        z = _mm512_mask_add_epi32(z, m, z, one);    /* += b2             */
     }
-    /* lanes 0..7 -> out[0..7] (group g), lanes 8..15 -> out[8..15] (g+1) */
+    /* lanes 0..7 -> out[0..7] (group g), lanes 8..15 -> out[8..15] (g+1)
+     */
     _mm512_storeu_si512((__m512i *)out, z);
 }
 
@@ -293,3 +298,104 @@ int gauss_finalize(int32_t *out, int32_t x, int32_t y, uint64_t p_hat,
     *out = ct_sel_i32(sign_bit & 1u, -cand, cand);
     return (int)keep;
 }
+
+#if defined(USE_AVX512_SAMPLER) && defined(__AVX512F__)
+/*
+ * ===================================================================== *
+ *  gauss_finalize_batch -- AVX-512 vectorized SIGN-INDEPENDENT precompute*
+ *  (M9; PT_G_FINAL).  BYTE-EXACT to GAUSS_BATCH scalar gauss_finalize.  *
+ * ===================================================================== *
+ *
+ *  RIGOROUS PRECISION + SECURITY ANALYSIS (the three points; see also    *
+ *  agent/SHUTTLE-NGCC/Impl/BaseSampler.tex sec on the gauss finalize).   *
+ *
+ *  ----------------------------------------------------------------------
+ *  (1) EXACTNESS -- every SIMD op is an EXACT integer op, no float, no
+ *      rounding.  Per 8-wide block we compute:
+ *
+ *      cand = WIDE_K*x + y : 256x+y via vpslld $8 (256*x) + vpaddd (+y) on
+ *          8x int32 lanes.  x in [0,36], y in [0,255] => cand in [0,9471],
+ *          no overflow; exact integer 256x+y == scalar `WIDE_K*x+y`.
+ *      negcand = -cand : vpsubd from zero, exact two's-complement negate.
+ *      z0 = (cand==0) : vpcmpeqd-mask to {0,1} via a masked set, identical
+ *          to scalar ct_is_zero_u32((uint32_t)cand).
+ *      u = LE64(tail+8j) : 8 contiguous 8-byte little-endian draws loaded
+ *          as one 512-bit vector; on little-endian x86 a 64-bit lane load
+ *          of 8 LE bytes IS load_le64.  EXACT.
+ *      accept = (u <_u p_hat) : the PRECISION-CRITICAL op.  AVX-512 has a
+ *          NATIVE unsigned 64-bit compare _mm512_cmplt_epu64_mask, which
+ *          is the EXACT 64-bit unsigned less-than (no flip, no rounding),
+ *          bit-identical to the scalar ct_lt_u64(u, p_hat) for every
+ *          (u, p_hat).  The {0,1} flag is materialized by a masked set.
+ *
+ *      Hence accept[j]/z0[j]/cand[j]/negcand[j] are BIT-IDENTICAL to the
+ *      scalar gauss_finalize; the caller's keep = accept & ~(z0 & sign)
+ *      and out = sign?negcand:cand are then identical, so the emitted
+ *      coefficient stream and the KAT hash are UNCHANGED.
+ *
+ *  ----------------------------------------------------------------------
+ *  (2) DISTRIBUTION / PRECISION PRESERVATION -- identical accept events
+ *      => identical emitted discrete Gaussian.  p_hat comes from the
+ *      UNTOUCHED ApproxExp kernel; we only consume it.  The scalar
+ *      precision budget carries over UNCHANGED: ApproxExp rel-err 2^-54.49
+ *      vs gates 2^-51.25/2^-51.98/2^-52.97; BaseSampler R_1045 =
+ *      1+2^-95.40; the z==0 zero-fold mass-halving.  ZERO added error.
+ *
+ *  ----------------------------------------------------------------------
+ *  (3) SECURITY / CONSTANT-TIME -- pure data-oblivious register arithmetic
+ *      (vpslld/vpaddd/vpsubd/vpcmpeqd/vpcmpuq) at PUBLIC mini-batch
+ *      offsets; NO branch, NO data-dependent index, NO gather/scatter, NO
+ *      v-dependent shift, NO division, NO float.  Data-independent timing;
+ *      the only data-dependent control flow (accept-count -> coefcnt) is
+ *      the caller's scalar tail, identical to the scalar reference (the
+ *      whitelisted masking-sampler rejection-timing channel, P13).  No new
+ *      timing/cache/branch leak; ct_scan stays CLEAN.
+ *
+ *  Writes accept[j], z0[j] as int32 {0,1} flags and cand[j], negcand[j]
+ *  as the signed magnitudes.  `batch` is a whole number of 8 (GAUSS_BATCH
+ *  == 32); any batch % 8 remainder finishes on a byte-exact scalar tail.
+ */
+void gauss_finalize_batch(int32_t *cand, int32_t *negcand, int32_t *accept,
+                          int32_t *z0, const int32_t *x, const int32_t *y,
+                          const uint64_t *p_hat, const uint8_t *tail,
+                          int batch)
+{
+    const __m256i one32 = _mm256_set1_epi32(1);
+    int j;
+    int bulk = batch & ~7; /* 8-candidate-aligned bulk */
+    for (j = 0; j < bulk; j += 8) {
+        /* cand = 256*x + y (exact int32). */
+        __m256i xv = _mm256_loadu_si256((const __m256i *)(x + j));
+        __m256i yv = _mm256_loadu_si256((const __m256i *)(y + j));
+        __m256i cv =
+            _mm256_add_epi32(_mm256_slli_epi32(xv, 8), yv); /* 256x+y */
+        __m256i ncv =
+            _mm256_sub_epi32(_mm256_setzero_si256(), cv); /* -cand  */
+        /* z0 = (cand == 0) -> {0,1} (masked select 1 where equal). */
+        __mmask8 zm = _mm256_cmpeq_epi32_mask(cv, _mm256_setzero_si256());
+        __m256i z0v = _mm256_maskz_mov_epi32(zm, one32);
+        _mm256_storeu_si256((__m256i *)(cand + j), cv);
+        _mm256_storeu_si256((__m256i *)(negcand + j), ncv);
+        _mm256_storeu_si256((__m256i *)(z0 + j), z0v);
+        /* u = 8x LE64 Bernoulli draws (contiguous 8 bytes/candidate). */
+        __m512i u =
+            _mm512_loadu_si512((const __m512i *)(tail + (size_t)j * 8));
+        __m512i ph = _mm512_loadu_si512((const __m512i *)(p_hat + j));
+        /* accept = (u <_u ph): NATIVE unsigned 64-bit compare. */
+        __mmask8 am = _mm512_cmplt_epu64_mask(u, ph);
+        /* materialize the 8x {0,1} int32 accept flags. */
+        __m256i accv = _mm256_maskz_mov_epi32(am, one32);
+        _mm256_storeu_si256((__m256i *)(accept + j), accv);
+    }
+    /* byte-exact scalar tail for any batch % 8 (absent for
+     * GAUSS_BATCH=32). */
+    for (; j < batch; j++) {
+        int32_t c = WIDE_K * x[j] + y[j];
+        uint64_t u = load_le64(tail + (size_t)j * 8);
+        cand[j] = c;
+        negcand[j] = -c;
+        accept[j] = (int32_t)ct_lt_u64(u, p_hat[j]);
+        z0[j] = (int32_t)ct_is_zero_u32((uint32_t)c);
+    }
+}
+#endif /* USE_AVX512_SAMPLER && __AVX512F__ */

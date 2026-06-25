@@ -302,3 +302,142 @@ int gauss_finalize(int32_t *out, int32_t x, int32_t y, uint64_t p_hat,
     *out = ct_sel_i32(sign_bit & 1u, -cand, cand);
     return (int)keep;
 }
+
+#if defined(USE_AVX2_SAMPLER) && defined(__AVX2__)
+/*
+ * ===================================================================== *
+ *  gauss_finalize_batch -- AVX2 vectorized SIGN-INDEPENDENT precompute  *
+ *  (M9; PT_G_FINAL).  BYTE-EXACT to GAUSS_BATCH scalar gauss_finalize.  *
+ * ===================================================================== *
+ *
+ *  RIGOROUS PRECISION + SECURITY ANALYSIS (the three points; see also    *
+ *  agent/SHUTTLE-NGCC/Impl/BaseSampler.tex sec on the gauss finalize).   *
+ *
+ *  ----------------------------------------------------------------------
+ *  (1) EXACTNESS -- every SIMD op is an EXACT integer op, no float, no
+ *      rounding.  Per 4-wide block (avx2 4x 64-bit lanes) we compute:
+ *
+ *      cand = WIDE_K*x + y : 256x+y is built with vpslld $8 (256*x) +
+ *          vpaddd (+y) on int32 lanes.  x in [0,36], y in [0,255] => cand
+ *          in [0,9471], no int32 overflow; vpslld/vpaddd are exact 2^32
+ *          modular adds and the values are far from the modulus, so the
+ *          result is the EXACT integer 256x+y, == the scalar `WIDE_K*x+y`.
+ *      negcand = -cand : vpsubd from zero, exact two's-complement negate,
+ *          == scalar `-cand`.
+ *      z0 = (cand==0) : vpcmpeqd against zero, yields the {0,-1} lane
+ *          mask; we AND with 1 to get the {0,1} flag.  Bit-identical to
+ *          the scalar ct_is_zero_u32((uint32_t)cand) (cand==0 <=> the
+ *          32-bit value is 0).
+ *      u = LE64(tail+8j) : the 8 tail bytes per candidate are contiguous
+ *          little-endian, so a vpmovzxbd-free plain 256-bit load of 4x
+ *          8-byte words IS the 4 LE64 draws u[0..3] (x86 is little-endian;
+ *          a 64-bit load of 8 LE bytes == load_le64).  EXACT, byte-for-
+ *          byte the scalar load_le64(tail).
+ *      accept = (u <_u p_hat) : the PRECISION-CRITICAL op.  AVX2 has no
+ *          unsigned 64-bit compare, so we use the EXACT order-preserving
+ *          sign-flip:  a <_u b  <=>  (a ^ 2^63) <_s (b ^ 2^63).  Proof:
+ *          XOR-ing bit 63 maps the unsigned order [0,2^64) bijectively and
+ *          monotonically onto the signed order [-2^63,2^63) (it adds 2^63
+ *          mod 2^64, i.e. rotates the wrap point), so unsigned-< on a,b
+ *          equals signed-< on the flipped values for ALL 64-bit a,b.  We
+ *          flip u and p_hat by vpxor with 0x8000000000000000 and test
+ *          (uf <_s pf) via vpcmpgtq(pf, uf) (a {0,-1} lane mask), then AND
+ *          with 1.  This is an EXACT 64-bit integer comparison with NO
+ *          rounding, bit-identical to the scalar ct_lt_u64(u, p_hat)
+ *          (which is the Hacker's-Delight branchless unsigned-< -- also
+ *          exact; both compute the same boolean for every (u,p_hat)).
+ *
+ *      Therefore accept[j], z0[j], cand[j], negcand[j] emitted here are
+ *      BIT-IDENTICAL to what the scalar gauss_finalize computes for the
+ *      same (x[j], y[j], p_hat[j], tail+8j).  The caller's downstream
+ *      keep = accept & ~(z0 & sign_bit) and out = sign?negcand:cand are
+ *      then trivially identical -- so the emitted coefficient stream and
+ *      the KAT hash are UNCHANGED.
+ *
+ *  ----------------------------------------------------------------------
+ *  (2) DISTRIBUTION / PRECISION PRESERVATION -- because the accept
+ *      decision accept[j] = [u < p_hat] is bit-identical to the scalar
+ *      reference for every candidate, the Bernoulli acceptance event is
+ *      IDENTICAL, hence the emitted discrete-Gaussian distribution is
+ *      identical.  p_hat is produced by the UNTOUCHED ApproxExp kernel
+ *      (approx_exp_accept_q64{,_x4}); this routine only CONSUMES it.  So
+ *      the scalar precision budget carries over UNCHANGED: ApproxExp
+ *      worst-case relative error 2^-54.49 vs the per-set accept gates
+ *      eta_max = 2^-51.25 / 2^-51.98 / 2^-52.97 (128/256/512); the
+ *      BaseSampler RCDT Renyi divergence R_1045 = 1 + 2^-95.40; and the
+ *      z==0 zero-fold mass-halving (kept only when sign_bit==0).  This
+ *      vectorization introduces ZERO additional error -- the compare is an
+ *      exact integer compare, not a re-approximation of exp.
+ *
+ *  ----------------------------------------------------------------------
+ *  (3) SECURITY / CONSTANT-TIME -- the SIMD body is pure data-oblivious
+ *      register arithmetic (vpslld / vpaddd / vpsubd / vpcmpeqd / vpxor /
+ *      vpcmpgtq / vpand) over the PUBLIC-offset contiguous mini-batch
+ *      buffers; NO branch, NO data-dependent index, NO gather/scatter, NO
+ *      v-dependent shift, NO division, NO float.  The loads are all at
+ *      PUBLIC sequential offsets (the mini-batch cursor).  Its timing is
+ *      data-independent.  The ONLY data-dependent control flow stays in
+ *      the caller's scalar tail (the accept-count -> coefcnt advance),
+ *      which is IDENTICAL to the scalar reference and is the documented,
+ *      whitelisted masking-sampler rejection-timing channel (the
+ *      isochronous emitted-distribution argument, P13).  No new timing /
+ *      cache / branch leak is introduced; the machine-code CT scanner
+ *      (ct_scan) stays CLEAN (no gather/scatter emitted here).
+ *
+ *  Writes accept[j], z0[j] as int32 {0,1} flags and cand[j], negcand[j]
+ *  as the signed magnitudes.  `batch` is a whole number of 4 (GAUSS_BATCH
+ *  == 32); any batch % 4 remainder finishes on a byte-exact scalar tail.
+ */
+void gauss_finalize_batch(int32_t *cand, int32_t *negcand, int32_t *accept,
+                          int32_t *z0, const int32_t *x, const int32_t *y,
+                          const uint64_t *p_hat, const uint8_t *tail,
+                          int batch)
+{
+    const __m256i kflip =
+        _mm256_set1_epi64x((long long)0x8000000000000000LL);
+    const __m256i one32 = _mm256_set1_epi32(1);
+    int j;
+    int bulk = batch & ~3; /* 4-candidate-aligned bulk */
+    for (j = 0; j < bulk; j += 4) {
+        /* cand = 256*x + y (exact int32; x in [0,36], y in [0,255]). */
+        __m128i xv = _mm_loadu_si128((const __m128i *)(x + j));
+        __m128i yv = _mm_loadu_si128((const __m128i *)(y + j));
+        __m128i cv = _mm_add_epi32(_mm_slli_epi32(xv, 8), yv); /* 256x+y */
+        __m128i ncv = _mm_sub_epi32(_mm_setzero_si128(), cv);  /* -cand  */
+        /* z0 = (cand == 0) as {0,1}. */
+        __m128i z0v = _mm_and_si128(
+            _mm_cmpeq_epi32(cv, _mm_setzero_si128()), _mm_set1_epi32(1));
+        _mm_storeu_si128((__m128i *)(cand + j), cv);
+        _mm_storeu_si128((__m128i *)(negcand + j), ncv);
+        _mm_storeu_si128((__m128i *)(z0 + j), z0v);
+        /* u = 4x LE64 Bernoulli draws (contiguous 8 bytes/candidate). */
+        __m256i u =
+            _mm256_loadu_si256((const __m256i *)(tail + (size_t)j * 8));
+        __m256i ph = _mm256_loadu_si256((const __m256i *)(p_hat + j));
+        /* accept = (u <_u ph): sign-flip bit 63 then signed cmpgt. */
+        __m256i uf = _mm256_xor_si256(u, kflip);
+        __m256i pf = _mm256_xor_si256(ph, kflip);
+        __m256i acc64 = _mm256_cmpgt_epi64(pf, uf); /* {0,-1}: u <_u ph */
+        /* pack the 4x 64-bit {0,-1} masks to 4x int32 {0,1} flags. */
+        __m256i acc_and = _mm256_and_si256(acc64, one32);
+        /* lanes (as 32-bit): [a0lo a0hi a1lo a1hi | a2lo a2hi a3lo a3hi];
+         * the {0,1} flag sits in each 64-bit lane's LOW 32 bits.  Shuffle
+         * the four low dwords (positions 0,2 of each 128-bit half) down to
+         * the bottom 128 bits, then store 4x int32. */
+        __m256i packed = _mm256_permutevar8x32_epi32(
+            acc_and, _mm256_setr_epi32(0, 2, 4, 6, 1, 3, 5, 7));
+        _mm_storeu_si128((__m128i *)(accept + j),
+                         _mm256_castsi256_si128(packed));
+    }
+    /* byte-exact scalar tail for any batch % 4 (absent for
+     * GAUSS_BATCH=32). */
+    for (; j < batch; j++) {
+        int32_t c = WIDE_K * x[j] + y[j];
+        uint64_t u = load_le64(tail + (size_t)j * 8);
+        cand[j] = c;
+        negcand[j] = -c;
+        accept[j] = (int32_t)ct_lt_u64(u, p_hat[j]);
+        z0[j] = (int32_t)ct_is_zero_u32((uint32_t)c);
+    }
+}
+#endif /* USE_AVX2_SAMPLER && __AVX2__ */

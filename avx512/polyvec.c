@@ -771,6 +771,30 @@ static void gs_consume_minibatch(gauss_stream *gs, int32_t *dst,
     tailp = gs->buf + gs->pos + SIGMA_S_RAND_BYTES + Y_RAND_BYTES;
     {
         PROF_START(t_fin);
+#if defined(USE_AVX512_SAMPLER) && defined(__AVX512F__) && \
+    !defined(GAUSS_FINALIZE_SCALAR)
+        /* M9: vectorize the SIGN-INDEPENDENT precompute (cand / negcand /
+         * accept / z0) over the whole mini-batch; the OUTPUT-indexed sign
+         * (K9), zero-fold and compaction stay in the cheap scalar tail
+         * below.  Byte-exact to GAUSS_BATCH scalar gauss_finalize calls
+         * (see gauss_finalize_batch's precision+security block). */
+        int32_t cand[GAUSS_BATCH], negcand[GAUSS_BATCH];
+        int32_t accept[GAUSS_BATCH], z0[GAUSS_BATCH];
+        gauss_finalize_batch(cand, negcand, accept, z0, x, yv, phat, tailp,
+                             GAUSS_BATCH);
+        for (j = 0; j < GAUSS_BATCH; j++) {
+            size_t idx = *coefcnt; /* OUTPUT index of the NEXT accept */
+            uint32_t sgn = (uint32_t)(signs[idx >> 3] >> (idx & 7)) & 1u;
+            /* keep = accept & ~(z0 & sign); byte-exact to gauss_finalize.
+             */
+            uint32_t keep =
+                (uint32_t)accept[j] & (1u ^ ((uint32_t)z0[j] & sgn));
+            if (keep) {
+                if (*coefcnt < count)
+                    dst[(*coefcnt)++] = sgn ? negcand[j] : cand[j];
+            }
+        }
+#else
         for (j = 0; j < GAUSS_BATCH; j++) {
             int32_t r;
             uint32_t sgn;
@@ -783,6 +807,7 @@ static void gs_consume_minibatch(gauss_stream *gs, int32_t *dst,
                     dst[(*coefcnt)++] = r;
             }
         }
+#endif
         PROF_STOP(PT_G_FINAL, t_fin);
     }
     gs->pos += MINIBATCH_RAND_BYTES; /* WHOLE tail consumed (K6/K8) */
