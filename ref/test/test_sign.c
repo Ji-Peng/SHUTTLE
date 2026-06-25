@@ -40,6 +40,8 @@ int crypto_sign_signature_rnd(uint8_t *sig, size_t *siglen,
                               const uint8_t rnd[/*RNDBYTES==SEEDBYTES*/]);
 /* keygen attempt counter (sign.c diagnostic): == kappa at acceptance. */
 extern uint32_t shuttle_last_keygen_attempts;
+/* sign attempt counter (sign.c diagnostic): Sign-loop iterations at accept. */
+extern uint32_t shuttle_last_sign_attempts;
 
 #if defined(SIG_RAW)
 #    define SIG_BYTES SIG_RAW_PACKED_BYTES
@@ -295,6 +297,35 @@ int main(void)
             printf("  FAIL: not 100%% accept\n");
             fails++;
         }
+    }
+
+    /* ---- (h) Sign per-iteration acceptance rate (the B_v + sigEncode gate) --
+     * One fixed key, many random messages; accumulate the Sign-loop iteration
+     * count.  per-iteration accept = #signs / total iterations.  With round-
+     * half-up CompressY the commitment-reconstruction identity holds, so this
+     * should be ~1.0 (mean iters ~1.0) at EVERY security level. */
+    {
+        const int NS = 4000;
+        unsigned long total_iters = 0;
+        int ns_ok = 0;
+        fill_rand(xi, sizeof xi);
+        if (crypto_sign_keypair_xi(pk, sk, xi) == 0) {
+            for (i = 0; i < NS; ++i) {
+                size_t sl = 0;
+                fill_rand(rnd, sizeof rnd);
+                fill_rand(msg, sizeof msg);
+                if (crypto_sign_signature_rnd(sig, &sl, msg, sizeof msg, sk,
+                                              rnd) == 0) {
+                    total_iters += shuttle_last_sign_attempts;
+                    ns_ok++;
+                }
+            }
+        }
+        printf("[h] sign accept: %d/%d signed; mean iters=%.4f; "
+               "per-iter accept=%.4f\n",
+               ns_ok, NS,
+               ns_ok ? (double)total_iters / (double)ns_ok : 0.0,
+               total_iters ? (double)ns_ok / (double)total_iters : 0.0);
     }
 
     free(pk);

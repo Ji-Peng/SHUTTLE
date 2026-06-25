@@ -197,6 +197,12 @@ static void build_cached_matrix(poly16 bhat[EM], poly16 Ahat[EM * ELL],
  * write per attempt; no branch on secret data, no effect on output. */
 uint32_t shuttle_last_keygen_attempts = 0;
 
+/* Number of Sign-loop iterations the LAST sign_internal consumed (1 == accepted
+ * on the first try).  Public diagnostic for the per-iteration B_v/sigEncode
+ * acceptance rate (1 / mean(attempts)); a single global write on the accepting
+ * iteration, no branch on secret data, no effect on output. */
+uint32_t shuttle_last_sign_attempts = 0;
+
 /* ===================================================================== *
  *  KeyGen  (crypto_sign_keypair) -- alg:keygen-internal                 *
  * ===================================================================== *
@@ -598,6 +604,7 @@ static int sign_internal(uint8_t *sig, size_t *siglen, const uint8_t *m,
             PROF_STOP(PT_RANS, t_pk);
         }
         *siglen = SIG_RAW_PACKED_BYTES;
+        shuttle_last_sign_attempts = (uint32_t)iter + 1;
         return 0;
 #else
         {
@@ -607,6 +614,7 @@ static int sign_internal(uint8_t *sig, size_t *siglen, const uint8_t *m,
             PROF_STOP(PT_RANS, t_pk);
             if (rc == 0) {
                 *siglen = SIG_PACKED_BYTES;
+                shuttle_last_sign_attempts = (uint32_t)iter + 1;
                 return 0;
             }
         }

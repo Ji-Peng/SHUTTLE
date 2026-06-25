@@ -82,8 +82,9 @@ void poly_lift_to_mod2q(poly *x, const poly *xbar, const poly *bpar);
  * of KVEC, NOT secret data -- compress_y/stretch_s branch on the block
  * index only, never on a coefficient value.
  *
- * CompressY = round-to-nearest, TIES AWAY FROM ZERO (Description.tex 65);
- * StretchS  = exact integer multiply, NO modular reduction. */
+ * CompressY = round-to-nearest, TIES UP toward +inf (shift-invariant; see the
+ * translation-identity note below).  StretchS = exact integer multiply, NO
+ * modular reduction. */
 void compress_y(poly out[KVEC], const poly in[KVEC]);
 void stretch_s(poly out[KVEC], const poly in[KVEC]);
 
@@ -107,10 +108,17 @@ void stretch_s(poly out[KVEC], const poly in[KVEC]);
  *       per-coeff bound <= 144.  sk_tilde feeds IRS with V =
  *       ||sk_tilde||^2 <= B_k^2 ~ 88000.
  *
- * The translation identities hold UNCONDITIONALLY over Z:
+ * The translation identities
  *   CompressY(StretchS(x))      = x
  *   CompressY(y + StretchS(x))  = CompressY(y) + x
- * which is what makes z = CompressY(y) + sk*c' consistent in Sign.
+ * hold for ALL divisors PRECISELY BECAUSE CompressY rounds half-UP (toward
+ * +inf), which is shift-invariant: round((v + alpha*x)/alpha) = round(v/alpha)
+ * + x for every integer x.  (Round-half-AWAY-from-zero is NOT shift-invariant
+ * -- at a tie the round direction depends on the sign -- and breaks the
+ * identity whenever a divisor alpha is even, e.g. alpha_1=90/alpha_s=10 for
+ * SHUTTLE-128, which silently made Sign reject ~81% of attempts at the B_v
+ * gate.  See gen_rounding.py.)  This identity is what makes the verifier's
+ * commitment reconstruction from z = CompressY(y) + sk*c' consistent in Sign.
  * ======================================================================
  */
 

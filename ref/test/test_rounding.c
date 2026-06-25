@@ -7,9 +7,9 @@
  *       poly.c poly_ntt.c ntt/<qset>/ntt_ref.c -o out/test_rounding_<m>
  *
  * Sections (fails=0 required):
- *  (a) compress_y / stretch_s: the two translation identities, ties-away-
- *      from-zero on exact half-integers, round_div_taway == Python
- *      sgn(v)*round_half_away(|v|), StretchS no-mod bound.
+ *  (a) compress_y / stretch_s: the two translation identities (now
+ *      unconditional, including at exact half-integer ties), round-half-up
+ *      == Python floor((2v+alpha)/(2 alpha)), StretchS no-mod bound.
  *  (b) roundB_update_s2: b is a multiple of alpha_b in [0,q); |delta| <=
  *      alpha_b/2; e' = e + delta; one-pass == two-step; e' support <=
  * BE_ENC. (c) the mod-2q lift: lift_to_mod2q_coeff / mat_mul_2q match a
@@ -55,13 +55,17 @@ static int rnd_range(int lo, int hi) /* uniform int in [lo, hi] */
     return lo + (int)(rand() % (hi - lo + 1));
 }
 
-/* reference round-to-nearest, ties away from zero (the spec rule). */
+/* reference round-to-nearest, ties UP toward +inf (round-half-up): the
+ * shift-invariant CompressY rule.  q = floor((2v + alpha) / (2 alpha)); C `/`
+ * truncates toward zero, so correct it toward -inf for negative numerators. */
 static long ref_round_div(long v, long alpha)
 {
-    long m = (v < 0) ? -1 : 0;
-    long av = (v < 0) ? -v : v;
-    long q = (2 * av + alpha) / (2 * alpha); /* floor, av>=0 */
-    return (m == 0) ? q : -q;
+    long num = 2 * v + alpha;
+    long den = 2 * alpha; /* > 0 */
+    long q = num / den;
+    if ((num % den) != 0 && num < 0)
+        q -= 1;
+    return q;
 }
 
 /* alpha selector by block index (compile-time partition). */
@@ -82,7 +86,7 @@ static int test_compress(void)
     int fails = 0, it, p;
     unsigned i;
 
-    /* round_div_taway exactness over a dense |v| sweep (via compress_y on
+    /* round_div_hup exactness over a dense |v| sweep (via compress_y on
      * a single-block poly), for each block divisor. */
     for (p = 0; p < KVEC; ++p) {
         long alpha = block_alpha(p);
@@ -90,7 +94,8 @@ static int test_compress(void)
         memset(in, 0, sizeof(in));
         for (i = 0; i < N; ++i) {
             /* hit dense small values + the exact half-integer ties
-             * +-(k*alpha + alpha/2) where ties-away rounds AWAY from 0. */
+             * +-(k*alpha + alpha/2); round-half-up sends +tie -> up and
+             * -tie -> up (toward +inf), checked against ref_round_div. */
             long v;
             if (i < N / 2)
                 v = (long)i - (long)N / 4; /* dense around 0 */
@@ -116,24 +121,27 @@ static int test_compress(void)
         }
     }
 
-    /* exact-tie audit: v = +-(alpha/2) for even alpha rounds AWAY from 0
-     * (to +-1), NOT to 0 (ties-to-even would give 0 at v=alpha/2). */
+    /* exact-tie audit: round-half-up sends every half-integer tie toward
+     * +inf, so +alpha/2 -> +1 but -alpha/2 -> 0, and +1.5alpha -> +2 but
+     * -1.5alpha -> -1.  (Round-half-away would give +-1 / +-2 symmetrically;
+     * the asymmetry here is exactly the shift-invariance that fixes the
+     * commitment identity.) */
     for (p = 0; p < KVEC; ++p) {
         long alpha = block_alpha(p);
         if (alpha % 2 == 0) {
             poly in[KVEC], out[KVEC];
             memset(in, 0, sizeof(in));
             in[p].coeffs[0] = (int32_t)(alpha / 2);    /* +0.5 -> +1 */
-            in[p].coeffs[1] = (int32_t)(-(alpha / 2)); /* -0.5 -> -1 */
+            in[p].coeffs[1] = (int32_t)(-(alpha / 2)); /* -0.5 -> 0  */
             in[p].coeffs[2] = (int32_t)(alpha + alpha / 2); /* 1.5 -> 2 */
             in[p].coeffs[3] =
-                (int32_t)(-(alpha + alpha / 2)); /* -1.5 -> -2 */
+                (int32_t)(-(alpha + alpha / 2)); /* -1.5 -> -1 */
             compress_y(out, in);
-            if (out[p].coeffs[0] != 1 || out[p].coeffs[1] != -1 ||
-                out[p].coeffs[2] != 2 || out[p].coeffs[3] != -2) {
+            if (out[p].coeffs[0] != 1 || out[p].coeffs[1] != 0 ||
+                out[p].coeffs[2] != 2 || out[p].coeffs[3] != -1) {
                 printf(
-                    "  [tie] p=%d a=%ld got %d %d %d %d (want 1 -1 2 "
-                    "-2)\n",
+                    "  [tie] p=%d a=%ld got %d %d %d %d (want 1 0 2 "
+                    "-1)\n",
                     p, alpha, out[p].coeffs[0], out[p].coeffs[1],
                     out[p].coeffs[2], out[p].coeffs[3]);
                 fails++;
@@ -162,27 +170,19 @@ static int test_compress(void)
                 }
         /* CompressY(y + StretchS(x)) == CompressY(y) + x.
          *
-         * NOTE (ties-away subtlety): the translation identity is
-         * unconditional over Z for any round rule satisfying
-         * round(t+k)=round(t)+k.  Ties-away-from-zero satisfies that
-         * EXCEPT at exact even half-integer ties (|y| mod alpha ==
-         * alpha/2) where adding x can straddle the sign boundary
-         * (round(0.5)=1 but round(-0.5)=-1).  Those inputs are
-         * measure-zero for the continuous Gaussian y the scheme actually
-         * feeds CompressY; we skip them here so the test exercises the
-         * identity in its real regime. */
+         * Round-half-up is shift-invariant -- round(t + k) = round(t) + k for
+         * EVERY integer k and every sign of t -- so this identity holds
+         * UNCONDITIONALLY, including at exact even half-integer ties.  (The
+         * old ties-away rule failed here whenever a divisor alpha was even,
+         * which is the bug this rounding change fixes; we now test the ties
+         * too, with NO skip.) */
         for (p = 0; p < KVEC; ++p)
             for (i = 0; i < N; ++i)
                 sum[p].coeffs[i] = y[p].coeffs[i] + sx[p].coeffs[i];
         compress_y(yp, y);
         compress_y(cs, sum);
         for (p = 0; p < KVEC; ++p) {
-            long alpha = block_alpha(p);
             for (i = 0; i < N; ++i) {
-                long yc = y[p].coeffs[i];
-                /* skip exact even half-integer ties */
-                if ((alpha % 2 == 0) && (labs(yc) % alpha) == alpha / 2)
-                    continue;
                 if (cs[p].coeffs[i] != yp[p].coeffs[i] + x[p].coeffs[i]) {
                     if (fails < 6)
                         printf("  [id2] it=%d p=%d i=%u\n", it, p, i);
@@ -222,7 +222,7 @@ static int test_compress(void)
     }
 
     printf(
-        "(a) compress_y/stretch_s (ties-away, identities, no-mod): %s\n",
+        "(a) compress_y/stretch_s (round-half-up, identities, no-mod): %s\n",
         fails ? "FAIL" : "PASS");
     return fails;
 }

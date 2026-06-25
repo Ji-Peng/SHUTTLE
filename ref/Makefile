@@ -224,12 +224,12 @@ check-warn:
 # prints KAT_hash.  These are the production rANS-path hashes (test_kat builds
 # WITHOUT -DSIG_RAW).  Re-record on any output-changing diff (samplers/encoding).
 # RAW-path hashes (for -DSIG_RAW debugging) are kept in tools/pyref/README.md.
-KAT_128_NGCC = 17804390083148342413
+KAT_128_NGCC = 823452645344586366
 KAT_256_NGCC = 18125615567653405523
-KAT_512_NGCC = 13454440604513852822
-KAT_128_SHA3 = 17067083752221901810
+KAT_512_NGCC = 8245892437008629419
+KAT_128_SHA3 = 1262996610409304303
 KAT_256_SHA3 = 16770893027166717173
-KAT_512_SHA3 = 980655777695523119
+KAT_512_SHA3 = 13681015613848361407
 MODELABEL = $(if $(filter SHA3,$(MODE)),SHA3,NGCC)
 check-kat: all
 	@KAT_128=$(KAT_128_$(MODELABEL)); KAT_256=$(KAT_256_$(MODELABEL)); KAT_512=$(KAT_512_$(MODELABEL)); \
@@ -258,11 +258,12 @@ SPEED_EXTRA ?=
 .PHONY: speed
 speed:
 	@mkdir -p $(BINDIR)
+	@echo "-- XOF mode: $(MODELABEL) --"
 	@for m in $(MODES); do \
 	  case $$m in 128) qs=$(QSET_128);; 256) qs=$(QSET_256);; 512) qs=$(QSET_512);; esac; \
 	  $(CC) $(CFLAGS) -Intt/$$qs $(MODEFLAG) -DSHUTTLE_MODE=$$m $(SPEED_EXTRA) \
 	    test/speed_sign.c test/cpucycles.c $(SPEED_SRCS) $(KAT_XOF) ntt/$$qs/ntt_ref.c \
-	    $(LDLIBS) -o $(BINDIR)/speed_sign_$$m || exit 1; \
+	    $(LDLIBS) -lm -o $(BINDIR)/speed_sign_$$m || exit 1; \
 	  $(BINDIR)/speed_sign_$$m; echo; \
 	done
 
@@ -275,6 +276,7 @@ MACHINFO = printf ' date    : '; date -u '+%Y-%m-%dT%H:%M:%SZ'; \
 
 speed_txt:
 	@{ echo "=== SHUTTLE  ref/  end-to-end speed (tail/median rdtsc cycles, speed_sign) ==="; \
+	   echo " xof mode: $(MODELABEL)"; \
 	   $(MACHINFO); \
 	   echo " stability metrics: p25/p50/p75/p90/p99 percentiles; StQ1/StQ2/StQ3 stabilized quartiles;"; \
 	   echo "   stddev / cv (stddev/avg); outlier_count(>p50*1.5); p90/p50 & p99/p50 tail ratios."; \
@@ -289,16 +291,18 @@ speed_txt:
 .PHONY: profile
 profile:
 	@mkdir -p $(BINDIR)
+	@echo "-- XOF mode: $(MODELABEL) --"
 	@for m in $(MODES); do \
 	  case $$m in 128) qs=$(QSET_128);; 256) qs=$(QSET_256);; 512) qs=$(QSET_512);; esac; \
 	  $(CC) $(CFLAGS) -DPROF_TIME -DPROF_RAND -Intt/$$qs $(MODEFLAG) -DSHUTTLE_MODE=$$m \
 	    test/speed_profile.c test/prof.c $(PROFILE_SRCS) $(KAT_XOF) ntt/$$qs/ntt_ref.c \
-	    $(LDLIBS) -o $(BINDIR)/speed_profile_$$m || exit 1; \
+	    $(LDLIBS) -lm -o $(BINDIR)/speed_profile_$$m || exit 1; \
 	  $(BINDIR)/speed_profile_$$m; echo; \
 	done
 
 profile_txt:
 	@{ echo "=== SHUTTLE  ref/  per-component profile (cycles/op, make profile) ==="; \
+	   echo " xof mode: $(MODELABEL)"; \
 	   $(MACHINFO); echo; echo "-- pure-scalar reference --"; } > test/profiling.txt
 	@$(MAKE) --no-print-directory profile >> test/profiling.txt
 	@echo "wrote test/profiling.txt"

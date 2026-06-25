@@ -1,5 +1,6 @@
 #include "cpucycles.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -70,59 +71,46 @@ static uint64_t bench_virtual_octile_mean(const uint64_t *sorted,
                                           unsigned int hi)
 {
     size_t i;
-    unsigned __int128 acc = 0;
+    uint64_t acc = 0;
     size_t start = (size_t)lo * len;
     size_t end = (size_t)hi * len;
     size_t count = end - start;
 
+    /* Cycle counts fit in ~40 bits and `count` is bounded by the run
+     * count, so the running sum stays far below 2^64; no wide
+     * accumulator is needed. */
     for (i = start; i < end; i++)
         acc += sorted[i / 8];
 
-    return (uint64_t)(acc / count);
-}
-
-static uint64_t bench_isqrt_u128(unsigned __int128 x)
-{
-    uint64_t lo = 0, hi = UINT64_MAX, ans = 0;
-
-    while (lo <= hi) {
-        uint64_t mid = lo + (hi - lo) / 2;
-        unsigned __int128 sq = (unsigned __int128)mid * mid;
-
-        if (sq <= x) {
-            ans = mid;
-            if (mid == UINT64_MAX)
-                break;
-            lo = mid + 1;
-        } else {
-            hi = mid - 1;
-        }
-    }
-
-    return ans;
+    return acc / count;
 }
 
 static uint64_t bench_stddev(const uint64_t *t, size_t tlen, uint64_t avg)
 {
     size_t i;
-    unsigned __int128 sumsq = 0;
+    double sumsq = 0.0;
 
+    /* Variance of cycle timings is a human-facing statistic; accumulate
+     * the sum of squared deviations in `double` to avoid 128-bit integer
+     * math. */
     for (i = 0; i < tlen; i++) {
-        uint64_t delta = t[i] < avg ? avg - t[i] : t[i] - avg;
-        sumsq += (unsigned __int128)delta * delta;
+        double delta = (double)t[i] - (double)avg;
+        sumsq += delta * delta;
     }
 
-    return bench_isqrt_u128(sumsq / tlen);
+    return (uint64_t)sqrt(sumsq / (double)tlen);
 }
 
 static size_t bench_outlier_count(const uint64_t *sorted, size_t len,
                                   uint64_t p50)
 {
     size_t i, count = 0;
-    unsigned __int128 threshold = (unsigned __int128)p50 * 3;
+    /* p50 is a cycle count (~40 bits); p50*3 and sorted[i]*2 stay well
+     * within 64 bits, so the comparison needs no wider accumulator. */
+    uint64_t threshold = p50 * 3;
 
     for (i = 0; i < len; i++) {
-        if ((unsigned __int128)sorted[i] * 2 > threshold)
+        if (sorted[i] * 2 > threshold)
             count++;
     }
 
@@ -133,9 +121,9 @@ static uint64_t bench_ratio_x100(uint64_t numerator, uint64_t denominator)
 {
     if (denominator == 0)
         return 0;
-    return (
-        uint64_t)(((unsigned __int128)numerator * 100 + denominator / 2) /
-                  denominator);
+    /* `numerator` is at most a cycle count scaled by 100, so a further
+     * factor of 100 stays below 2^64; plain 64-bit math is exact here. */
+    return (numerator * 100 + denominator / 2) / denominator;
 }
 
 int bench_tail_sign(const char *name, tail_sign_result *result,

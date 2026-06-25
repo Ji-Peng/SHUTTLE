@@ -1,39 +1,45 @@
 #!/usr/bin/env python3
-"""gen_rounding.py - division-free round-to-nearest (ties-away-from-zero) magic
+"""gen_rounding.py - division-free round-to-nearest (ties UP, toward +inf) magic
 reciprocals for SHUTTLE CompressY, plus the alpha_h highbits shift constants.
 
 CompressY divides each y-block by a positive divisor alpha in {alpha_1, alpha_s,
-alpha_e} = {90/135/144, 10/5/3, 5/5/3} (NOT powers of two), ROUNDING to nearest
-with TIES AWAY FROM ZERO (Description.tex:65).  These divides act on
-SECRET-derived data (the uncompressed response), so NO hardware idiv / `% const`
-is allowed.
+alpha_e} = {90/135/144, 10/5/3, 5/5/3} (NOT powers of two), ROUNDING to nearest.
+These divides act on SECRET-derived data (the uncompressed response), so NO
+hardware idiv / `% const` is allowed.
 
-The branchless ties-away kernel computes |v|, an unsigned round-divide, then
-re-signs:
+ROUNDING RULE: round half UP (ties toward +inf), i.e. CompressY(v) =
+floor((2v + alpha) / (2 alpha)) = floor((v + alpha/2)/alpha) for any sign of v.
+This rule is SHIFT-INVARIANT: round((v + alpha*x)/alpha) = round(v/alpha) + x for
+every integer x.  The commitment-reconstruction step the verifier runs
+(reconstruct comY from the compressed response z1) relies on exactly this
+translation identity CompressY(y + StretchS(x)) = CompressY(y) + x.  Round-half-
+AWAY-from-zero (the previous rule) is NOT shift-invariant: at a half-integer tie
+the round direction depends on the sign, so the identity breaks whenever a block
+divisor alpha is EVEN (the tie v mod alpha = alpha/2 is then an integer
+residue).  That broke the identity on the even-divisor blocks (alpha_1=90,
+alpha_s=10 for SHUTTLE-128; alpha_1=144 for SHUTTLE-512), injecting +-1 errors
+into z1 that the matrix product spreads into wrong HighBits buckets, so the
+signer rejected ~81% (mode 128) / ~4% (mode 512) of attempts at the B_v gate.
+Round-half-up has no such sign-dependent tie and restores the identity for ALL
+divisors, even or odd.
 
-    m    = v >> 31                     # arithmetic sign mask, -1 if v<0
-    av   = (v ^ m) - m                 # |v|
-    qabs = (av*RECIP + ROUND_BIAS) >> SHIFT   # == floor((|v| + alpha/2)/alpha)
-    res  = (qabs ^ m) - m              # re-sign
-
-where, for ties-away-from-zero on |v|:
-    floor((|v| + alpha/2) / alpha)        when alpha is EVEN, and
-    floor((2*|v| + alpha) / (2*alpha))    when alpha is ODD
-(both expressed as floor((|v| + floor(alpha/2) + (alpha&1 ? 0:0))/alpha) with the
-right half-integer tie -- see below).  Concretely we want, for every integer
-|v| >= 0,
-    round_half_away(|v|/alpha) = floor( (2|v| + alpha) / (2 alpha) ).
-We realize floor(P/D) with D = 2*alpha (and P = 2|v| + alpha) by a magic
-reciprocal RECIP = ceil(2^SHIFT / D) so that
-    floor(P/D) == (P * RECIP) >> SHIFT     for all P in [0, P_MAX].
-We fold the +alpha bias into ROUND_BIAS = alpha*RECIP so the C kernel multiplies
-only by |v| once:  qabs = (2*|v|*RECIP + ROUND_BIAS) >> SHIFT.
-
-Reachable |v|: the CompressY input is the uncompressed response coeff, |v| well
-under 2^20.  We PROVE exactness for every |v| in [0, 2^20) against Python's
-round_half_away.  SHIFT is chosen as the smallest shift that is (i) exact over
-that range and (ii) keeps 2*|v|*RECIP + ROUND_BIAS < 2^63 (the C kernel uses
-int64 for the product).
+BRANCHLESS DIVISION-FREE KERNEL.  For signed v in (-2^20, 2^20) we want
+    q = round_half_up(v / alpha) = floor((2v + alpha) / (2 alpha)).
+Round-half-up is shift-invariant, so with an offset OFF = K*alpha (a multiple of
+alpha, K chosen so V = v + OFF >= 0 for every reachable v) we have
+    round_half_up(v/alpha) = round_half_up(V/alpha) - K.
+For NON-NEGATIVE V, ties-up and ties-away coincide, so round_half_up(V/alpha) =
+floor((2V + alpha)/(2 alpha)) is realized by the classic magic reciprocal
+    RECIP = ceil(2^SHIFT / (2 alpha)),   floor(P/(2 alpha)) == (P*RECIP) >> SHIFT.
+Folding both the +alpha tie bias and the 2*OFF*RECIP offset into a single
+constant ROUND_BIAS = alpha*RECIP + 2*OFF*RECIP, the C kernel is just
+    q = (2*v*RECIP + ROUND_BIAS) >> SHIFT;   res = q - ROUND_K;     (ROUND_K = K)
+with NO sign mask / abs / re-sign (the shifted operand 2*v*RECIP + ROUND_BIAS =
+2*V*RECIP + alpha*RECIP is always >= 0 because V >= 0, so the arithmetic shift is
+an exact floor).  We PROVE the kernel exact for every v in (-2^20, 2^20) against
+Python's round_half_up, and SHIFT is the smallest shift that is (i) exact over
+that range and (ii) keeps 2*(2^20-1)*RECIP + ROUND_BIAS < 2^63 (the int64
+product bound).
 
 alpha_h (1024/1024/2048) is a power of two -> highbits is a +alpha_h/2 bias then
 a right shift by LOG2_ALPHA_H; no magic needed (emitted as a sanity static
@@ -48,32 +54,33 @@ import os
 VMAX = 1 << 20  # prove exact for |v| < 2^20 (>> any reachable response coeff)
 
 
-def round_half_away(v, alpha):
-    """Round v/alpha to nearest, ties away from zero, for v >= 0 integer."""
-    # floor((2v + alpha) / (2 alpha))
+def round_half_up(v, alpha):
+    """Round v/alpha to nearest, ties toward +inf, for any signed integer v.
+    floor((2v + alpha) / (2 alpha)) with Python floor-division (handles v<0)."""
     return (2 * v + alpha) // (2 * alpha)
 
 
 def find_magic(alpha):
-    """Return (RECIP, SHIFT, ROUND_BIAS) s.t. for all 0<=v<VMAX,
-    (2*v*RECIP + ROUND_BIAS) >> SHIFT == round_half_away(v, alpha),
-    with the product staying < 2^63."""
+    """Return (RECIP, SHIFT, ROUND_BIAS, ROUND_K) s.t. for all v in
+    (-VMAX, VMAX),  ((2*v*RECIP + ROUND_BIAS) >> SHIFT) - ROUND_K
+    == round_half_up(v, alpha), with the int64 product staying < 2^63."""
     D = 2 * alpha
-    Pmax = 2 * (VMAX - 1) + alpha
+    K = (VMAX + alpha - 1) // alpha   # ceil(VMAX/alpha): OFF = K*alpha >= VMAX
+    off = K * alpha
     for shift in range(16, 62):
-        recip = (1 << shift) // D + 1  # ceil(2^shift / D)
-        bias = alpha * recip
-        # int64 safety: max operand 2*(VMAX-1)*recip + bias must be < 2^63
+        recip = (1 << shift) // D + 1  # ceil(2^shift / (2*alpha))
+        bias = alpha * recip + 2 * off * recip  # +alpha/2 tie bias + offset fold
+        # int64 safety: max operand at v = VMAX-1 must be < 2^63
         if 2 * (VMAX - 1) * recip + bias >= (1 << 63):
             continue
         ok = True
-        # exhaustive check over the reachable range
-        for v in range(0, VMAX):
-            if ((2 * v * recip + bias) >> shift) != round_half_away(v, alpha):
+        # exhaustive check over the reachable signed range
+        for v in range(-(VMAX - 1), VMAX):
+            if (((2 * v * recip + bias) >> shift) - K) != round_half_up(v, alpha):
                 ok = False
                 break
         if ok:
-            return recip, shift, bias
+            return recip, shift, bias, K
     raise RuntimeError(f"no magic found for alpha={alpha}")
 
 
@@ -99,17 +106,21 @@ def main():
 
     lines = []
     log = []
-    log.append("gen_rounding.py -- CompressY ties-away magic reciprocals")
-    log.append(f"Exhaustively verified exact for 0 <= |v| < 2^20 = {VMAX}.")
-    log.append("Kernel: qabs = (2*|v|*RECIP + ROUND_BIAS) >> SHIFT")
-    log.append("        == round_half_away(|v|, alpha) = floor((2|v|+alpha)/(2 alpha))")
+    log.append("gen_rounding.py -- CompressY round-half-up magic reciprocals")
+    log.append(f"Exhaustively verified exact for v in (-2^20, 2^20) = (-{VMAX},{VMAX}).")
+    log.append("Kernel: q = (2*v*RECIP + ROUND_BIAS) >> SHIFT;  res = q - ROUND_K")
+    log.append("        == round_half_up(v, alpha) = floor((2v+alpha)/(2 alpha))")
+    log.append("Shift-invariant (ties toward +inf): restores the CompressY")
+    log.append("translation identity CompressY(y+alpha*x)=CompressY(y)+x for all alpha.")
     log.append("")
 
     lines.append("/* rounding_consts.h -- AUTO-GENERATED by tools/gen_rounding.py.")
-    lines.append(" * Division-free round-to-nearest (ties away from zero) magic")
+    lines.append(" * Division-free round-to-nearest (ties UP, toward +inf) magic")
     lines.append(" * reciprocals for CompressY (alpha_1/alpha_s/alpha_e) + the alpha_h")
-    lines.append(" * highbits shift.  Verified exact for |v| < 2^20.  DO NOT hand-edit;")
-    lines.append(" * regenerate via `python3 tools/gen_rounding.py`. */")
+    lines.append(" * highbits shift.  Round-half-up is SHIFT-INVARIANT, so it preserves")
+    lines.append(" * the CompressY translation identity for every divisor (round-half-")
+    lines.append(" * away broke it on even divisors).  Verified exact for |v| < 2^20.")
+    lines.append(" * DO NOT hand-edit; regenerate via `python3 tools/gen_rounding.py`. */")
     lines.append("#ifndef SHUTTLE_ROUNDING_CONSTS_H")
     lines.append("#define SHUTTLE_ROUNDING_CONSTS_H")
     lines.append("")
@@ -123,14 +134,16 @@ def main():
         log.append(f"=== SHUTTLE-{mode} ===")
         lines.append(f"#if SHUTTLE_MODE == {mode}")
         for name, alpha in (("1", a1), ("S", asec), ("E", ae)):
-            recip, shift, bias = find_magic(alpha)
+            recip, shift, bias, koff = find_magic(alpha)
             log.append(f"  alpha_{name} = {alpha}: RECIP={recip} SHIFT={shift} "
-                       f"ROUND_BIAS={bias}  (2*alpha={2*alpha})")
+                       f"ROUND_BIAS={bias} ROUND_K={koff}  (2*alpha={2*alpha})")
             lines.append(f"#    define RCP_ALPHA_{name} INT64_C({recip}) "
                          f"/* alpha={alpha}: ceil(2^{shift}/(2*alpha)) */")
             lines.append(f"#    define SH_ROUND_{name} {shift}")
             lines.append(f"#    define ROUND_BIAS_{name} INT64_C({bias}) "
-                         f"/* = alpha*RECIP (folds the +alpha/2 tie bias) */")
+                         f"/* alpha*RECIP (+alpha/2 tie) + 2*K*alpha*RECIP (offset) */")
+            lines.append(f"#    define ROUND_K_{name} INT32_C({koff}) "
+                         f"/* offset quotient K = ceil(2^20/alpha) */")
         lh = log2_exact(ALPHA_H[mode])
         lines.append(f"#    define LOG2_ALPHA_H {lh} /* alpha_h={ALPHA_H[mode]} = 1<<{lh} */")
         lines.append("#endif")

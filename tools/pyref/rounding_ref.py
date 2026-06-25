@@ -30,7 +30,7 @@ def _parse_round_consts(mode):
         m = int(blocks[i])
         body = blocks[i + 1]
         d = {}
-        for name, val in re.findall(r"#\s*define\s+(\w+)\s+(?:INT64_C\()?(-?\d+)\)?", body):
+        for name, val in re.findall(r"#\s*define\s+(\w+)\s+(?:INT(?:32|64)_C\()?(-?\d+)\)?", body):
             d[name] = int(val)
         out[m] = d
     return out[mode]
@@ -55,19 +55,21 @@ class Rounding:
         self.ALPHA_S = self.p["ALPHA_S"]
         self.ALPHA_E = self.p["ALPHA_E"]
         rc = _parse_round_consts(set_id)
-        self.RCP_1, self.SH_1, self.BIAS_1 = rc["RCP_ALPHA_1"], rc["SH_ROUND_1"], rc["ROUND_BIAS_1"]
-        self.RCP_S, self.SH_S, self.BIAS_S = rc["RCP_ALPHA_S"], rc["SH_ROUND_S"], rc["ROUND_BIAS_S"]
-        self.RCP_E, self.SH_E, self.BIAS_E = rc["RCP_ALPHA_E"], rc["SH_ROUND_E"], rc["ROUND_BIAS_E"]
+        self.RCP_1, self.SH_1, self.BIAS_1, self.K_1 = (
+            rc["RCP_ALPHA_1"], rc["SH_ROUND_1"], rc["ROUND_BIAS_1"], rc["ROUND_K_1"])
+        self.RCP_S, self.SH_S, self.BIAS_S, self.K_S = (
+            rc["RCP_ALPHA_S"], rc["SH_ROUND_S"], rc["ROUND_BIAS_S"], rc["ROUND_K_S"])
+        self.RCP_E, self.SH_E, self.BIAS_E, self.K_E = (
+            rc["RCP_ALPHA_E"], rc["SH_ROUND_E"], rc["ROUND_BIAS_E"], rc["ROUND_K_E"])
         self.LOG2_ALPHA_H = rc["LOG2_ALPHA_H"]
 
     # ---- internal helpers (rounding.c) ----
-    def _round_div_taway(self, v, recip, shift, bias):
-        """round v/alpha ties-away (magic reciprocal).  Matches C exactly."""
-        m = -1 if v < 0 else 0                     # v>>31
-        av = abs(v)
-        qabs = (2 * av * recip + bias) >> shift
-        q32 = qabs                                 # int32 truncation (fits)
-        return -q32 if m else q32
+    def _round_div_hup(self, v, recip, shift, bias, koff):
+        """round v/alpha half-up toward +inf (magic reciprocal).  Matches C
+        round_div_hup exactly: the shifted operand 2*v*recip+bias is always
+        >= 0, so Python's arithmetic >> is the same floor as the C kernel."""
+        q = (2 * v * recip + bias) >> shift
+        return q - koff
 
     def _bmodpm_pow2(self, v, alpha):
         r = v & (alpha - 1)
@@ -106,12 +108,12 @@ class Rounding:
         p = self.p
         for idx in range(self.KVEC):
             if idx == 0:
-                rcp, sh, bias = self.RCP_1, self.SH_1, self.BIAS_1
+                rcp, sh, bias, koff = self.RCP_1, self.SH_1, self.BIAS_1, self.K_1
             elif idx < 1 + self.ELL:
-                rcp, sh, bias = self.RCP_S, self.SH_S, self.BIAS_S
+                rcp, sh, bias, koff = self.RCP_S, self.SH_S, self.BIAS_S, self.K_S
             else:
-                rcp, sh, bias = self.RCP_E, self.SH_E, self.BIAS_E
-            out.append([self._round_div_taway(v, rcp, sh, bias) for v in inp[idx]])
+                rcp, sh, bias, koff = self.RCP_E, self.SH_E, self.BIAS_E, self.K_E
+            out.append([self._round_div_hup(v, rcp, sh, bias, koff) for v in inp[idx]])
         return out
 
     def stretch_s(self, inp):
@@ -281,8 +283,18 @@ class Rounding:
 def _selftest():
     for s in (128, 256, 512):
         r = Rounding(s)
-        # round_div_taway: nearest ties-away on a few probes.
-        assert r._round_div_taway(0, r.RCP_1, r.SH_1, r.BIAS_1) == 0
+        # round_div_hup: round-half-up on a few probes (0->0; the half-up tie
+        # +alpha/2 -> +1, -alpha/2 -> 0; and the translation identity holds).
+        assert r._round_div_hup(0, r.RCP_1, r.SH_1, r.BIAS_1, r.K_1) == 0
+        half = r.ALPHA_1 // 2
+        if r.ALPHA_1 % 2 == 0:
+            assert r._round_div_hup(half, r.RCP_1, r.SH_1, r.BIAS_1, r.K_1) == 1
+            assert r._round_div_hup(-half, r.RCP_1, r.SH_1, r.BIAS_1, r.K_1) == 0
+        # translation identity: round((v+alpha*x)/alpha) == round(v/alpha)+x.
+        cy = r.compress_y([[v for v in range(-200, 200)]] * r.KVEC)
+        cyx = r.compress_y([[v + r.ALPHA_1 * 3 for v in range(-200, 200)]]
+                           + [[v for v in range(-200, 200)]] * (r.KVEC - 1))
+        assert all(cyx[0][i] == cy[0][i] + 3 for i in range(400))
         # lift parity: result parity matches the bit b.
         for xbar in (0, 1, 5, r.Q - 1):
             for b in (0, 1):
@@ -291,8 +303,8 @@ def _selftest():
         # highbits in [0, HH)
         for x in (0, r.Q, 2 * r.Q - 1):
             assert 0 <= r.highbits_reduced(x) < r.HH
-    print("rounding_ref.py self-test: round_div_taway(0)=0, lift parity, "
-          "highbits in [0,HH) (3 sets)")
+    print("rounding_ref.py self-test: round_div_hup(0)=0 + half-up ties + "
+          "translation identity, lift parity, highbits in [0,HH) (3 sets)")
     return 0
 
 

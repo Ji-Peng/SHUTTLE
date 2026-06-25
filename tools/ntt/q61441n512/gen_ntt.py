@@ -388,7 +388,9 @@ def emit_consts(path):
                 "   Twiddles use the Seiler precompute: each butterfly stores zl=z*qinv\n"
                 "   mod 2^16 then zh=z, as two consecutive 16-lane vectors. */\n\n" % (Q, N))
         f.write("const int16_t ntt_qdata[48] __attribute__((aligned(32))) = {\n")
-        f.write("  " + ",".join([str(Q)]*16) + ",  /* _16XQ    */\n")
+        # q=61441 does not fit a signed int16; emit its int16 two's-complement
+        # value (identical 16-bit pattern, no -Woverflow on the literal).
+        f.write("  " + ",".join([str(s16(Q))]*16) + ",  /* _16XQ    */\n")
         f.write("  " + ",".join([str(RMQ)]*16) + ",  /* _16XRMQ  */\n")
         f.write("  " + ",".join(["0"]*16) + "   /* _16XZERO */\n};\n\n")
         f.write(pair32("ntt_ninv", NINV_TOMONT) + "\n")

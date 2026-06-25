@@ -10,11 +10,13 @@
  * arithmetic with NO hardware idiv / `% const` / floating point.
  *
  * The CompressY round-to-nearest magic reciprocals (RCP_ALPHA_* /
- * SH_ROUND_* / ROUND_BIAS_*) and the LOG2_ALPHA_H shift come from the
- * reproducible generator tools/gen_rounding.py (header
+ * SH_ROUND_* / ROUND_BIAS_* / ROUND_K_*) and the LOG2_ALPHA_H shift come from
+ * the reproducible generator tools/gen_rounding.py (header
  * tools/rounding_consts.h, included via -I../tools); they reproduce exact
- * integer round-to-nearest-ties-away over the full reachable |v| < 2^20
- * range (proven exhaustively by the generator).
+ * integer round-to-nearest-ties-UP (toward +inf) over the full reachable
+ * |v| < 2^20 range (proven exhaustively by the generator).  Ties-up is
+ * SHIFT-INVARIANT so CompressY(y+StretchS(x)) = CompressY(y)+x holds for every
+ * divisor; ties-away broke that identity on even divisors.
  */
 #include "rounding.h"
 
@@ -32,26 +34,26 @@
  * ======================================================================
  */
 
-/* round_div_taway: round v/alpha to nearest, TIES AWAY FROM ZERO, with the
- * per-divisor magic reciprocal (recip, shift, bias) so no hardware divide
- * touches secret data.  RND note (rounding.h / gen_rounding.py):
- *   m    = v >> 31              arithmetic sign mask (-1 if v<0)
- *   av   = (v ^ m) - m          |v|
- *   qabs = (2*av*recip + bias) >> shift  == floor((2|v|+alpha)/(2 alpha))
- *                                        == round_half_away(|v|, alpha)
- *   res  = (qabs ^ m) - m       re-sign
- * The +alpha bias (= alpha*recip, folded into `bias`) realizes the
- * ties-away half-integer rule symmetrically about zero.  recip*2*av+bias <
- * 2^63 by the generator's int64-safety check, so the product is computed
- * in int64. */
-static int32_t round_div_taway(int32_t v, int64_t recip, int shift,
-                               int64_t bias)
+/* round_div_hup: round v/alpha to nearest, TIES UP (toward +inf), with the
+ * per-divisor magic reciprocal (recip, shift, bias, koff) so no hardware
+ * divide touches secret data.  Round-half-up is SHIFT-INVARIANT, which the
+ * CompressY commitment-reconstruction identity requires (round-half-away was
+ * NOT shift-invariant and broke the identity on even divisors -- see
+ * rounding.h / gen_rounding.py).  v is offset into the non-negative domain
+ * (where ties-up == ties-away) by K*alpha, folded into `bias`; the proven
+ * unsigned round is applied, then K is subtracted:
+ *   q   = (2*v*recip + bias) >> shift  == round_half_up(v/alpha) + K
+ *   res = q - koff                     == round_half_up(v/alpha)
+ * The shifted operand 2*v*recip+bias = 2*(v+K*alpha)*recip + alpha*recip is
+ * always >= 0 (v+K*alpha >= 0 for every reachable v), so the arithmetic shift
+ * is an exact floor and NO sign mask / abs / re-sign is needed.
+ * 2*v*recip+bias < 2^63 by the generator's int64-safety check, so the product
+ * is computed in int64. */
+static int32_t round_div_hup(int32_t v, int64_t recip, int shift, int64_t bias,
+                             int32_t koff)
 {
-    int32_t m = v >> 31; /* -1 if v<0, else 0          */
-    uint32_t av = ((uint32_t)v ^ (uint32_t)m) - (uint32_t)m; /* |v|     */
-    int64_t qabs = (2 * (int64_t)av * recip + bias) >> shift;
-    int32_t q32 = (int32_t)qabs;
-    return (q32 ^ m) - m; /* re-sign */
+    int64_t q = (2 * (int64_t)v * recip + bias) >> shift;
+    return (int32_t)q - koff;
 }
 
 /* bmodpm_pow2: centered representative mod a power-of-two alpha (2 or 4),
@@ -136,27 +138,28 @@ void poly_lift_to_mod2q(poly *x, const poly *xbar, const poly *bpar)
  * index (compile-time: block 0 is poly index 0, block s is 1..ELL, block e
  * is 1+ELL..KVEC-1), NOT by any coefficient value. */
 static void compress_block(poly *out, const poly *in, int64_t recip,
-                           int shift, int64_t bias)
+                           int shift, int64_t bias, int32_t koff)
 {
     unsigned i;
     for (i = 0; i < N; ++i)
         out->coeffs[i] =
-            round_div_taway(in->coeffs[i], recip, shift, bias);
+            round_div_hup(in->coeffs[i], recip, shift, bias, koff);
 }
 
 void compress_y(poly out[KVEC], const poly in[KVEC])
 {
     int p;
     /* block 0: alpha_1 */
-    compress_block(&out[0], &in[0], RCP_ALPHA_1, SH_ROUND_1, ROUND_BIAS_1);
+    compress_block(&out[0], &in[0], RCP_ALPHA_1, SH_ROUND_1, ROUND_BIAS_1,
+                   ROUND_K_1);
     /* block s: alpha_s over polys 1..ELL */
     for (p = 1; p < 1 + ELL; ++p)
-        compress_block(&out[p], &in[p], RCP_ALPHA_S, SH_ROUND_S,
-                       ROUND_BIAS_S);
+        compress_block(&out[p], &in[p], RCP_ALPHA_S, SH_ROUND_S, ROUND_BIAS_S,
+                       ROUND_K_S);
     /* block e: alpha_e over polys 1+ELL..KVEC-1 */
     for (p = 1 + ELL; p < KVEC; ++p)
-        compress_block(&out[p], &in[p], RCP_ALPHA_E, SH_ROUND_E,
-                       ROUND_BIAS_E);
+        compress_block(&out[p], &in[p], RCP_ALPHA_E, SH_ROUND_E, ROUND_BIAS_E,
+                       ROUND_K_E);
 }
 
 void stretch_s(poly out[KVEC], const poly in[KVEC])
