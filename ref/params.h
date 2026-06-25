@@ -84,7 +84,9 @@
 #    define Q 59393    /* tab:suf-parameters: prime modulus q            */
 #    define ELL 3      /* tab:suf-parameters: components of s (ell)      */
 #    define EM 2       /* tab:suf-parameters: components of e (m)        */
-#    define TAU 114    /* tab:suf-parameters: challenge Hamming weight   */
+/* TAU: challenge Hamming weight (tab:suf-parameters).  114 -> 115 in the
+ * 2026-06-25 spec update, lifting binom(1024,TAU) >= 2^512 (SUF-512). */
+#    define TAU 115
 #    define ALPHA_H \
         2048          /* tab:suf-parameters: hint high-bit compression  */
 #    define ALPHA_B 4 /* tab:suf-parameters: pk rounding alpha_b */
