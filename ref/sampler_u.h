@@ -95,9 +95,20 @@ typedef struct {
     uint32_t a;   /* exponent in {1..KAPPA_A+1} = {1..81} (CLZ+1)      */
 } sampler_u_res;
 
+/* SamplerU DECODE (no XOF): map one 18-byte block (10 exponent bytes rho_a
+ * + 8 mantissa bytes rho_b) to ell = (frac_q62 = log2(b), a) via the
+ * MSB-first CLZ80 / mantissa57 extraction (K3) and the ApproxLog kernel.
+ * Touches no ctx, so the byte schedule is owned entirely by the caller's
+ * bulk squeeze. Used by the bulk-buffer IRS path (reject_sample, K2): one
+ * TAU*18 squeeze, then this decode per ascending-j transition. */
+sampler_u_res sampler_u_decode(const uint8_t rho_a[10],
+                               const uint8_t rho_b[8]);
+
 /* SamplerU: squeeze 10 exponent bytes + 8 mantissa bytes from ctx (the IRS
  * 0x09||seed_y stream, K2), extract (a, m) MSB-first (K3), and return
- * (frac_q62 = log2(b), a).  Consumes EXACTLY 18 bytes; updates ctx. */
+ * (frac_q62 = log2(b), a).  Consumes EXACTLY 18 bytes; updates ctx.  Thin
+ * wrapper: squeeze the 18 bytes then sampler_u_decode().  (The bulk IRS
+ * path bypasses this and decodes slices of a single TAU*18 squeeze.) */
 sampler_u_res sampler_u(xof_ctx *ctx);
 
 /* Batch-of-2: draw TWO independent U's, squeezing the 2*(10+8)=36 bytes in

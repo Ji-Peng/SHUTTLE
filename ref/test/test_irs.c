@@ -476,9 +476,23 @@ static void shift_oracle(poly v[KVEC], const poly sk[KVEC], unsigned j)
         }
 }
 
+/* The NEW IRS single-buffer schedule (the bulk-draw optimization): the
+ * whole IRS draws ONE tau*18-byte buffer in a single xof256_squeeze, then
+ * decodes each transition's 18-byte slice (10 exponent + 8 mantissa) in
+ * ascending j. The oracle MUST mirror this byte schedule -- under NGCC it
+ * differs from the old per-transition two-squeeze structure (re-recorded
+ * KAT); under SHA3 the rate-buffered Keccak squeeze makes the two
+ * byte-identical. */
+#define ORACLE_IRS_BULK_BYTES ((size_t)TAU * 18)
+static void irs_oracle_bulk_fill(xof_ctx *ctx, uint8_t *buf)
+{
+    xof256_squeeze(ctx, buf, ORACLE_IRS_BULK_BYTES);
+}
+
 /* Reference RejectSample using the SAME R2LN2_QF/__int128 interval logic
  * but written independently (ascending j, V once, sign-normalize, 15
- * pairs). */
+ * pairs).  Draws the single bulk buffer then slices 18 bytes per
+ * transition. */
 static void reject_sample_oracle(xof_ctx *ctx, poly z[KVEC],
                                  const poly y[KVEC], const poly *c,
                                  const poly sk[KVEC])
@@ -486,6 +500,9 @@ static void reject_sample_oracle(xof_ctx *ctx, poly z[KVEC],
     poly v[KVEC];
     int64_t V = 0;
     unsigned i, k, j;
+    uint8_t buf[ORACLE_IRS_BULK_BYTES];
+    size_t cur = 0;
+    irs_oracle_bulk_fill(ctx, buf);
     for (i = 0; i < KVEC; ++i)
         for (k = 0; k < N; ++k) {
             int64_t cc = sk[i].coeffs[k];
@@ -496,7 +513,9 @@ static void reject_sample_oracle(xof_ctx *ctx, poly z[KVEC],
         if (c->coeffs[j] != 1)
             continue;
         {
-            sampler_u_res ell = sampler_u(ctx);
+            sampler_u_res ell =
+                sampler_u_decode(buf + cur, buf + cur + 10);
+            cur += 18;
             unsigned __int128 prod =
                 (unsigned __int128)TEST_R2LN2_QF *
                 (unsigned __int128)(uint64_t)ell.frac_q62;
@@ -590,6 +609,8 @@ static int test_reject_sample(void)
         poly v[KVEC];
         int64_t V = 0;
         xof_ctx cx;
+        uint8_t buf[ORACLE_IRS_BULK_BYTES];
+        size_t cur = 0;
         memset(cp, 0, sizeof cp);
         for (i = 0; i < KVEC; ++i)
             for (k = 0; k < N; ++k) {
@@ -598,11 +619,14 @@ static int test_reject_sample(void)
             }
         memcpy(acc, y, KVEC * sizeof(poly));
         irs_ctx_init(&cx, seed_y);
+        irs_oracle_bulk_fill(&cx, buf);
         for (j = 0; j < N; ++j) {
             if (c.coeffs[j] != 1)
                 continue;
             {
-                sampler_u_res ell = sampler_u(&cx);
+                sampler_u_res ell =
+                    sampler_u_decode(buf + cur, buf + cur + 10);
+                cur += 18;
                 unsigned __int128 prod =
                     (unsigned __int128)TEST_R2LN2_QF *
                     (unsigned __int128)(uint64_t)ell.frac_q62;

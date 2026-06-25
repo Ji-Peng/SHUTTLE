@@ -74,6 +74,18 @@ KAT_XOF  = $(XOF_SRCS)
 NWAY_XOF = symmetric_avx512.c drng_avx512.c auxfunc_avx512.c
 endif
 
+# IRS single-buffer bulk fill (irs.c) N-way SM3 core.  Under NGCC the avx512
+# irs.c (USE_AVX512_XOF_NWAY) calls sm3hash_avx512 (auxfunc_avx512.c) for the
+# bulk tau*18 DRBG generate, so any irs.c-linking test that does NOT already
+# pull polyvec.c (-> NWAY_XOF) needs auxfunc_avx512.c on its own.  Under SHA3
+# the irs.c bulk fill is the plain scalar xof256_squeeze (N-way path #if'd
+# out), so no extra source is required.
+ifeq ($(MODE),SHA3)
+IRS_NWAY_SRC =
+else
+IRS_NWAY_SRC = auxfunc_avx512.c
+endif
+
 # Per-test source lists (POSIX-sh strings).  Identical scalar source lists to
 # ref/Makefile; poly_ntt.c resolves to the AVX-512 SIMD shim fork here, and the
 # build loop appends the per-mode vendored avx512 asm whenever poly_ntt.c (or
@@ -87,7 +99,7 @@ SH_SRCS = \
 'test_sampler=sampler.c reduce.c' \
 'test_approx=approx_exp.c approx_log.c' \
 "test_samplers=polyvec.c sampler.c reduce.c approx_exp.c approx_log.c $(XOF_SRCS)" \
-"test_irs=irs.c sampler_u.c approx_exp.c approx_log.c reduce.c $(XOF_SRCS)" \
+"test_irs=irs.c sampler_u.c approx_exp.c approx_log.c reduce.c $(XOF_SRCS) $(IRS_NWAY_SRC)" \
 'test_rounding=rounding.c reduce.c poly.c poly_ntt.c packing.c rans.c' \
 'test_rans=packing.c poly.c reduce.c rans.c' \
 "test_sign=sign.c polyvec.c sampler.c sampler_u.c irs.c rounding.c packing.c poly.c poly_ntt.c reduce.c rans.c approx_exp.c approx_log.c $(XOF_SRCS)" \
@@ -105,9 +117,9 @@ NTTGEN   = ../tools/ntt
 
 # Recorded canonical KAT hashes (shared: ref == avx2 == avx512; the M6 gate).
 # IDENTICAL to ref/Makefile; re-record in lock-step on output-changing diffs.
-KAT_128_NGCC = 13849130264003953529
-KAT_256_NGCC = 12856937526430209591
-KAT_512_NGCC = 641278812500111422
+KAT_128_NGCC = 17804390083148342413
+KAT_256_NGCC = 18125615567653405523
+KAT_512_NGCC = 13850870419650967009
 KAT_128_SHA3 = 17067083752221901810
 KAT_256_SHA3 = 16770893027166717173
 KAT_512_SHA3 = 17781375582284641253

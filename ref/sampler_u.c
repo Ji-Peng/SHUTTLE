@@ -128,10 +128,18 @@ static void mantissa_split(uint64_t m, uint32_t *j, uint64_t *x_q64)
              << SAMPLER_U_XQ_SHIFT; /* (m mod 2^55) << 9 */
 }
 
-sampler_u_res sampler_u(xof_ctx *ctx)
+/*
+ * sampler_u_decode -- the PURE (no-XOF) SamplerU decode of one 18-byte
+ * block (10 exponent bytes rho_a + 8 mantissa bytes rho_b) into ell = (a,
+ * frac_q62). Factored out of sampler_u() so the bulk-buffer IRS path
+ * (reject_sample, K2) can squeeze the whole TAU*18 stream ONCE and decode
+ * each transition's 18-byte slice here, with NO byte-cursor dependence on
+ * the call structure.  This is the decode oracle shared by
+ * ref/avx2/avx512: it touches no ctx, so the bytes are pinned entirely by
+ * the (public-length) bulk squeeze upstream. */
+sampler_u_res sampler_u_decode(const uint8_t rho_a[SAMPLER_U_RHO_A_BYTES],
+                               const uint8_t rho_b[SAMPLER_U_RHO_B_BYTES])
 {
-    uint8_t rho_a[SAMPLER_U_RHO_A_BYTES];
-    uint8_t rho_b[SAMPLER_U_RHO_B_BYTES];
     sampler_u_res r;
     uint64_t m;
     uint32_t j;
@@ -139,11 +147,6 @@ sampler_u_res sampler_u(xof_ctx *ctx)
 
     {
         PROF_START(t_su);
-        xof256_squeeze(ctx, rho_a,
-                       SAMPLER_U_RHO_A_BYTES); /* 10 exponent bytes  */
-        xof256_squeeze(ctx, rho_b,
-                       SAMPLER_U_RHO_B_BYTES); /* 8 mantissa bytes   */
-
         r.a = clz80_msb_first(rho_a) + 1u; /* a in {1..81} */
         m = mantissa57_msb_first(rho_b);   /* m in {0..2^57-1}   */
         mantissa_split(m, &j, &xq);
@@ -155,6 +158,18 @@ sampler_u_res sampler_u(xof_ctx *ctx)
         PROF_STOP(PT_APPROXLOG, t_al);
     }
     return r;
+}
+
+sampler_u_res sampler_u(xof_ctx *ctx)
+{
+    uint8_t rho_a[SAMPLER_U_RHO_A_BYTES];
+    uint8_t rho_b[SAMPLER_U_RHO_B_BYTES];
+
+    xof256_squeeze(ctx, rho_a,
+                   SAMPLER_U_RHO_A_BYTES); /* 10 exponent bytes  */
+    xof256_squeeze(ctx, rho_b,
+                   SAMPLER_U_RHO_B_BYTES); /* 8 mantissa bytes   */
+    return sampler_u_decode(rho_a, rho_b);
 }
 
 void sampler_u_x2(xof_ctx *ctx, sampler_u_res out[2])

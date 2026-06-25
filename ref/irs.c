@@ -30,6 +30,181 @@
 #include "sampler_u.h"
 #include "symmetric.h"
 
+/* ===================================================================== *
+ *  IRS SINGLE-BUFFER PRNG SCHEDULE (the bulk-draw optimization)         *
+ * ===================================================================== *
+ *
+ * RejectSample is rejection-FREE: it runs EXACTLY tau transitions (irs.h),
+ * each consuming a FIXED 18 bytes (10 exponent + 8 mantissa, K3).  So the
+ * IRS needs EXACTLY tau*18 bytes off the 0x09||seed_y stream
+ * (756/1044/2052 for SHUTTLE-128/256/512), DETERMINISTIC and PUBLIC in
+ * length.
+ *
+ * Schedule: draw the WHOLE tau*18-byte buffer in ONE xof256_squeeze, then
+ * decode each transition's 18-byte slice (ascending j) via
+ * sampler_u_decode. This replaces the old per-transition two-squeeze (10
+ * then 8) structure.
+ *
+ *  - Under SHA3_MODE the Keccak squeeze is a continuous rate-buffered
+ *    stream, so the bulk tau*18 squeeze is BYTE-IDENTICAL to tau pairs of
+ *    (squeeze 10, squeeze 8): the SHA3 IRS KAT is UNCHANGED by this
+ * change.
+ *  - Under NGCC_MODE each xof256_squeeze is one SM3 Hash-DRBG generate (a
+ *    full SM3 block round + a 55-byte state update); the old path did
+ * tau*2 generates (32 B produced / 18 used per transition, 44% waste), the
+ * new path does ONE generate of ceil(tau*18/32) blocks (no per-transition
+ *    state update, ~no waste).  The byte stream therefore CHANGES -- the
+ *    NGCC IRS KAT is RE-RECORDED (authorized).
+ *
+ * The avx2/avx512 backends fill the SAME tau*18 buffer N-way and
+ * BYTE-EXACT to this scalar bulk squeeze (see irs_bulk_fill below).
+ */
+#define IRS_BLOCK_BYTES 18 /* 10 exponent + 8 mantissa (K3) */
+#define IRS_BULK_BYTES ((size_t)TAU * IRS_BLOCK_BYTES)
+/* SM3-DRBG blocks for the bulk fill: ceil(tau*18 / 32) (24/33/65 for the
+ * three sets).  Bounds the per-block message/digest scratch arrays. */
+#define IRS_BULK_MAX_BLOCKS (((size_t)TAU * IRS_BLOCK_BYTES + 31) / 32)
+_Static_assert(IRS_BLOCK_BYTES == 18, "SamplerU block is 18 bytes");
+
+/* ---- N-way bulk DRBG fill (NGCC only; behind USE_AVX2/AVX512_XOF_NWAY)
+ * --
+ *
+ * A single scalar NGCC xof256_squeeze(ctx, buf, L) == one
+ * SM3_DRNG_Generate: it emits m = ceil(L/32) blocks  SM3(V+0), SM3(V+1),
+ * ..., SM3(V+m-1)  (each the SM3 hash of the 55-byte working state V
+ * incremented i times), copies the first L bytes out (the tail block is
+ * truncated; L is a whole number of bytes here so no partial-byte mask
+ * fires, K3), THEN advances the state once by  V <- V + SM3(0x03||V) + C +
+ * reseed_counter ; reseed_counter++.
+ *
+ * The m blocks are INDEPENDENT SM3 compressions of distinct 55-byte
+ * messages (V+i), so they map directly onto the 8-way sm3hash_avx2 /
+ * 16-way sm3hash_avx512 cores (same length per lane).  We compute them
+ * N-way, splice them into buf, and do the SINGLE scalar state update
+ * verbatim -- producing bytes BIT-IDENTICAL to the scalar
+ * get_random_number.  Validated by the ref==avx2==avx512 KAT gate. */
+#if !defined(SHA3_MODE) &&                                \
+    ((defined(USE_AVX2_XOF_NWAY) && defined(__AVX2__)) || \
+     (defined(USE_AVX512_XOF_NWAY) && defined(__AVX512F__)))
+#    define IRS_NWAY_BULK 1
+#    include "drng.h" /* SEEDLEN, DRNG_ctx layout (== xof_ctx under NGCC) */
+#    if defined(USE_AVX512_XOF_NWAY) && defined(__AVX512F__)
+#        include "auxfunc_avx512.h" /* sm3hash_avx512 (16-way) */
+#        define IRS_SM3_NWAY SM3_WAY_AVX512
+#        define irs_sm3hash_nway sm3hash_avx512
+#    else
+#        include "auxfunc_avx2.h" /* sm3hash_avx2 (8-way) */
+#        define IRS_SM3_NWAY SM3_WAY_AVX2
+#        define irs_sm3hash_nway sm3hash_avx2
+#    endif
+
+#    define IRS_SM3_OUTLEN 32
+
+/* big-endian byte-array increment (BN[len-1] is the LSB), matching drng.c.
+ */
+static void irs_inc_bn(unsigned char *bn, size_t len)
+{
+    for (; len != 0; len--) {
+        bn[len - 1] += 1;
+        if (bn[len - 1])
+            break;
+    }
+}
+
+/* four-way big-number add  bn1 <- bn1 + bn2 + bn3 + bn4  (mod 2^(8*len)),
+ * matching drng.c plus_Big_Number (the single per-generate state update).
+ */
+static void irs_plus_bn(unsigned char *bn1, const unsigned char *bn2,
+                        const unsigned char *bn3, const unsigned char *bn4,
+                        size_t len)
+{
+    unsigned int sum;
+    unsigned char carry = 0;
+    for (; len != 0; len--) {
+        sum = (unsigned int)bn1[len - 1] + bn2[len - 1] + bn3[len - 1] +
+              bn4[len - 1] + carry;
+        carry = (unsigned char)(sum / (0xFFU + 1));
+        bn1[len - 1] = (unsigned char)(sum & 0xFFU);
+    }
+}
+
+/* N-way bulk generate of L (<= IRS_BULK_BYTES) bytes off the NGCC DRBG
+ * ctx, byte-exact to the scalar get_random_number(ctx, buf, L*8). */
+static void irs_bulk_fill_nway(xof_ctx *ctx, uint8_t *buf, size_t L)
+{
+    DRNG_ctx *drng = (DRNG_ctx *)ctx;
+    const size_t m = (L + IRS_SM3_OUTLEN - 1) / IRS_SM3_OUTLEN;
+    /* per-block incremented-V messages (V, V+1, ..., V+m-1) and digests.
+     */
+    unsigned char data[IRS_BULK_MAX_BLOCKS][SEEDLEN];
+    unsigned char dgst[IRS_BULK_MAX_BLOCKS][IRS_SM3_OUTLEN];
+    const unsigned char *mp[IRS_SM3_NWAY];
+    unsigned char *dp[IRS_SM3_NWAY];
+    unsigned char padded_V[1 + SEEDLEN];
+    unsigned char H[SEEDLEN];
+    size_t i, b, off;
+
+    /* build the m messages V+i (cheap scalar; SEEDLEN=55 bytes each). */
+    memcpy(data[0], drng->V, SEEDLEN);
+    for (i = 1; i < m; i++) {
+        memcpy(data[i], data[i - 1], SEEDLEN);
+        irs_inc_bn(data[i], SEEDLEN);
+    }
+
+    /* hash all m blocks N-way (pad the trailing lanes with block 0). */
+    for (b = 0; b < m; b += IRS_SM3_NWAY) {
+        unsigned k;
+        for (k = 0; k < IRS_SM3_NWAY; k++) {
+            size_t idx = b + k;
+            mp[k] = (idx < m) ? data[idx] : data[0]; /* spare lane = V */
+            dp[k] =
+                (idx < m) ? dgst[idx] : dgst[0]; /* spare lane = blk0 */
+        }
+        irs_sm3hash_nway(mp, (unsigned long long)SEEDLEN * 8, dp);
+    }
+
+    /* splice the digests into buf (tail block truncated; L whole bytes).
+     */
+    for (i = 0, off = 0; i < m; i++) {
+        size_t take =
+            (L - off >= IRS_SM3_OUTLEN) ? IRS_SM3_OUTLEN : L - off;
+        memcpy(buf + off, dgst[i], take);
+        off += take;
+    }
+
+    /* the SINGLE state update: V <- V + SM3(0x03||V) + C + ctr; ctr++.
+     * SM3(0x03||V) is one scalar SM3 (cheap); reuse dgst[0] as scratch. */
+    padded_V[0] = 0x03;
+    memcpy(padded_V + 1, drng->V, SEEDLEN);
+    {
+        const unsigned char *m1[IRS_SM3_NWAY];
+        unsigned char *d1[IRS_SM3_NWAY];
+        unsigned k;
+        for (k = 0; k < IRS_SM3_NWAY; k++) {
+            m1[k] = padded_V;
+            d1[k] =
+                dgst[k % m]; /* any valid scratch; lane 0 is the result */
+        }
+        irs_sm3hash_nway(m1, (unsigned long long)(1 + SEEDLEN) * 8, d1);
+    }
+    memset(H, 0, sizeof(H));
+    memcpy(H + (SEEDLEN - IRS_SM3_OUTLEN), dgst[0], IRS_SM3_OUTLEN);
+    irs_plus_bn(drng->V, H, drng->C, drng->reseed_counter, SEEDLEN);
+    irs_inc_bn(drng->reseed_counter, SEEDLEN);
+}
+#endif /* IRS_NWAY_BULK */
+
+/* Fill the tau*18 IRS PRNG buffer.  Scalar/SHA3: one xof256_squeeze.  NGCC
+ * avx2/avx512: the N-way bulk DRBG generate (byte-exact to the scalar). */
+static void irs_bulk_fill(xof_ctx *ctx, uint8_t *buf, size_t L)
+{
+#if defined(IRS_NWAY_BULK)
+    irs_bulk_fill_nway(ctx, buf, L);
+#else
+    xof256_squeeze(ctx, buf, L);
+#endif
+}
+
 /* The u-vs-boundary comparison and the 2 r^2 ln2 multiply use GNU __int128
  * (a GCC/Clang extension ISO C does not define; -Wpedantic flags it).
  * Localize the suppression to this TU's __int128 use, exactly as P06 did.
@@ -235,6 +410,12 @@ void reject_sample(xof_ctx *ctx, poly z[KVEC], const poly y[KVEC],
     poly v[KVEC];
     int64_t V;
     unsigned j;
+    /* ONE bulk PRNG buffer for the whole IRS (tau*18 bytes, deterministic
+     * and public in length).  Drawn once, sliced 18 bytes per transition.
+     */
+    uint8_t buf[IRS_BULK_BYTES];
+    size_t cur =
+        0; /* byte cursor into buf; advances by 18 per transition */
 
     /* z <- y  (copy; y may alias z safely after this). */
     memcpy(z, y, KVEC * sizeof(poly));
@@ -242,23 +423,29 @@ void reject_sample(xof_ctx *ctx, poly z[KVEC], const poly y[KVEC],
     /* V = <sk_tilde, sk_tilde>, computed ONCE (isometry, K5). */
     V = sk_tilde_norm2(sk_tilde);
 
+    /* Draw the ENTIRE IRS randomness in one shot (K2 single 0x09 ctx). The
+     * buffer length tau*18 is PUBLIC (tau is the challenge weight), so the
+     * single squeeze is over a data-independent length -- no
+     * secret-dependent squeeze count.  Backends fill this N-way and
+     * byte-exact (irs_bulk_fill).
+     */
+    irs_bulk_fill(ctx, buf, IRS_BULK_BYTES);
+
     /*
      * Strict ascending traversal j = 0..n-1, transition iff c[j] == 1
      * (K5). c is PUBLIC, so this branch is a whitelisted public-data
-     * branch (irs.h leakage note).  Each matching j draws ONE SamplerU
-     * value off ctx, in ascending-j order, so the squeeze schedule is
-     * pinned by ascending j.
-     *
-     * The SamplerU draw of transition k is independent of the SECOND
-     * draw's value, so consecutive matching j's could be x2-batched
-     * (sampler_u_x2, S9); the from-scratch scalar path here is the KAT
-     * reference -- the x2 pairing is wired and proven bit-identical in
-     * test_irs.  We keep the scalar per-j path here for the reference
-     * oracle.
+     * branch (irs.h leakage note).  Each matching j consumes the NEXT
+     * 18-byte slice of buf (10 exponent + 8 mantissa) in ascending-j
+     * order, decodes it to ell via sampler_u_decode (no XOF, pure
+     * CLZ/mantissa/ApproxLog), and applies one R transition.  Exactly tau
+     * slices are consumed (rejection-free), so the cursor ends at tau*18
+     * == IRS_BULK_BYTES.
      */
     for (j = 0; j < N; ++j) {
         if (c->coeffs[j] == 1) {
-            sampler_u_res ell = sampler_u(ctx);
+            sampler_u_res ell =
+                sampler_u_decode(buf + cur, buf + cur + 10);
+            cur += IRS_BLOCK_BYTES;
             poly_shift_negacyclic(v, sk_tilde, j); /* v = sk_tilde . X^j */
             R_transition(z, v, V, ell);
         }

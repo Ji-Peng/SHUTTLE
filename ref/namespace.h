@@ -132,6 +132,7 @@
 #    define gauss_finalize SHUTTLE_NAMESPACE(gauss_finalize)
 /* ---- P08 irs / sampler_u group: appended by 08 ---- */
 #    define sampler_u SHUTTLE_NAMESPACE(sampler_u)
+#    define sampler_u_decode SHUTTLE_NAMESPACE(sampler_u_decode)
 #    define sampler_u_x2 SHUTTLE_NAMESPACE(sampler_u_x2)
 #    define reject_sample SHUTTLE_NAMESPACE(reject_sample)
 
