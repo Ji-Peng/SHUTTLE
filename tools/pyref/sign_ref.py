@@ -17,7 +17,8 @@ from ntt_ref import NTT
 from packing_ref import Pack, poly_to_bytes, bytes_to_poly, ct_range_reject
 from rounding_ref import Rounding
 from sampler_ref import cdt_scan96, rcdt_tables
-from gauss_ref import (gauss_chunk, noise_minibatch)
+from gauss_ref import (gauss_chunk, noise_minibatch,
+                       MINIBATCH_RAND_BYTES, NOISE_MINIBATCH_RAND_BYTES)
 from irs_ref import IRS
 import xof_ref
 import rans_ref
@@ -43,14 +44,18 @@ class Shuttle:
         self.rnd = Rounding(set_id)
         self.irs = IRS(set_id)
         self._rcdt = rcdt_tables()
-        # GAUSS_STREAM_BLOCK = MINIBATCH(672) + SIGN_BYTES_PER_CHUNK + 8 + 64
+        # Right-sized per-refill blocks (mirror ref/polyvec.h
+        # gauss_block_bytes): each refill is its OWN single-squeeze ctx, so
+        # the block is the EXACT minimum holding one logical unit -- no
+        # granularity rounding, no +64 slack.  Tag-tuned:
+        #   SampleY (tag 0x08): GAUSS_BLOCK_Y =
+        #       SIGN_BYTES_PER_CHUNK + SIGN_PAD_AVX512(8) + MINIBATCH(672)
+        #   ExpandS (tag 0x03): GAUSS_BLOCK_S = NOISE_MINIBATCH_RAND_BYTES(392)
         kvecn_16 = self.p["KVEC"] * self.p["N"] // 16
         self.SIGN_BYTES_PER_CHUNK = (kvecn_16 + 7) // 8
-        self.GAUSS_STREAM_BLOCK = 672 + self.SIGN_BYTES_PER_CHUNK + 8 + 64
-        # NOISE stream block: NOISE_MINIBATCH_RAND_BYTES is the largest need
-        # for ExpandS (no sign stream); reuse the same GAUSS_STREAM_BLOCK so
-        # the refill granularity matches the C (gs_fill draws the SAME block
-        # size regardless of tag -- it is GAUSS_STREAM_BLOCK in both).
+        self.GAUSS_BLOCK_Y = (self.SIGN_BYTES_PER_CHUNK + 8
+                              + MINIBATCH_RAND_BYTES)
+        self.GAUSS_BLOCK_S = NOISE_MINIBATCH_RAND_BYTES
 
     # ---- XOF helpers ----
     def _xof256_once(self, seed, nbytes):
@@ -114,7 +119,7 @@ class Shuttle:
         Zs, Ze = self._rcdt[sname], self._rcdt[ename]
         for t in range(16):
             gs = xof_ref.GaussStream(self.sha3, 0x03, seedsk, t,
-                                     self.GAUSS_STREAM_BLOCK)
+                                     self.GAUSS_BLOCK_S)
             dst = []
             while len(dst) < ws:
                 noise_minibatch(gs, dst, ws, Zs, sentries)
@@ -169,7 +174,7 @@ class Shuttle:
         Z = self._rcdt["Z"]
         for t in range(16):
             gs = xof_ref.GaussStream(self.sha3, 0x08, seedY, t,
-                                     self.GAUSS_STREAM_BLOCK)
+                                     self.GAUSS_BLOCK_Y)
             chunk = gauss_chunk(gs, wy, Z)
             for i in range(wy):
                 ybar[t * wy + i] = chunk[i]

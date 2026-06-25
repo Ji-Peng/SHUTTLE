@@ -140,12 +140,40 @@ void sample_y(poly y[KVEC], const uint8_t seedY[SEEDBYTES]);
  *  mini-batch tail is requested at once so the cursor advances           *
  *  identically across backends. */
 /* The wide-sampler lane chunk is KVEC*n/16 coeffs; its OUTPUT-indexed sign
- * stream is therefore (KVEC*n/16 + 7)/8 bytes (+ AVX512 LE64 read pad).  A
- * stream block must hold that sign stream plus one full mini-batch so the
- * "draw the whole tail up front" rule fits in one squeeze. */
+ * stream is therefore (KVEC*n/16 + 7)/8 bytes (+ AVX512 LE64 read pad). */
 #define SIGN_BYTES_PER_CHUNK (((KVEC * N / XOF_STREAMS) + 7) / 8)
+
+/* ---- Right-sized per-refill block (no over-squeezed tail) -------------
+ * * Each gauss_stream refill is a FRESH XOF instance
+ * (tag||seed||LE16(lane)|| LE16(refill)) drawn in a SINGLE xof256 squeeze
+ * of gauss_block_bytes(tag) bytes; consumption reads contiguous regions of
+ * that one squeeze.  Because each refill is its OWN ctx and a SINGLE
+ * squeeze (never a chained continuation), there is no rate-alignment
+ * constraint -- the block can be the EXACT minimum that holds one logical
+ * unit, with no granularity rounding and no magic slack (this is what
+ * removes the over-squeeze; the old fixed block carried a +64 slack tail
+ * on every refill):
+ *
+ *   SampleY (tag 0x08): one GAUSS_BATCH mini-batch is
+ * MINIBATCH_RAND_BYTES. Refill 1 ALSO holds the up-front OUTPUT-indexed
+ * sign stream (SIGN_BYTES_PER_CHUNK bytes, + the AVX512 LE64 over-read
+ * pad) ahead of the first mini-batch, so the block must cover
+ *     SIGN_BYTES_PER_CHUNK + SIGN_PAD_AVX512 + MINIBATCH_RAND_BYTES; that
+ * is also enough for every later refill (which holds exactly one
+ * mini-batch after the small leftover is memmoved to the front -- never
+ * enough to skip a refill, so one consume per instance). ExpandS (tag
+ * 0x03): one noise mini-batch is NOISE_MINIBATCH_RAND_BYTES, consumed
+ * whole per refill -- the block is exactly that.
+ *
+ * GAUSS_STREAM_BLOCK is the larger of the two (the buffer/fill unit shared
+ * by ref and the N-way SIMD fill); gauss_block_bytes() picks the tag-tuned
+ * size at fill time.  Buffer = 2*block: one freshly drawn block plus the
+ * memmoved leftover of the previous one. */
+#define GAUSS_BLOCK_Y \
+    ((size_t)SIGN_BYTES_PER_CHUNK + SIGN_PAD_AVX512 + MINIBATCH_RAND_BYTES)
+#define GAUSS_BLOCK_S ((size_t)NOISE_MINIBATCH_RAND_BYTES)
 #define GAUSS_STREAM_BLOCK \
-    (MINIBATCH_RAND_BYTES + SIGN_BYTES_PER_CHUNK + SIGN_PAD_AVX512 + 64)
+    (GAUSS_BLOCK_Y > GAUSS_BLOCK_S ? GAUSS_BLOCK_Y : GAUSS_BLOCK_S)
 typedef struct {
     xof_ctx ctx;         /* current backend xof256 state               */
     uint8_t tag;         /* domain-separation tag (DS_SAMPLE_Y)        */
@@ -153,8 +181,16 @@ typedef struct {
     uint16_t lane;       /* logical stream index 0..15                 */
     uint16_t refill;     /* refill counter (continuation nonce)        */
     size_t pos, avail;   /* cursor into buf                            */
-    uint8_t buf[2 * GAUSS_STREAM_BLOCK]; /* one block + headroom */
+    uint8_t
+        buf[2 * GAUSS_STREAM_BLOCK]; /* one block + memmoved leftover */
 } gauss_stream;
+
+/* Tag-tuned per-refill block size (bytes drawn in one squeeze). */
+static inline size_t gauss_block_bytes(uint8_t tag)
+{
+    return (tag == DS_SAMPLE_Y) ? (size_t)GAUSS_BLOCK_Y
+                                : (size_t)GAUSS_BLOCK_S;
+}
 
 void gauss_stream_init(gauss_stream *gs, uint8_t tag, const uint8_t *seed,
                        unsigned lane);

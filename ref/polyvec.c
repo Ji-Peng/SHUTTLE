@@ -153,7 +153,7 @@ void expand_signing_seeds(uint8_t seedY[SEEDBYTES],
  * essentially every call.  The instance still caps at SAMPLEC_BLOCK bytes,
  * preserving the per-refill XOF boundary byte-for-byte. */
 #define SAMPLEC_BLOCK UNIFORM_BLOCK /* logical per-refill instance cap */
-#define SAMPLEC_DRAW_RAW ((size_t)TAU * (size_t)BN * 4u)
+#define SAMPLEC_DRAW_RAW ((size_t)TAU * (size_t)BN * 2u)
 #define SAMPLEC_DRAW                                                    \
     (((SAMPLEC_DRAW_RAW + (size_t)XOF_SQUEEZE_GRANULARITY_BYTES - 1u) / \
       (size_t)XOF_SQUEEZE_GRANULARITY_BYTES) *                          \
@@ -319,6 +319,7 @@ static void gs_fill(gauss_stream *gs)
     uint8_t nonce[1 + CHALLENGESEEDBYTES + 2 + 2];
     size_t seedlen =
         (gs->tag == DS_SAMPLE_Y) ? SEEDBYTES : CHALLENGESEEDBYTES;
+    size_t blk = gauss_block_bytes(gs->tag);
     size_t nlen;
     xof_ctx ctx;
     nonce[0] = gs->tag;
@@ -327,8 +328,8 @@ static void gs_fill(gauss_stream *gs)
     put_le16(nonce + 1 + seedlen + 2, gs->refill);
     nlen = 1 + seedlen + 2 + 2;
     xof256_init(&ctx, nonce, nlen);
-    xof256_squeeze(&ctx, gs->buf + gs->avail, GAUSS_STREAM_BLOCK);
-    gs->avail += GAUSS_STREAM_BLOCK;
+    xof256_squeeze(&ctx, gs->buf + gs->avail, blk);
+    gs->avail += blk;
 }
 
 void gs_ensure(gauss_stream *gs, size_t need)

@@ -133,9 +133,9 @@ The two backends are distinct primitives and therefore define two distinct KAT s
 
 | Level | Default (SM3) backend | SHAKE backend |
 | --- | --- | --- |
-| SHUTTLE-128 | 17804390083148342413 | 17067083752221901810 |
-| SHUTTLE-256 | 18125615567653405523 | 16770893027166717173 |
-| SHUTTLE-512 | 13454440604513852822 | 980655777695523119 |
+| SHUTTLE-128 | 13926565390340745383 | 13188481003930633542 |
+| SHUTTLE-256 | 1071740541928326239 | 1193940268129441062 |
+| SHUTTLE-512 | 13704633541147262613 | 9382678739361523757 |
 
 These are the production (entropy-coded signature path) hashes, verified to reproduce across the reference, AVX2, and AVX-512 backends for both symmetric backends.
 

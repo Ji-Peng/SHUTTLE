@@ -240,7 +240,7 @@ void expand_signing_seeds(uint8_t seedY[SEEDBYTES],
  * essentially every call.  The instance still caps at SAMPLEC_BLOCK bytes,
  * preserving the per-refill XOF boundary byte-for-byte. */
 #define SAMPLEC_BLOCK UNIFORM_BLOCK /* logical per-refill instance cap */
-#define SAMPLEC_DRAW_RAW ((size_t)TAU * (size_t)BN * 4u)
+#define SAMPLEC_DRAW_RAW ((size_t)TAU * (size_t)BN * 2u)
 #define SAMPLEC_DRAW                                                    \
     (((SAMPLEC_DRAW_RAW + (size_t)XOF_SQUEEZE_GRANULARITY_BYTES - 1u) / \
       (size_t)XOF_SQUEEZE_GRANULARITY_BYTES) *                          \
@@ -561,12 +561,13 @@ static size_t gs_build_nonce(const gauss_stream *gs, uint8_t *nonce)
 static void gs_fill(gauss_stream *gs)
 {
     uint8_t nonce[1 + CHALLENGESEEDBYTES + 2 + 2];
+    size_t blk = gauss_block_bytes(gs->tag);
     size_t nlen;
     xof_ctx ctx;
     nlen = gs_build_nonce(gs, nonce);
     xof256_init(&ctx, nonce, nlen);
-    xof256_squeeze(&ctx, gs->buf + gs->avail, GAUSS_STREAM_BLOCK);
-    gs->avail += GAUSS_STREAM_BLOCK;
+    xof256_squeeze(&ctx, gs->buf + gs->avail, blk);
+    gs->avail += blk;
 }
 
 void gs_ensure(gauss_stream *gs, size_t need)
@@ -605,6 +606,9 @@ static void gs_batch_first_fill(gauss_stream gss[XOF_STREAMS])
     uint8_t nonces[XOF_STREAMS][1 + CHALLENGESEEDBYTES + 2 + 2];
     const uint8_t *noncep[XOF_STREAMS];
     uint8_t *dst[XOF_STREAMS];
+    /* All lanes in one ExpandS/SampleY call share the tag, hence the same
+     * tag-tuned per-refill block size (no over-squeezed tail). */
+    size_t blk = gauss_block_bytes(gss[0].tag);
     size_t nlen = 0;
     unsigned t;
     for (t = 0; t < XOF_STREAMS; t++) {
@@ -616,11 +620,11 @@ static void gs_batch_first_fill(gauss_stream gss[XOF_STREAMS])
     }
     /* All gauss streams use xof256 (ExpandS tag 0x03 / SampleY tag 0x08).
      */
-    xof_nway_fill16(dst, noncep, nlen, GAUSS_STREAM_BLOCK,
+    xof_nway_fill16(dst, noncep, nlen, blk,
                     /*use_xof128=*/0);
     for (t = 0; t < XOF_STREAMS; t++) {
         gss[t].pos = 0;
-        gss[t].avail = GAUSS_STREAM_BLOCK;
+        gss[t].avail = blk;
     }
 }
 #endif /* USE_AVX2_XOF_NWAY && __AVX2__ */
@@ -1018,6 +1022,9 @@ static void gauss_roundrobin(gauss_stream gss[XOF_STREAMS],
                              gauss_lane_state lst[XOF_STREAMS])
 {
     int all_done = 0;
+    /* SampleY: every lane shares the tag -> the same tag-tuned per-refill
+     * block size (right-sized, no over-squeezed tail). */
+    size_t blk = gauss_block_bytes(gss[0].tag);
     while (!all_done) {
         uint8_t nonces[XOF_STREAMS][1 + CHALLENGESEEDBYTES + 2 + 2];
         const uint8_t *noncep[XOF_STREAMS];
@@ -1065,10 +1072,10 @@ static void gauss_roundrobin(gauss_stream gss[XOF_STREAMS],
                     noncep[0]; /* any valid nonce; output discarded */
                 dstp[t] = scratch[t];
             }
-            xof_nway_fill16(dstp, noncep, nlen, GAUSS_STREAM_BLOCK,
+            xof_nway_fill16(dstp, noncep, nlen, blk,
                             /*use_xof128=*/0);
             for (t = 0; t < nfill; t++)
-                gss[fill_lane[t]].avail += GAUSS_STREAM_BLOCK;
+                gss[fill_lane[t]].avail += blk;
             PROF_STOP(PT_G_SHAKE, t_sh);
         }
 
