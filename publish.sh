@@ -124,6 +124,17 @@ make_zip() {
   [[ -s "$archive" ]] || die "7z produced an empty archive: $archive"
 }
 
+# Remove local build products before snapshotting SHUTTLE/ so the source zip
+# does not pick up transient object files from prior builds.
+clean_source_tree() {
+  local subdir
+  for subdir in ref avx2 avx512; do
+    [[ -f "${SCRIPT_DIR}/${subdir}/Makefile" ]] || continue
+    echo "Cleaning ${subdir}/ before packaging ..."
+    make -C "${SCRIPT_DIR}/${subdir}" clean >/dev/null
+  done
+}
+
 # --- build the two archives -------------------------------------------------
 # $1 = output directory for the archives. Sets SHUTTLE_ZIP / NGCC_ZIP / NGCC_BUILD.
 
@@ -139,6 +150,7 @@ build_archives() {
   #    regenerable pack_ngcc.sh output dir (its contents are the NGCC zip).
   echo "Packing ${SHUTTLE_ZIP##*/} (SHUTTLE/ source snapshot) ..."
   rm -f "$SHUTTLE_ZIP"
+  clean_source_tree
   (
     cd "$SCRIPT_DIR"
     make_zip "$SHUTTLE_ZIP" . \
