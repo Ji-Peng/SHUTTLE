@@ -64,6 +64,33 @@ static void warmup(void)
     (void)s;
 }
 
+/*
+ * HARNESS RULE (read before editing any probe below).  The timed region must
+ * contain ONLY the primitive under test -- never any class-correlated SETUP.
+ * dudect compares the fixed-input class against the random-input class, so any
+ * work that happens for ONE class but not the other right before `t0` (a
+ * `prng_fill` write, a `%` idiv, extra PRNG draws, a buffer-address swap)
+ * leaks into the few-cycle measurement and the t-test reports it as a leak of
+ * the PRIMITIVE -- a FALSE POSITIVE.  This bit the original probes:
+ *   - probe_sigma2: the random class ran a full-buffer `prng_fill` write into
+ *     a DIFFERENT buffer immediately before `t0`; the wide SIMD `vmovdqu`
+ *     loads of that freshly-written buffer paid a store-to-load-forwarding /
+ *     4K-alias penalty the fixed class never paid -> SIMD-only |t|=10..26
+ *     (ref's scalar 4-byte loads don't, so ref passed).  Confirmed a harness
+ *     artifact: cdt_scan96 is machine-code-proven isochronous (ct_scan.py:
+ *     fixed-trip vpcmpltud/vpcmpgtd + masked add, no gather/branch/div).
+ *   - probe_approx_exp / _log: the fixed-class inputs were compile-time
+ *     literals (constant-folded + the pure BATCH loop hoisted out of the
+ *     timed window), while the random class ran prng + a 64-bit `%37` idiv
+ *     before `t0` -> intermittent |t| spikes.
+ * FIX (applied to all three probes): PRE-GENERATE every input OUTSIDE the
+ * timed loop into a flat array, and inside the timed loop do byte-identical
+ * work/stride for both classes, reading inputs by runtime index (so the fixed
+ * class is not a foldable literal).  The only difference entering `t0` is the
+ * DATA.  ct_scan.py remains the authoritative instruction-level CT gate; this
+ * smoke just must not raise false alarms.
+ */
+
 /* ---- cdt_scan96 / sampler_sigma2 ---- */
 static int probe_sigma2(void)
 {
@@ -71,22 +98,31 @@ static int probe_sigma2(void)
     int64_t *cyc = malloc(NN * sizeof *cyc);
     uint8_t *cls = malloc(NN);
     uint8_t *fixed = calloc(SIGMA2_RAND_BYTES, 1);
-    uint8_t *rnd = malloc(SIGMA2_RAND_BYTES);
+    /* All NN inputs pre-generated into one contiguous buffer: identical
+     * per-iteration stride/work for both classes, only the data differs. */
+    uint8_t *inbuf = malloc(NN * (size_t)SIGMA2_RAND_BYTES);
     int32_t z_out[GAUSS_BATCH];
-    if (!cyc || !cls || !fixed || !rnd) {
+    if (!cyc || !cls || !fixed || !inbuf) {
         puts("dudect_components: OOM");
         return -1;
     }
-    /* Fixed class is a constant pattern; random class is fresh each iter. */
     memset(fixed, 0x5A, SIGMA2_RAND_BYTES);
     for (size_t i = 0; i < NN; i++) {
         int c = (int)(prng_next() & 1);
         cls[i] = (uint8_t)c;
-        const uint8_t *in = fixed;
-        if (c) {
-            prng_fill(rnd, SIGMA2_RAND_BYTES);
-            in = rnd;
-        }
+        uint8_t *slot = inbuf + i * (size_t)SIGMA2_RAND_BYTES;
+        if (c)
+            prng_fill(slot, SIGMA2_RAND_BYTES); /* fixed pattern vs fresh */
+        else
+            memcpy(slot, fixed, SIGMA2_RAND_BYTES);
+    }
+    /* Warm the AVX frequency license so the timed region runs at a stable
+     * clock for both classes (belt-and-suspenders; pre-generation alone
+     * already collapses |t| to the ref scalar level). */
+    for (int w = 0; w < 4000; w++)
+        sampler_sigma2(z_out, fixed);
+    for (size_t i = 0; i < NN; i++) {
+        const uint8_t *in = inbuf + i * (size_t)SIGMA2_RAND_BYTES;
         uint64_t t0 = dudect_cpucycles();
         sampler_sigma2(z_out, in);
         uint64_t t1 = dudect_cpucycles();
@@ -96,7 +132,7 @@ static int probe_sigma2(void)
     free(cyc);
     free(cls);
     free(fixed);
-    free(rnd);
+    free(inbuf);
     return t >= DUDECT_T_FAIL ? 1 : 0;
 }
 
@@ -113,18 +149,35 @@ static int probe_approx_exp(void)
     /* These primitives are a few-cycle integer Horner; a single call is
      * dominated by rdtsc overhead, so we time a fixed BATCH per measurement
      * (constant trip count) and write into a volatile sink WITHOUT a
-     * value-dependent accumulation (store, don't add) so the measured work is
-     * input-class-independent by construction. */
+     * value-dependent accumulation (store, don't add). Per the HARNESS RULE
+     * above, the (x,y) inputs are PRE-GENERATED outside the timed loop and
+     * read by runtime index -- so the fixed-class inputs are not foldable
+     * literals and the random-class `%37` idiv does not run before `t0`. */
     enum { BATCH = 256 };
-    volatile uint64_t sink = 0;
+    int *xs = malloc(NN * sizeof *xs);
+    int *ys = malloc(NN * sizeof *ys);
+    if (!xs || !ys) {
+        puts("dudect_components: OOM");
+        free(cyc);
+        free(cls);
+        free(xs);
+        free(ys);
+        return -1;
+    }
     for (size_t i = 0; i < NN; i++) {
         int c = (int)(prng_next() & 1);
         cls[i] = (uint8_t)c;
-        int x = 18, y = 128; /* fixed-class (x,y) */
         if (c) {
-            x = (int)(prng_next() % 37);   /* x in {0..36} */
-            y = (int)(prng_next() & 0xFF); /* y in {0..255} */
+            xs[i] = (int)(prng_next() % 37);   /* x in {0..36} */
+            ys[i] = (int)(prng_next() & 0xFF); /* y in {0..255} */
+        } else {
+            xs[i] = 18; /* fixed-class (x,y) */
+            ys[i] = 128;
         }
+    }
+    volatile uint64_t sink = 0;
+    for (size_t i = 0; i < NN; i++) {
+        int x = xs[i], y = ys[i];
         uint64_t t0 = dudect_cpucycles();
         for (int k = 0; k < BATCH; k++)
             sink = shuttle_exp_accept_poly_q64(x, y);
@@ -135,6 +188,8 @@ static int probe_approx_exp(void)
     double t = dudect_run_ttests("approx_exp", cyc, cls, NN);
     free(cyc);
     free(cls);
+    free(xs);
+    free(ys);
     return t >= DUDECT_T_FAIL ? 1 : 0;
 }
 
@@ -148,17 +203,33 @@ static int probe_approx_log(void)
         puts("dudect_components: OOM");
         return -1;
     }
+    /* Inputs PRE-GENERATED outside the timed loop (HARNESS RULE above). */
     enum { BATCH = 256 };
-    volatile int64_t sink = 0;
+    uint32_t *js = malloc(NN * sizeof *js);
+    uint64_t *xqs = malloc(NN * sizeof *xqs);
+    if (!js || !xqs) {
+        puts("dudect_components: OOM");
+        free(cyc);
+        free(cls);
+        free(js);
+        free(xqs);
+        return -1;
+    }
     for (size_t i = 0; i < NN; i++) {
         int c = (int)(prng_next() & 1);
         cls[i] = (uint8_t)c;
-        uint32_t j = 1;
-        uint64_t xq = 0x4000000000000000ULL; /* fixed-class mantissa */
         if (c) {
-            j = (uint32_t)(prng_next() & 3);
-            xq = prng_next();
+            js[i] = (uint32_t)(prng_next() & 3);
+            xqs[i] = prng_next();
+        } else {
+            js[i] = 1;
+            xqs[i] = 0x4000000000000000ULL; /* fixed-class mantissa */
         }
+    }
+    volatile int64_t sink = 0;
+    for (size_t i = 0; i < NN; i++) {
+        uint32_t j = js[i];
+        uint64_t xq = xqs[i];
         uint64_t t0 = dudect_cpucycles();
         for (int k = 0; k < BATCH; k++)
             sink = shuttle_log2_frac_q62(j, xq);
@@ -169,6 +240,8 @@ static int probe_approx_log(void)
     double t = dudect_run_ttests("approx_log", cyc, cls, NN);
     free(cyc);
     free(cls);
+    free(js);
+    free(xqs);
     return t >= DUDECT_T_FAIL ? 1 : 0;
 }
 
