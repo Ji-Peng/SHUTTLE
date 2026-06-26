@@ -203,10 +203,11 @@ static void build_cached_matrix(poly16 bhat[EM], poly16 Ahat[EM * ELL],
  * write per attempt; no branch on secret data, no effect on output. */
 uint32_t shuttle_last_keygen_attempts = 0;
 
-/* Number of Sign-loop iterations the LAST sign_internal consumed (1 == accepted
- * on the first try).  Public diagnostic for the per-iteration B_v/sigEncode
- * acceptance rate (1 / mean(attempts)); a single global write on the accepting
- * iteration, no branch on secret data, no effect on output. */
+/* Number of Sign-loop iterations the LAST sign_internal consumed (1 ==
+ * accepted on the first try).  Public diagnostic for the per-iteration
+ * B_v/sigEncode acceptance rate (1 / mean(attempts)); a single global
+ * write on the accepting iteration, no branch on secret data, no effect on
+ * output. */
 uint32_t shuttle_last_sign_attempts = 0;
 
 /* ===================================================================== *
@@ -265,13 +266,13 @@ static int keygen_from_xi(uint8_t *pk, uint8_t *sk,
         PROF_CTX(PC_OTHER);
 
         /* Step 5: b_0 = a_gen + iNTT(A-hat_gen o NTT(s)) + e (mod q).
-         * Routed through rounding.c keygen_bproduct: the scalar (ref) build
-         * runs the canonical NTT oracle; the avx2/avx512 forks route the
-         * matrix-vector product through the SIMD NTT (byte-exact). */
+         * Routed through rounding.c keygen_bproduct: the scalar (ref)
+         * build runs the canonical NTT oracle; the avx2/avx512 forks route
+         * the matrix-vector product through the SIMD NTT (byte-exact). */
         {
-        PROF_START(t_kgb);
-        keygen_bproduct(b0, agen, hAgen, s, e);
-        PROF_STOP(PT_KG_BPRODUCT, t_kgb);
+            PROF_START(t_kgb);
+            keygen_bproduct(b0, agen, hAgen, s, e);
+            PROF_STOP(PT_KG_BPRODUCT, t_kgb);
         }
 
         /* Steps 6-9: b = RoundB(b_0); e' = e + (b-b0) bmodpm q (fused). */
@@ -304,23 +305,24 @@ static int keygen_from_xi(uint8_t *pk, uint8_t *sk,
 
         /* Steps 11-13: pkEncode, HashPK(tr), skEncode. */
         {
-        PROF_START(t_kgp);
-        /* Step 11: pk = pkEncode(seedA, b). */
-        pack_pk(pk, seedA, b);
+            PROF_START(t_kgp);
+            /* Step 11: pk = pkEncode(seedA, b). */
+            pack_pk(pk, seedA, b);
 
-        /* Step 12: tr = HashPK(pk) over the ALREADY-ENCODED pk (0x05). */
-        {
-            uint8_t pkhash_in[1 + CRYPTO_PUBLICKEYBYTES];
-            xof_ctx hctx;
-            pkhash_in[0] = DS_HASH_PK;
-            memcpy(pkhash_in + 1, pk, CRYPTO_PUBLICKEYBYTES);
-            xof256_init(&hctx, pkhash_in, 1 + CRYPTO_PUBLICKEYBYTES);
-            xof256_squeeze(&hctx, tr, CHALLENGESEEDBYTES);
-        }
+            /* Step 12: tr = HashPK(pk) over the ALREADY-ENCODED pk (0x05).
+             */
+            {
+                uint8_t pkhash_in[1 + CRYPTO_PUBLICKEYBYTES];
+                xof_ctx hctx;
+                pkhash_in[0] = DS_HASH_PK;
+                memcpy(pkhash_in + 1, pk, CRYPTO_PUBLICKEYBYTES);
+                xof256_init(&hctx, pkhash_in, 1 + CRYPTO_PUBLICKEYBYTES);
+                xof256_squeeze(&hctx, tr, CHALLENGESEEDBYTES);
+            }
 
-        /* Step 13: sk = skEncode(seedA, b, K, tr, s, e'). */
-        pack_sk(sk, seedA, b, masterK, tr, s, ep);
-        PROF_STOP(PT_KG_PACK, t_kgp);
+            /* Step 13: sk = skEncode(seedA, b, K, tr, s, e'). */
+            pack_sk(sk, seedA, b, masterK, tr, s, ep);
+            PROF_STOP(PT_KG_PACK, t_kgp);
         }
         shuttle_last_keygen_attempts = kappa; /* attempts == final kappa */
         return 0;
@@ -402,7 +404,8 @@ static int sign_internal(uint8_t *sig, size_t *siglen, const uint8_t *m,
         PROF_START(t_ea);
         expand_a(agen, hAgen, seedA);
         /* Pre-loop step 4: cached column-0 (b-a_gen NTT) + A_gen block.
-         * The FULL derived matrix (with 2*I_m) is realized in mat_mul_2q. */
+         * The FULL derived matrix (with 2*I_m) is realized in mat_mul_2q.
+         */
         build_cached_matrix(bhat, Ahat, b, agen, hAgen);
         PROF_STOP(PT_EXPAND_A, t_ea);
     }
@@ -542,24 +545,33 @@ static int sign_internal(uint8_t *sig, size_t *siglen, const uint8_t *m,
         /* Step o: z2' via the VERIFIER reconstruction (Description.tex
          * L2541: "the signer literally re-runs the UseHint-equivalent
          * reconstruction before the norm check").  We mirror Verify
-         * EXACTLY
-         * -- reconstruct comY_0' = LSB(z0-c)*j and comY_tilde from z1 + c
-         * via mat_mul_z1_2q (the NARROW Z1LEN matrix, NO 2*I_m block),
+         * EXACTLY -- reconstruct comY_0' = LSB(z0-c)*j and comY_tilde,
          * then use_hint.  This makes the gated z2' byte-identical to the
          * one the verifier will compute, so the B_v gate predicts
-         * verify-accept. (Passing the signer's [0,2q) commitment w
-         * directly to use_hint would be WRONG: use_hint expects comY_tilde
-         * = w - 2*z2 mod 2q, which is precisely what mat_mul_z1_2q
-         * reconstructs from z1.) */
+         * verify-accept.
+         *
+         * The verifier obtains comY_tilde from z1+c via mat_mul_z1_2q (the
+         * NARROW Z1LEN matrix product).  The signer does NOT need that
+         * second NTT-domain matrix product: with half-up CompressY the
+         * hint identity comY_tilde == (comY - 2*z2) mod 2q holds EXACTLY
+         * (rounding.h), and the signer already has comY (from mat_mul_2q)
+         * and z2.  So we reconstruct comY_tilde with the same cheap
+         * per-coeff branchless reduce_mod_2q that make_hint uses --
+         * byte-identical to the verifier's mat_mul_z1_2q result, at a
+         * fraction of the cost. */
         {
             poly comY0p_sig[EM];
             poly comY_tilde_sig[EM];
             int ok;
+            unsigned kk;
             PROF_START(t_nc);
             recon_comY0p(&comY0p_sig[0], &z1[0], &c);
             for (j = 1; j < EM; ++j)
                 memset(&comY0p_sig[j], 0, sizeof comY0p_sig[j]);
-            mat_mul_z1_2q(comY_tilde_sig, z1, &c, bhat, Ahat);
+            for (j = 0; j < EM; ++j)
+                for (kk = 0; kk < N; ++kk)
+                    comY_tilde_sig[j].coeffs[kk] = reduce_mod_2q(
+                        comY[j].coeffs[kk] - 2 * z2[j].coeffs[kk]);
             use_hint(wh_chk, z2p, hint, comY_tilde_sig, &comY0p_sig[0]);
 
             /* Step p: B_v gate on (z1, z2') -- NOT z2. */
@@ -569,11 +581,11 @@ static int sign_internal(uint8_t *sig, size_t *siglen, const uint8_t *m,
                 continue; /* kappa already advanced */
         }
 
-            /* Step q: sigEncode.  RAW path never fails; rANS may return
-             * bottom (out of support) -> restart with kappa advanced.  The
-             * rANS arithmetic + byte layout are timed together as PT_RANS
-             * (the variable-cost block; PT_PACK is reserved for a future
-             * split of the non-rANS layout work). */
+        /* Step q: sigEncode.  RAW path never fails; rANS may return
+         * bottom (out of support) -> restart with kappa advanced.  The
+         * rANS arithmetic + byte layout are timed together as PT_RANS
+         * (the variable-cost block; PT_PACK is reserved for a future
+         * split of the non-rANS layout work). */
 #if defined(SIG_RAW)
         {
             PROF_START(t_pk);

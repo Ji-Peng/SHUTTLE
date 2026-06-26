@@ -1011,63 +1011,151 @@ static void gs_consume_minibatch(gauss_stream *gs, int32_t *dst,
     yp = gs->buf + gs->pos + SIGMA_S_RAND_BYTES;
     for (j = 0; j < GAUSS_BATCH; j++)
         yv[j] = (int32_t)yp[j]; /* Y_BITS=8: plain byte copy */
-    {
-        PROF_START(t_ae);
-        for (j = 0; j < GAUSS_BATCH; j += 4) {
-            int xi[4], yi[4];
-            uint64_t po[4];
-            int g;
-            for (g = 0; g < 4; g++) {
-                xi[g] = (int)x[j + g];
-                yi[g] = (int)yv[j + g];
-            }
-            approx_exp_accept_q64_x4(xi, yi, po);
-            for (g = 0; g < 4; g++)
-                phat[j + g] = po[g];
-        }
-        PROF_STOP(PT_G_APPROXEXP, t_ae);
-    }
     tailp = gs->buf + gs->pos + SIGMA_S_RAND_BYTES + Y_RAND_BYTES;
-    {
-        PROF_START(t_fin);
+
+    /* Two-path body.  When more than a full GAUSS_BATCH accepts are still
+     * outstanding (count - *coefcnt > GAUSS_BATCH) every one of the 32
+     * candidates is needed -- coefcnt cannot reach count this mini-batch
+     * -- so we run the full-width SIMD path, byte-identical to before and
+     * with the common-case throughput unchanged.  Otherwise this MIGHT be
+     * the last mini-batch: we fuse approx_exp + finalize candidate-major
+     * in SIMD groups of 8 (the AVX-512 gauss_finalize_batch width) and
+     * BREAK the moment `count` accepts have landed, eliding the approx_exp
+     * / finalize for the unused tail of the GAUSS_BATCH window.  Both
+     * paths leave any candidate past `count` DISCARDED (the dst write was
+     * already
+     * `*coefcnt < count`-gated), and the byte cursor always advances the
+     * WHOLE MINIBATCH_RAND_BYTES, so the per-lane byte schedule is byte-
+     * identical to processing all 32.  The break is on the PUBLIC accept-
+     * count (same data-dependence as the mini-batch count). */
+    if (count - *coefcnt > (size_t)GAUSS_BATCH) {
+        /* ----- common path: every candidate needed, full-width SIMD -----
+         */
+        {
+            PROF_START(t_ae);
+            for (j = 0; j < GAUSS_BATCH; j += 4) {
+                int xi[4], yi[4];
+                uint64_t po[4];
+                int g;
+                for (g = 0; g < 4; g++) {
+                    xi[g] = (int)x[j + g];
+                    yi[g] = (int)yv[j + g];
+                }
+                approx_exp_accept_q64_x4(xi, yi, po);
+                for (g = 0; g < 4; g++)
+                    phat[j + g] = po[g];
+            }
+            PROF_STOP(PT_G_APPROXEXP, t_ae);
+        }
+        {
+            PROF_START(t_fin);
 #if defined(USE_AVX512_SAMPLER) && defined(__AVX512F__) && \
     !defined(GAUSS_FINALIZE_SCALAR)
-        /* vectorize the SIGN-INDEPENDENT precompute (cand / negcand /
-         * accept / z0) over the whole mini-batch; the OUTPUT-indexed sign,
-         * zero-fold and compaction stay in the cheap scalar tail
-         * below.  Byte-exact to GAUSS_BATCH scalar gauss_finalize calls
-         * (see gauss_finalize_batch's precision+security block). */
-        int32_t cand[GAUSS_BATCH], negcand[GAUSS_BATCH];
-        int32_t accept[GAUSS_BATCH], z0[GAUSS_BATCH];
-        gauss_finalize_batch(cand, negcand, accept, z0, x, yv, phat, tailp,
-                             GAUSS_BATCH);
-        for (j = 0; j < GAUSS_BATCH; j++) {
-            size_t idx = *coefcnt; /* OUTPUT index of the NEXT accept */
-            uint32_t sgn = (uint32_t)(signs[idx >> 3] >> (idx & 7)) & 1u;
-            /* keep = accept & ~(z0 & sign); byte-exact to gauss_finalize.
-             */
-            uint32_t keep =
-                (uint32_t)accept[j] & (1u ^ ((uint32_t)z0[j] & sgn));
-            if (keep) {
-                if (*coefcnt < count)
+            int32_t cand[GAUSS_BATCH], negcand[GAUSS_BATCH];
+            int32_t accept[GAUSS_BATCH], z0[GAUSS_BATCH];
+            gauss_finalize_batch(cand, negcand, accept, z0, x, yv, phat,
+                                 tailp, GAUSS_BATCH);
+            for (j = 0; j < GAUSS_BATCH; j++) {
+                size_t idx =
+                    *coefcnt; /* OUTPUT index of the NEXT accept */
+                uint32_t sgn =
+                    (uint32_t)(signs[idx >> 3] >> (idx & 7)) & 1u;
+                uint32_t keep =
+                    (uint32_t)accept[j] & (1u ^ ((uint32_t)z0[j] & sgn));
+                if (keep)
                     dst[(*coefcnt)++] = sgn ? negcand[j] : cand[j];
             }
-        }
 #else
-        for (j = 0; j < GAUSS_BATCH; j++) {
-            int32_t r;
-            uint32_t sgn;
-            size_t idx = *coefcnt; /* OUTPUT index of the NEXT accept */
-            sgn = (uint32_t)(signs[idx >> 3] >> (idx & 7)) & 1u;
-            if (gauss_finalize(&r, x[j], yv[j], phat[j],
-                               tailp + (size_t)j * GAUSS_RAND_BYTES,
-                               sgn)) {
-                if (*coefcnt < count)
+            for (j = 0; j < GAUSS_BATCH; j++) {
+                int32_t r;
+                uint32_t sgn;
+                size_t idx =
+                    *coefcnt; /* OUTPUT index of the NEXT accept */
+                sgn = (uint32_t)(signs[idx >> 3] >> (idx & 7)) & 1u;
+                if (gauss_finalize(&r, x[j], yv[j], phat[j],
+                                   tailp + (size_t)j * GAUSS_RAND_BYTES,
+                                   sgn))
                     dst[(*coefcnt)++] = r;
             }
-        }
 #endif
-        PROF_STOP(PT_G_FINAL, t_fin);
+            PROF_STOP(PT_G_FINAL, t_fin);
+        }
+    } else {
+        /* ----- last-batch path: cover the candidate window [base,32) in
+         * at most two WIDE SIMD passes, breaking the compaction once
+         * `count` accepts land.  The first pass spans the candidates we
+         * expect to need (remaining accepts rounded up to the 8-candidate
+         * SIMD group); the second pass (taken only if a rare in-window
+         * rejection left us short) covers the rest, so we NEVER
+         * under-process and force an extra mini-batch.  Eliding the tail
+         * of approx_exp / finalize past the window is what saves work;
+         * keeping ONE wide finalize_batch per pass keeps the per-candidate
+         * SIMD efficiency of the common path. Byte-exact: candidates are
+         * processed in order with the same per- candidate math and the
+         * same coefcnt progression as the full path. ----- */
+        size_t remain = count - *coefcnt;     /* >0, <= GAUSS_BATCH */
+        int win = (int)((remain + 7u) & ~7u); /* round up to SIMD group */
+        int base = 0;
+        if (win > GAUSS_BATCH)
+            win = GAUSS_BATCH;
+        while (base < GAUSS_BATCH && *coefcnt < count) {
+            int n = win - base;
+            int e = win;
+            {
+                PROF_START(t_ae);
+                for (j = base; j < e; j += 4) {
+                    int xi[4], yi[4];
+                    uint64_t po[4];
+                    int g;
+                    for (g = 0; g < 4; g++) {
+                        xi[g] = (int)x[j + g];
+                        yi[g] = (int)yv[j + g];
+                    }
+                    approx_exp_accept_q64_x4(xi, yi, po);
+                    for (g = 0; g < 4; g++)
+                        phat[j + g] = po[g];
+                }
+                PROF_STOP(PT_G_APPROXEXP, t_ae);
+            }
+            {
+                PROF_START(t_fin);
+#if defined(USE_AVX512_SAMPLER) && defined(__AVX512F__) && \
+    !defined(GAUSS_FINALIZE_SCALAR)
+                int32_t cand[GAUSS_BATCH], negcand[GAUSS_BATCH];
+                int32_t accept[GAUSS_BATCH], z0[GAUSS_BATCH];
+                gauss_finalize_batch(
+                    cand + base, negcand + base, accept + base, z0 + base,
+                    x + base, yv + base, phat + base,
+                    tailp + (size_t)base * GAUSS_RAND_BYTES, n);
+                for (j = base; j < e && *coefcnt < count; j++) {
+                    size_t idx =
+                        *coefcnt; /* OUTPUT index of NEXT accept */
+                    uint32_t sgn =
+                        (uint32_t)(signs[idx >> 3] >> (idx & 7)) & 1u;
+                    uint32_t keep = (uint32_t)accept[j] &
+                                    (1u ^ ((uint32_t)z0[j] & sgn));
+                    if (keep)
+                        dst[(*coefcnt)++] = sgn ? negcand[j] : cand[j];
+                }
+#else
+                for (j = base; j < e && *coefcnt < count; j++) {
+                    int32_t r;
+                    uint32_t sgn;
+                    size_t idx =
+                        *coefcnt; /* OUTPUT index of NEXT accept */
+                    sgn = (uint32_t)(signs[idx >> 3] >> (idx & 7)) & 1u;
+                    if (gauss_finalize(
+                            &r, x[j], yv[j], phat[j],
+                            tailp + (size_t)j * GAUSS_RAND_BYTES, sgn))
+                        dst[(*coefcnt)++] = r;
+                }
+#endif
+                PROF_STOP(PT_G_FINAL, t_fin);
+            }
+            base = win;
+            win =
+                GAUSS_BATCH; /* second pass (if needed) covers the rest */
+        }
     }
     gs->pos += MINIBATCH_RAND_BYTES; /* WHOLE tail consumed */
 }

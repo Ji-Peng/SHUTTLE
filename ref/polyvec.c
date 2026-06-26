@@ -534,40 +534,93 @@ void gauss_stream_chunk(gauss_stream *gs, int32_t *dst, size_t count)
         yp = gs->buf + gs->pos + SIGMA_S_RAND_BYTES;
         for (j = 0; j < GAUSS_BATCH; j++)
             yv[j] = (int32_t)yp[j]; /* Y_BITS=8: plain byte copy */
-        /* p_hat = approx_exp accept threshold, 8 groups of 4 (x4 batch).
-         */
-        {
-            PROF_START(t_ae);
-            for (j = 0; j < GAUSS_BATCH; j += 4) {
+        tailp = gs->buf + gs->pos + SIGMA_S_RAND_BYTES + Y_RAND_BYTES;
+        /* Two-path body.  When more than a full GAUSS_BATCH accepts are
+         * still outstanding (count-coefcnt > GAUSS_BATCH) every one of the
+         * 32 candidates is needed, so we run the full window (approx_exp
+         * then finalize) -- byte-identical to before.  Otherwise this
+         * MIGHT be the last mini-batch: we fuse approx_exp +
+         * gauss_finalize candidate- major (groups of 4 for the x4
+         * approx_exp API) and BREAK the moment `count` accepts have
+         * landed, eliding the approx_exp / finalize for the unused tail of
+         * the GAUSS_BATCH window.  Both paths leave any candidate past
+         * `count` DISCARDED (the dst write was already `coefcnt <
+         * count`-gated), and the byte cursor always advances the WHOLE
+         * MINIBATCH_RAND_BYTES, so the per-lane byte schedule is byte-
+         * identical to processing all 32.  The break is on the PUBLIC
+         * accept- count (same data-dependence as the mini-batch count). */
+        if (count - coefcnt > (size_t)GAUSS_BATCH) {
+            /* ----- common path: every candidate needed ----- */
+            {
+                PROF_START(t_ae);
+                for (j = 0; j < GAUSS_BATCH; j += 4) {
+                    int xi[4], yi[4];
+                    uint64_t po[4];
+                    int g;
+                    for (g = 0; g < 4; g++) {
+                        xi[g] = (int)x[j + g];
+                        yi[g] = (int)yv[j + g];
+                    }
+                    approx_exp_accept_q64_x4(xi, yi, po);
+                    for (g = 0; g < 4; g++)
+                        phat[j + g] = po[g];
+                }
+                PROF_STOP(PT_G_APPROXEXP, t_ae);
+            }
+            {
+                PROF_START(t_fin);
+                for (j = 0; j < GAUSS_BATCH; j++) {
+                    int32_t r;
+                    uint32_t sgn;
+                    size_t idx = coefcnt; /* OUTPUT index of NEXT accept */
+                    sgn = (uint32_t)(signs[idx >> 3] >> (idx & 7)) & 1u;
+                    if (gauss_finalize(
+                            &r, x[j], yv[j], phat[j],
+                            tailp + (size_t)j * GAUSS_RAND_BYTES, sgn))
+                        dst[coefcnt++] = r;
+                }
+                PROF_STOP(PT_G_FINAL, t_fin);
+            }
+        } else {
+            /* ----- last-batch path: fuse + break when `count` accepts
+             * land, group-of-4 granular (safe: keeps going across
+             * in-window rejections until count is reached, up to the full
+             * GAUSS_BATCH). ----- */
+            for (j = 0; j < GAUSS_BATCH && coefcnt < count; j += 4) {
                 int xi[4], yi[4];
                 uint64_t po[4];
                 int g;
-                for (g = 0; g < 4; g++) {
-                    xi[g] = (int)x[j + g];
-                    yi[g] = (int)yv[j + g];
+                {
+                    PROF_START(t_ae);
+                    for (g = 0; g < 4; g++) {
+                        xi[g] = (int)x[j + g];
+                        yi[g] = (int)yv[j + g];
+                    }
+                    approx_exp_accept_q64_x4(xi, yi, po);
+                    for (g = 0; g < 4; g++)
+                        phat[j + g] = po[g];
+                    PROF_STOP(PT_G_APPROXEXP, t_ae);
                 }
-                approx_exp_accept_q64_x4(xi, yi, po);
-                for (g = 0; g < 4; g++)
-                    phat[j + g] = po[g];
-            }
-            PROF_STOP(PT_G_APPROXEXP, t_ae);
-        }
-        tailp = gs->buf + gs->pos + SIGMA_S_RAND_BYTES + Y_RAND_BYTES;
-        {
-            PROF_START(t_fin);
-            for (j = 0; j < GAUSS_BATCH; j++) {
-                int32_t r;
-                uint32_t sgn;
-                size_t idx = coefcnt; /* OUTPUT index of the NEXT accept */
-                sgn = (uint32_t)(signs[idx >> 3] >> (idx & 7)) & 1u;
-                if (gauss_finalize(&r, x[j], yv[j], phat[j],
-                                   tailp + (size_t)j * GAUSS_RAND_BYTES,
-                                   sgn)) {
-                    if (coefcnt < count)
-                        dst[coefcnt++] = r;
+                {
+                    PROF_START(t_fin);
+                    for (g = 0; g < 4; g++) {
+                        int32_t r;
+                        uint32_t sgn;
+                        size_t idx =
+                            coefcnt; /* OUTPUT idx of NEXT accept */
+                        sgn =
+                            (uint32_t)(signs[idx >> 3] >> (idx & 7)) & 1u;
+                        if (gauss_finalize(
+                                &r, x[j + g], yv[j + g], phat[j + g],
+                                tailp + (size_t)(j + g) * GAUSS_RAND_BYTES,
+                                sgn)) {
+                            if (coefcnt < count)
+                                dst[coefcnt++] = r;
+                        }
+                    }
+                    PROF_STOP(PT_G_FINAL, t_fin);
                 }
             }
-            PROF_STOP(PT_G_FINAL, t_fin);
         }
         gs->pos += MINIBATCH_RAND_BYTES; /* WHOLE tail consumed */
     }

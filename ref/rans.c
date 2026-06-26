@@ -24,11 +24,6 @@
 #define RN RANS_INTERLEAVED_STREAMS
 #define RMASK RANS_INTERLEAVED_MASK
 
-static inline unsigned rans_stream_index(size_t t)
-{
-    return (unsigned)(t & RMASK);
-}
-
 static inline int rans_state_in_range(uint32_t x)
 {
     return x >= RANS_L && x < (RANS_L << 8);
@@ -53,16 +48,59 @@ static inline void enc_put(uint32_t *x, uint8_t *out, size_t *pos,
     *x = *x + bias + q * (PSCALE - freq);
 }
 
-/* one encode step keyed by a contiguous-alphabet table; returns -2 if the
- * symbol is out of the modelled support (Sign restarts). */
-#define ENC_ONE(TBL, X, OUT, POS, SYM)                                  \
-    do {                                                                \
-        int slot_ = (int)((SYM)-TBL##_LO);                              \
-        if (slot_ < 0 || slot_ >= TBL##_N)                              \
-            return -2;                                                  \
-        enc_put((X), (OUT), (POS), TBL##_FREQ[slot_], TBL##_RCP[slot_], \
-                TBL##_RSH[slot_], TBL##_BIAS[slot_]);                   \
+/* one encode step keyed by a contiguous-alphabet table on a single state
+ * XS; returns -2 if the symbol is out of the modelled support (Sign
+ * restarts) or the backward write cursor `pos` would underflow.
+ * `out`/`pos` are the caller's shared backward byte cursor. */
+#define ENC_STEP(TBL, XS, SYM)                                         \
+    do {                                                               \
+        int slot_ = (int)((SYM)-TBL##_LO);                             \
+        if (slot_ < 0 || slot_ >= TBL##_N)                             \
+            return -2;                                                 \
+        if (pos < (size_t)(4 * RN + 4))                                \
+            return -2;                                                 \
+        enc_put(&(XS), out, &pos, TBL##_FREQ[slot_], TBL##_RCP[slot_], \
+                TBL##_RSH[slot_], TBL##_BIAS[slot_]);                  \
     } while (0)
+
+/* Encode `cnt` consecutive symbols of ONE model (table TBL) keyed by SRC,
+ * continuing the global interleave so that flat index t = T0 + i selects
+ * stream s = t & RMASK.  Symbols are PUSHED IN REVERSE t (i = cnt-1 .. 0),
+ * exactly matching the original single reverse loop, so the backward byte
+ * stream -- and hence the KAT -- is unchanged. */
+#if RANS_INTERLEAVED_STREAMS == 2
+/* RN==2 specialization: the two states are two independent dependency
+ * chains, so holding them in named locals x0/x1 and stepping them pairwise
+ * lets the out-of-order core overlap the reciprocal-multiply latency of one
+ * chain with the other.  Reverse order, high t first: the largest t in the
+ * run is (T0+cnt-1).  A leading symbol whose stream is x1 (its t is odd) is
+ * peeled so the remaining top t is EVEN; the rest then step in (x0,x1) pairs
+ * (high-t even -> x0, then low-t odd -> x1), with a final lone bottom symbol
+ * (its t is even -> x0).  The per-symbol stream/order match the fused loop. */
+#    define ENC_RUN(TBL, SRC, CNT, T0)                   \
+        do {                                             \
+            size_t j_ = (CNT);                           \
+            if (j_ > 0 && (((T0) + j_ - 1) & 1u) != 0) { \
+                j_--;                                    \
+                ENC_STEP(TBL, x1, (SRC)[j_]);            \
+            }                                            \
+            while (j_ >= 2) {                            \
+                ENC_STEP(TBL, x0, (SRC)[j_ - 1]);        \
+                ENC_STEP(TBL, x1, (SRC)[j_ - 2]);        \
+                j_ -= 2;                                 \
+            }                                            \
+            if (j_ > 0)                                  \
+                ENC_STEP(TBL, x0, (SRC)[j_ - 1]);        \
+        } while (0)
+#else
+#    define ENC_RUN(TBL, SRC, CNT, T0)                         \
+        do {                                                   \
+            for (size_t j_ = (CNT); j_-- > 0;) {               \
+                unsigned s_ = (unsigned)(((T0) + j_) & RMASK); \
+                ENC_STEP(TBL, x[s_], (SRC)[j_]);               \
+            }                                                  \
+        } while (0)
+#endif
 
 int shuttle_rans_encode(uint8_t *out, size_t *out_len, size_t cap,
                         const int32_t *q0, const int32_t *qs,
@@ -73,23 +111,25 @@ int shuttle_rans_encode(uint8_t *out, size_t *out_len, size_t cap,
     for (int s = 0; s < RN; s++)
         x[s] = RANS_L;
     size_t pos = cap; /* write backwards */
-    size_t ntot = nq0 + nqs + nh;
+#if RANS_INTERLEAVED_STREAMS == 2
+    uint32_t x0 = x[0], x1 = x[1];
+#endif
 
     /* flat S[t]: q0[t] (t<nq0, Q0) then qs[t-nq0] (Qs) then h[...] (HINT).
-     * Push in REVERSE t; decode mirrors forward t with the same schedule.
-     */
-    for (size_t t = ntot; t-- > 0;) {
-        unsigned s = rans_stream_index(t);
-        if (pos < (size_t)(4 * RN + 4))
-            return -2;
-        if (t < nq0) {
-            ENC_ONE(RANS_Q0, &x[s], out, &pos, q0[t]);
-        } else if (t < nq0 + nqs) {
-            ENC_ONE(RANS_QS, &x[s], out, &pos, qs[t - nq0]);
-        } else {
-            ENC_ONE(RANS_HINT, &x[s], out, &pos, h[t - nq0 - nqs]);
-        }
-    }
+     * Pushing in REVERSE t visits the three models back-to-back in reverse
+     * order (HINT, then Qs, then Q0); splitting the single reverse loop
+     * into three contiguous runs hoists the model-selection branch out of
+     * the inner step.  Each run continues the global interleave at its
+     * start index, so the per-symbol stream/model/order/guard are
+     * identical to the fused loop -- the encoded bytes are unchanged. */
+    ENC_RUN(RANS_HINT, h, nh, nq0 + nqs);
+    ENC_RUN(RANS_QS, qs, nqs, nq0);
+    ENC_RUN(RANS_Q0, q0, nq0, (size_t)0);
+
+#if RANS_INTERLEAVED_STREAMS == 2
+    x[0] = x0;
+    x[1] = x1;
+#endif
     /* flush all RN states, state 0 first (lands last in the stream, so
      * decode reads state RN-1 first). */
     for (int s = 0; s < RN; s++)
