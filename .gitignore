@@ -4,12 +4,6 @@
 # Python generator caches.
 tools/__pycache__/
 
-# Transient test reports.  speed.txt / profiling.txt may be committed later as
-# evidence (P14 decides); everything else under test/ that is generated stays
-# out of the tree.
-test/*.txt
-*/test/*.txt
-
 # Local explore/scratch output.
 ref/explore/*.log
 

@@ -1,0 +1,42 @@
+=== SHUTTLE  avx2/  end-to-end speed (tail/median rdtsc cycles, speed_sign) ===
+ xof mode: NGCC
+ date    : 2026-06-26T06:28:05Z
+ kernel  : Linux 6.11.0-26-generic
+ cpu     : 11th Gen Intel(R) Core(TM) i7-11700K @ 3.60GHz
+ cc      : cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+ cflags  : -O3 -march=x86-64 -mavx2 -mtune=native -fomit-frame-pointer -std=c99 -Wpedantic -Wall -Wextra -mbmi2 -mpopcnt -mno-avx512f -I. -I../ref -I../ref/test -I../tools -DUSE_AVX2_NTT -DUSE_AVX2_SAMPLER -DUSE_AVX2_SHAKE4X -DUSE_AVX2_XOF_NWAY
+ stability metrics: p25/p50/p75/p90/p99 percentiles; StQ1/StQ2/StQ3 stabilized quartiles;
+   stddev / cv (stddev/avg); outlier_count(>p50*1.5); p90/p50 & p99/p50 tail ratios.
+
+-- AVX2 backend --
+-- XOF mode: NGCC --
+mode=128, pk=1264B, sk=2288B, sig(typ)=1183B, sig(bound)=1216B, mlen=64B
+keygen (10000 runs) in cycles: p25: 759986, p50: 1425664, p75: 2748372, p90: 4084896, p99: 8020504, StQ1: 847486, StQ2: 1581404, StQ3: 2699294, avg: 2056672
+keygen stability: stddev: 1609685, cv: 78.27%, outlier_count(>p50*1.5): 2889/10000, p90/p50: 2.87x, p99/p50: 5.63x
+sign (10000 runs) in cycles: p25: 1070452, p50: 1073446, p75: 1076746, p90: 1079996, p99: 1094212, StQ1: 1070404, StQ2: 1073440, StQ3: 1076869, avg: 1073786
+sign stability: stddev: 10784, cv: 1.00%, outlier_count(>p50*1.5): 1/10000, p90/p50: 1.01x, p99/p50: 1.02x
+verify median (10000 runs): 325784 cycles
+keygen throughput: 1784.1 ops/s (1000 iters)
+sign   throughput: 3351.3 ops/s (1000 iters)
+verify throughput: 11046.2 ops/s (1000 iters)
+
+mode=256, pk=1952B, sk=3680B, sig(typ)=2417B, sig(bound)=2432B, mlen=64B
+keygen (10000 runs) in cycles: p25: 1096126, p50: 2016030, p75: 2981860, p90: 3989200, p99: 7770964, StQ1: 1096188, StQ2: 1654263, StQ3: 2704065, avg: 2156357
+keygen stability: stddev: 1475116, cv: 68.41%, outlier_count(>p50*1.5): 1922/10000, p90/p50: 1.98x, p99/p50: 3.85x
+sign (10000 runs) in cycles: p25: 1686622, p50: 1734140, p75: 1740954, p90: 1745302, p99: 1753704, StQ1: 1686756, StQ2: 1727373, StQ3: 1740979, avg: 1717448
+sign stability: stddev: 29452, cv: 1.71%, outlier_count(>p50*1.5): 0/10000, p90/p50: 1.01x, p99/p50: 1.01x
+verify median (10000 runs): 461796 cycles
+keygen throughput: 1630.0 ops/s (1000 iters)
+sign   throughput: 2088.8 ops/s (1000 iters)
+verify throughput: 7760.8 ops/s (1000 iters)
+
+mode=512, pk=3648B, sk=7104B, sig(typ)=5001B, sig(bound)=5056B, mlen=64B
+keygen (10000 runs) in cycles: p25: 2112300, p50: 3944370, p75: 5843048, p90: 9530516, p99: 17153496, StQ1: 2104339, StQ2: 3783332, StQ3: 6550296, avg: 4924698
+keygen stability: stddev: 3604713, cv: 73.20%, outlier_count(>p50*1.5): 2246/10000, p90/p50: 2.42x, p99/p50: 4.35x
+sign (10000 runs) in cycles: p25: 3686560, p50: 3692624, p75: 3706202, p90: 3751670, p99: 3792658, StQ1: 3686416, StQ2: 3692745, StQ3: 3718570, avg: 3704774
+sign stability: stddev: 30171, cv: 0.81%, outlier_count(>p50*1.5): 0/10000, p90/p50: 1.02x, p99/p50: 1.03x
+verify median (10000 runs): 827362 cycles
+keygen throughput: 740.3 ops/s (1000 iters)
+sign   throughput: 971.3 ops/s (1000 iters)
+verify throughput: 4337.3 ops/s (1000 iters)
+

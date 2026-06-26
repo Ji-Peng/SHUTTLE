@@ -1,0 +1,211 @@
+=== SHUTTLE  ref/  per-component profile (cycles/op, make profile) ===
+ xof mode: NGCC
+ date    : 2026-06-26T06:21:55Z
+ kernel  : Linux 6.11.0-26-generic
+ cpu     : 11th Gen Intel(R) Core(TM) i7-11700K @ 3.60GHz
+ cc      : cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+ cflags  : -std=c99 -Wpedantic -Wall -Wextra -O2 -I. -Itest -I../tools
+
+-- pure-scalar reference --
+-- XOF mode: NGCC --
+
+=== SHUTTLE profile: mode=128 NGCC  (per-op, averaged over 500) ===
+-- keygen TIMING (cycles/op, % of total) --
+  expand_A                          2567579   19.66%   (calls 1497)
+  sample_noise (s,e)               10000324   76.58%   (calls 1497)
+  b-product (NTT mat-mul)            291479    2.23%   (calls 1497)
+  roundB (b, e')                      51368    0.39%   (calls 1497)
+  stretchS                             4140    0.03%   (calls 1497)
+  norm window                         54975    0.42%   (calls 1497)
+  pack pk/sk + tr                     89612    0.69%   (calls 500)
+  TOTAL (sum top-level)            13059480  100.00%
+-- RANDOMNESS: XOF squeezed (bytes/sig, % of total) --
+  A (ExpandA)                         36790   25.50%
+  noise                              107219   74.31%
+  other                                 271    0.19%
+  TOTAL squeezed                     144281
+
+
+=== SHUTTLE profile: mode=128 NGCC  (per-op, averaged over 2000) ===
+-- sign TIMING (cycles/op, % of total) --
+  setup (skDecode/tr/mu)              14379    0.26%   (calls 4000)
+  expand_A                           898123   16.10%   (calls 2000)
+  sample_y (Gaussian)               3984941   71.44%   (calls 2000)
+    xof squeeze (SampleY)           3344132   83.92% of parent
+    BaseSampler (sigma_s)            409366   10.27% of parent
+    ApproxExp (t7d8 Q64)             115111    2.89% of parent
+    fold/sign/finalize                72110    1.81% of parent
+  commitment (NTT mat-mul)           119205    2.14%   (calls 2000)
+    ntt forward                       54551   45.76% of parent
+    ntt pointwise/basemul             21503   18.04% of parent
+    ntt inverse                       34040   28.56% of parent
+  highbits/lsb (CompressY)             9299    0.17%   (calls 2000)
+  challenge (hash+sample)             68808    1.23%   (calls 2000)
+  irs (rejection sampler)            407524    7.31%   (calls 2000)
+    SamplerU (CLZ+mantissa)            2050    0.50% of parent
+    ApproxLog (g2 d13 Q62)            12249    3.01% of parent
+  normcheck (B_v gate)                38806    0.70%   (calls 2000)
+  makehint                            10515    0.19%   (calls 2000)
+  rANS encode                         26139    0.47%   (calls 2000)
+  pack (sigEncode layout)                 0    0.00%   (calls 0)
+  TOTAL (sum top-level)             5577743  100.00%
+-- RANDOMNESS: XOF squeezed (bytes/sig, % of total) --
+  setup                                  32    0.05%
+  A (ExpandA)                         12288   20.37%
+  gauss (SampleY)                     47098   78.06%
+  challenge                             160    0.27%
+  irs                                   756    1.25%
+  TOTAL squeezed                      60334
+
+
+=== SHUTTLE profile: mode=128 NGCC  (per-op, averaged over 2000) ===
+-- verify TIMING (cycles/op, % of total) --
+  unpack pk/sig                       37081    3.00%   (calls 2000)
+  setup (tr/mu)                       89563    7.25%   (calls 2000)
+  expand_A + b-hat NTT               897066   72.64%   (calls 2000)
+  commitment (1+ELL cols)            112977    9.15%   (calls 2000)
+  usehint/lsb                         11789    0.95%   (calls 2000)
+  challenge (hash+sample)             67998    5.51%   (calls 4000)
+  normcheck (z reconstruct)           18395    1.49%   (calls 2000)
+  TOTAL (sum top-level)             1234872  100.00%
+-- RANDOMNESS: XOF squeezed (bytes/sig, % of total) --
+  setup                                  64    0.51%
+  A (ExpandA)                         12288   98.21%
+  challenge                             160    1.28%
+  TOTAL squeezed                      12512
+
+
+
+=== SHUTTLE profile: mode=256 NGCC  (per-op, averaged over 500) ===
+-- keygen TIMING (cycles/op, % of total) --
+  expand_A                          2297129   16.52%   (calls 1039)
+  sample_noise (s,e)               10978504   78.97%   (calls 1039)
+  b-product (NTT mat-mul)            374312    2.69%   (calls 1039)
+  roundB (b, e')                      46746    0.34%   (calls 1039)
+  stretchS                             4676    0.03%   (calls 1039)
+  norm window                         64271    0.46%   (calls 1039)
+  pack pk/sk + tr                    137241    0.99%   (calls 500)
+  TOTAL (sum top-level)            13902883  100.00%
+-- RANDOMNESS: XOF squeezed (bytes/sig, % of total) --
+  A (ExpandA)                         34045   24.46%
+  noise                              104756   75.26%
+  other                                 396    0.28%
+  TOTAL squeezed                     139198
+
+
+=== SHUTTLE profile: mode=256 NGCC  (per-op, averaged over 2000) ===
+-- sign TIMING (cycles/op, % of total) --
+  setup (skDecode/tr/mu)              21061    0.23%   (calls 4000)
+  expand_A                          1168661   12.59%   (calls 2000)
+  sample_y (Gaussian)               6773167   72.99%   (calls 2000)
+    xof squeeze (SampleY)           5740707   84.76% of parent
+    BaseSampler (sigma_s)            673472    9.94% of parent
+    ApproxExp (t7d8 Q64)             188331    2.78% of parent
+    fold/sign/finalize               113489    1.68% of parent
+  commitment (NTT mat-mul)           222878    2.40%   (calls 2000)
+    ntt forward                      128001   57.43% of parent
+    ntt pointwise/basemul             28458   12.77% of parent
+    ntt inverse                       54625   24.51% of parent
+  highbits/lsb (CompressY)            11947    0.13%   (calls 2000)
+  challenge (hash+sample)            109088    1.18%   (calls 2000)
+  irs (rejection sampler)            853452    9.20%   (calls 2000)
+    SamplerU (CLZ+mantissa)            2852    0.33% of parent
+    ApproxLog (g2 d13 Q62)            17039    2.00% of parent
+  normcheck (B_v gate)                59502    0.64%   (calls 2000)
+  makehint                            13876    0.15%   (calls 2000)
+  rANS encode                         45515    0.49%   (calls 2000)
+  pack (sigEncode layout)                 0    0.00%   (calls 0)
+  TOTAL (sum top-level)             9279152  100.00%
+-- RANDOMNESS: XOF squeezed (bytes/sig, % of total) --
+  setup                                  64    0.07%
+  A (ExpandA)                         16384   16.84%
+  gauss (SampleY)                     79477   81.69%
+  challenge                             320    0.33%
+  irs                                  1044    1.07%
+  TOTAL squeezed                      97289
+
+
+=== SHUTTLE profile: mode=256 NGCC  (per-op, averaged over 2000) ===
+-- verify TIMING (cycles/op, % of total) --
+  unpack pk/sig                       61348    3.55%   (calls 2000)
+  setup (tr/mu)                      131964    7.63%   (calls 2000)
+  expand_A + b-hat NTT              1165848   67.42%   (calls 2000)
+  commitment (1+ELL cols)            215352   12.45%   (calls 2000)
+  usehint/lsb                         15713    0.91%   (calls 2000)
+  challenge (hash+sample)            107977    6.24%   (calls 4000)
+  normcheck (z reconstruct)           31042    1.80%   (calls 2000)
+  TOTAL (sum top-level)             1729246  100.00%
+-- RANDOMNESS: XOF squeezed (bytes/sig, % of total) --
+  setup                                 128    0.76%
+  A (ExpandA)                         16384   97.34%
+  challenge                             320    1.90%
+  TOTAL squeezed                      16832
+
+
+
+=== SHUTTLE profile: mode=512 NGCC  (per-op, averaged over 500) ===
+-- keygen TIMING (cycles/op, % of total) --
+  expand_A                          5099216   15.27%   (calls 1281)
+  sample_noise (s,e)               26830848   80.37%   (calls 1281)
+  b-product (NTT mat-mul)            930453    2.79%   (calls 1281)
+  roundB (b, e')                     113343    0.34%   (calls 1281)
+  stretchS                            12741    0.04%   (calls 1281)
+  norm window                        158070    0.47%   (calls 1281)
+  pack pk/sk + tr                    238874    0.72%   (calls 500)
+  TOTAL (sum top-level)            33383548  100.00%
+-- RANDOMNESS: XOF squeezed (bytes/sig, % of total) --
+  A (ExpandA)                         83951   25.36%
+  noise                              246088   74.35%
+  other                                 947    0.29%
+  TOTAL squeezed                     330987
+
+
+=== SHUTTLE profile: mode=512 NGCC  (per-op, averaged over 2000) ===
+-- sign TIMING (cycles/op, % of total) --
+  setup (skDecode/tr/mu)              39208    0.20%   (calls 4000)
+  expand_A                          2115354   10.94%   (calls 2000)
+  sample_y (Gaussian)              13310759   68.86%   (calls 2000)
+    xof squeeze (SampleY)          11251650   84.53% of parent
+    BaseSampler (sigma_s)           1368863   10.28% of parent
+    ApproxExp (t7d8 Q64)             367715    2.76% of parent
+    fold/sign/finalize               230827    1.73% of parent
+  commitment (NTT mat-mul)           449461    2.33%   (calls 2000)
+    ntt forward                      261541   58.19% of parent
+    ntt pointwise/basemul             55863   12.43% of parent
+    ntt inverse                      109154   24.29% of parent
+  highbits/lsb (CompressY)            23769    0.12%   (calls 2000)
+  challenge (hash+sample)            169918    0.88%   (calls 2000)
+  irs (rejection sampler)           2986327   15.45%   (calls 2000)
+    SamplerU (CLZ+mantissa)            6279    0.21% of parent
+    ApproxLog (g2 d13 Q62)            34311    1.15% of parent
+  normcheck (B_v gate)               118752    0.61%   (calls 2000)
+  makehint                            27592    0.14%   (calls 2000)
+  rANS encode                         87739    0.45%   (calls 2000)
+  pack (sigEncode layout)                 0    0.00%   (calls 0)
+  TOTAL (sum top-level)            19328884  100.00%
+-- RANDOMNESS: XOF squeezed (bytes/sig, % of total) --
+  setup                                 128    0.07%
+  A (ExpandA)                         32768   17.50%
+  gauss (SampleY)                    151651   80.99%
+  challenge                             640    0.34%
+  irs                                  2070    1.11%
+  TOTAL squeezed                     187257
+
+
+=== SHUTTLE profile: mode=512 NGCC  (per-op, averaged over 2000) ===
+-- verify TIMING (cycles/op, % of total) --
+  unpack pk/sig                      123406    3.91%   (calls 2000)
+  setup (tr/mu)                      217669    6.90%   (calls 2000)
+  expand_A + b-hat NTT              2114169   67.02%   (calls 2000)
+  commitment (1+ELL cols)            436143   13.83%   (calls 2000)
+  usehint/lsb                         31578    1.00%   (calls 2000)
+  challenge (hash+sample)            169773    5.38%   (calls 4000)
+  normcheck (z reconstruct)           61785    1.96%   (calls 2000)
+  TOTAL (sum top-level)             3154526  100.00%
+-- RANDOMNESS: XOF squeezed (bytes/sig, % of total) --
+  setup                                 256    0.76%
+  A (ExpandA)                         32768   97.34%
+  challenge                             640    1.90%
+  TOTAL squeezed                      33664
+
+
