@@ -542,9 +542,9 @@ static int sign_internal(uint8_t *sig, size_t *siglen, const uint8_t *m,
             PROF_STOP(PT_MAKEHINT, t_mh);
         }
 
-        /* Step o: z2' via the VERIFIER reconstruction (Description.tex
-         * L2541: "the signer literally re-runs the UseHint-equivalent
-         * reconstruction before the norm check").  We mirror Verify
+        /* Step o: z2' via the VERIFIER reconstruction (per the spec's Sign
+         * norm-check: the signer reconstructs z2' the UseHint-equivalent way
+         * before the B_v check).  We mirror Verify
          * EXACTLY -- reconstruct comY_0' = LSB(z0-c)*j and comY_tilde,
          * then use_hint.  This makes the gated z2' byte-identical to the
          * one the verifier will compute, so the B_v gate predicts

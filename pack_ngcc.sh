@@ -94,9 +94,9 @@ PROF_H="test/prof.h"
 
 # Per-backend SIMD extras (the N-way XOF + the vendored NTT live per <qset>).
 AVX2_SIMD_C="symmetric_avx2.c drng_avx2.c auxfunc_avx2.c fips202x4.c f1600x4.S"
-AVX2_SIMD_H="auxfunc_avx2.h drng_avx2.h fips202x4.h sm3_const.h"
+AVX2_SIMD_H="auxfunc_avx2.h drng_avx2.h fips202x4.h sm3_const.h simd_red.h"
 AVX512_SIMD_C="symmetric_avx512.c drng_avx512.c auxfunc_avx512.c fips202x8.c keccakf1600x8.c"
-AVX512_SIMD_H="auxfunc_avx512.h drng_avx512.h fips202x8.h sm3_const.h"
+AVX512_SIMD_H="auxfunc_avx512.h drng_avx512.h fips202x8.h sm3_const.h simd_red.h"
 
 # ---------------------------------------------------------------------------
 # Per-folder Makefile emitter.
