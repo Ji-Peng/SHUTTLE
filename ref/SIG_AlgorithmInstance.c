@@ -18,9 +18,10 @@ software is used for any other purposes.
  *
  *   (1) the three byte-length getters return the params.h size macros
  *       (CRYPTO_PUBLICKEYBYTES / CRYPTO_SECRETKEYBYTES / CRYPTO_BYTES);
- *       CRYPTO_BYTES is the rANS-variable signature UPPER BOUND
- *       (sig_get_sn_len_bytes()), large enough for either the RAW
- *       or rANS packing -- KAT_SIG.c calloc's the sn buffer with it once.
+ *       CRYPTO_BYTES is the EXACT rANS signature length
+ *       (sig_get_sn_len_bytes() == SIG_PACKED_BYTES) -- KAT_SIG.c calloc's
+ *       the sn buffer with it once.  (The RAW milestone path is larger and
+ *       reports SIG_RAW_PACKED_BYTES instead; see SHUTTLE_SIG_LEN below.)
  *
  *   (2) the three entry points draw the scheme-internal randomness from
  * the global SM3 Hash-DRBG drng_algorithm (NGCC_MODE) and forward to the
@@ -53,10 +54,10 @@ software is used for any other purposes.
 
 /* The realized signature length depends on the compiled packing path:
  *  - RAW milestone (-DSIG_RAW): fixed SIG_RAW_PACKED_BYTES (larger; the
- *    un-compressed seedC||z1||hint layout).  CRYPTO_BYTES (the rANS upper
- *    bound) is SMALLER than this, so sig_get_sn_len_bytes() MUST report
+ *    un-compressed seedC||z1||hint layout).  CRYPTO_BYTES (the rANS exact
+ *    length) is SMALLER than this, so sig_get_sn_len_bytes() MUST report
  * the RAW length or the KAT harness under-allocates the sn buffer.
- *  - rANS production path: fixed SIG_PACKED_BYTES <= CRYPTO_BYTES. */
+ *  - rANS production path: fixed SIG_PACKED_BYTES == CRYPTO_BYTES. */
 #if defined(SIG_RAW)
 #    define SHUTTLE_SIG_LEN ((unsigned long long)SIG_RAW_PACKED_BYTES)
 #else
@@ -98,7 +99,7 @@ unsigned long long sig_get_sn_len_bytes()
     /* The fixed signature length for the compiled packing path (RAW vs
      * rANS).  KAT_SIG.c calloc's the sn buffer with exactly this, so it
      * MUST be >= the realized signature length (RAW is larger than the
-     * rANS CRYPTO_BYTES bound -- see SHUTTLE_SIG_LEN above). */
+     * exact rANS CRYPTO_BYTES -- see SHUTTLE_SIG_LEN above). */
     return SHUTTLE_SIG_LEN;
 }
 

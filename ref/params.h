@@ -337,7 +337,7 @@
 #    define SK_SIZE_EXPECT 7104
 #endif
 
-/* CRYPTO_BYTES: the rANS-variable signature length bound returned by
+/* CRYPTO_BYTES: the rANS signature length returned by
  * sig_get_sn_len_bytes().  RANS_RESERVED_BYTES (the 2^-35 per-stream
  * overflow reserve) is pinned, so the realized compact signature is the
  * FIXED length SIG_PACKED_BYTES = CHALLENGESEEDBYTES + 2 +
@@ -347,16 +347,18 @@
  * These EXCEED the spec-table targets 1005/2155/4552 because the
  * source-law entropy of (Q0,Qs,h) plus the raw low bits already exceeds
  * those targets (even the Shannon floor is ~1115/2316/4866 B): the table
- * values are aspirational pending empirical re-validation.  We round
- * SIG_PACKED_BYTES up to a 64-byte multiple for head-room; pack_sig
- * static-asserts SIG_PACKED_BYTES <= CRYPTO_BYTES.  Realized sig length ==
- * SIG_PACKED_BYTES <= CRYPTO_BYTES. */
+ * values are aspirational pending empirical re-validation.  CRYPTO_BYTES is
+ * the EXACT realized length: it equals SIG_PACKED_BYTES with no head-room
+ * padding.  params.h precedes rans.h in the include order, so the literal
+ * is mirrored here and packing.c static-asserts SIG_PACKED_BYTES ==
+ * CRYPTO_BYTES as the drift gate.  Realized sig length == SIG_PACKED_BYTES
+ * == CRYPTO_BYTES. */
 #if SHUTTLE_MODE == 128
-#    define CRYPTO_BYTES 1216 /* >= SIG_PACKED_BYTES 1183 */
+#    define CRYPTO_BYTES 1183 /* == SIG_PACKED_BYTES */
 #elif SHUTTLE_MODE == 256
-#    define CRYPTO_BYTES 2432 /* >= SIG_PACKED_BYTES 2417 */
+#    define CRYPTO_BYTES 2417 /* == SIG_PACKED_BYTES */
 #elif SHUTTLE_MODE == 512
-#    define CRYPTO_BYTES 5056 /* >= SIG_PACKED_BYTES 5001 */
+#    define CRYPTO_BYTES 5001 /* == SIG_PACKED_BYTES */
 #endif
 
 /* ============================================================= *

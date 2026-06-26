@@ -190,7 +190,7 @@ int unpack_sig_raw(uint8_t seedC[CHALLENGESEEDBYTES], poly z1[Z1LEN],
 
 /* Production (rANS) packers.  pack_sig returns 0 on success, -2 if
  * the rANS encode runs out of support or overflows the reserve (=> Sign
- * restart).  sig must have room for SIG_PACKED_BYTES (<=
+ * restart).  sig must have room for SIG_PACKED_BYTES (==
  * CRYPTO_BYTES). */
 int pack_sig(uint8_t *sig, const uint8_t seedC[CHALLENGESEEDBYTES],
              const poly z1[Z1LEN], const poly h[EM]);

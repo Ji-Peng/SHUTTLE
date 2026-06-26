@@ -532,8 +532,9 @@ int pack_sig(uint8_t *sig, const uint8_t seedC[CHALLENGESEEDBYTES],
         p += (RANS_ZS_LO_PACKEDBYTES / ELL);
     }
 
-    _Static_assert(SIG_PACKED_BYTES <= CRYPTO_BYTES,
-                   "compact signature must fit in CRYPTO_BYTES");
+    _Static_assert(SIG_PACKED_BYTES == CRYPTO_BYTES,
+                   "compact signature length must equal CRYPTO_BYTES "
+                   "(CRYPTO_BYTES is the exact realized size, no padding)");
     _Static_assert(RANS_ZS_LO_PACKEDBYTES % ELL == 0,
                    "z_s low-bit body must split evenly across ELL polys "
                    "(N*b_s multiple of 8)");

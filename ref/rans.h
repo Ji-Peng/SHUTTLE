@@ -1012,8 +1012,9 @@ static const uint8_t RANS_HINT_SLOT[1024] = {
  * (RANS_RESERVED_BYTES)
  *   + raw low-bit body (POLYZ_LO_PACKEDBYTES).
  * The com region is fixed-size (zero-padded), so pack_sig output is
- * EXACTLY this length.  This is the value sig_get_sn_len_bytes() should
- * return (the params.h CRYPTO_BYTES placeholder must be >= this). */
+ * EXACTLY this length.  This is the value sig_get_sn_len_bytes()
+ * returns; the params.h CRYPTO_BYTES literal mirrors it exactly (packing.c
+ * static-asserts SIG_PACKED_BYTES == CRYPTO_BYTES). */
 #define SIG_PACKED_BYTES \
     (CHALLENGESEEDBYTES + RANS_BLOCK_BYTES + POLYZ_LO_PACKEDBYTES)
 

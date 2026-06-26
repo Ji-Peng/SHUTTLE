@@ -10,7 +10,7 @@
 
 -- AVX-512 backend --
 -- XOF mode: NGCC --
-mode=128, pk=1264B, sk=2288B, sig(typ)=1183B, sig(bound)=1216B, mlen=64B
+mode=128, pk=1264B, sk=2288B, sig=1183B, mlen=64B
 keygen (10000 runs) in cycles: p25: 497010, p50: 900998, p75: 1703190, p90: 2515686, p99: 4918000, StQ1: 551362, StQ2: 996690, StQ3: 1676743, avg: 1286012
 keygen stability: stddev: 978352, cv: 76.08%, outlier_count(>p50*1.5): 2890/10000, p90/p50: 2.79x, p99/p50: 5.46x
 sign (10000 runs) in cycles: p25: 771968, p50: 774640, p75: 777762, p90: 780974, p99: 787802, StQ1: 771940, StQ2: 774661, StQ3: 777893, avg: 774679
@@ -20,7 +20,7 @@ keygen throughput: 2844.4 ops/s (1000 iters)
 sign   throughput: 4642.1 ops/s (1000 iters)
 verify throughput: 13308.3 ops/s (1000 iters)
 
-mode=256, pk=1952B, sk=3680B, sig(typ)=2417B, sig(bound)=2432B, mlen=64B
+mode=256, pk=1952B, sk=3680B, sig=2417B, mlen=64B
 keygen (10000 runs) in cycles: p25: 718038, p50: 1260844, p75: 1850470, p90: 2484302, p99: 4768098, StQ1: 718103, StQ2: 1055096, StQ3: 1694489, avg: 1360284
 keygen stability: stddev: 896404, cv: 65.90%, outlier_count(>p50*1.5): 2091/10000, p90/p50: 1.97x, p99/p50: 3.78x
 sign (10000 runs) in cycles: p25: 1190662, p50: 1243458, p75: 1249062, p90: 1253106, p99: 1260548, StQ1: 1191021, StQ2: 1235609, StQ3: 1249129, avg: 1224184
@@ -30,7 +30,7 @@ keygen throughput: 2583.3 ops/s (1000 iters)
 sign   throughput: 2954.6 ops/s (1000 iters)
 verify throughput: 9325.2 ops/s (1000 iters)
 
-mode=512, pk=3648B, sk=7104B, sig(typ)=5001B, sig(bound)=5056B, mlen=64B
+mode=512, pk=3648B, sk=7104B, sig=5001B, mlen=64B
 keygen (10000 runs) in cycles: p25: 1370022, p50: 2459016, p75: 3605422, p90: 5806698, p99: 10322558, StQ1: 1358579, StQ2: 2359159, StQ3: 4014895, avg: 3042439
 keygen stability: stddev: 2156478, cv: 70.88%, outlier_count(>p50*1.5): 2221/10000, p90/p50: 2.36x, p99/p50: 4.20x
 sign (10000 runs) in cycles: p25: 2793646, p50: 2799246, p75: 2808206, p90: 2859098, p99: 2872404, StQ1: 2793540, StQ2: 2799308, StQ3: 2821091, avg: 2810055

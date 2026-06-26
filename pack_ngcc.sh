@@ -213,6 +213,11 @@ assemble() {
     # Profiling probe header (no-op; relative include "test/prof.h").
     cp -L "${REF}/${PROF_H}" "${dir}/test/prof.h"
 
+    # Per-backend benchmark result snapshots (speed + profiling), shipped as
+    # documentation of the measured numbers for this implementation tier.
+    cp -L "${srcdir}/test/speed.txt"     "${dir}/test/speed.txt"
+    cp -L "${srcdir}/test/profiling.txt" "${dir}/test/profiling.txt"
+
     # Per-set scalar NTT oracle (relative include "ntt/<qset>/ntt_ref.h").
     cp -L "${REF}/ntt/${qs}/ntt_ref.c" "${dir}/ntt/${qs}/ntt_ref.c"
     cp -L "${REF}/ntt/${qs}/ntt_ref.h" "${dir}/ntt/${qs}/ntt_ref.h"
@@ -296,6 +301,8 @@ Per-folder file inventory:
   ntt/<qset>/ntt_ref.{c,h}  Per-set scalar NTT.
   <qset>/ntt*.{S,c}         Per-set vectorized NTT (Optimized/Additional only).
   test/prof.h               No-op profiling-probe header.
+  test/speed.txt            Measured end-to-end speed snapshot (this tier).
+  test/profiling.txt        Measured per-stage profiling snapshot (this tier).
 
 The matching Known-Answer-Test vectors are in ../Test_Vectors/.
 EOF

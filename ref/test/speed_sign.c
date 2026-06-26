@@ -162,10 +162,11 @@ int main(void)
             cv[i] = cpucycles() - a;
         }
 
+        /* sig is the exact realized length: SIG_TYP_BYTES == sn_cap
+         * (sig_get_sn_len_bytes() == CRYPTO_BYTES == SIG_PACKED_BYTES). */
         printf(
-            "mode=%d, pk=%lluB, sk=%lluB, sig(typ)=%lluB, "
-            "sig(bound)=%lluB, mlen=%dB\n",
-            (int)LAMBDA, pk_len, sk_len, SIG_TYP_BYTES, sn_cap, MLEN);
+            "mode=%d, pk=%lluB, sk=%lluB, sig=%lluB, mlen=%dB\n",
+            (int)LAMBDA, pk_len, sk_len, SIG_TYP_BYTES, MLEN);
         bench_print_tail(&keygen_result);
         bench_print_tail(&sign_result);
         printf("verify median (%d runs): %llu cycles\n", NV,

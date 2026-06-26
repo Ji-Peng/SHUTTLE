@@ -291,7 +291,15 @@ MACHINFO = printf ' date    : '; date -u '+%Y-%m-%dT%H:%M:%SZ'; \
            printf ' cc      : '; $(CC) --version | head -1; \
            printf ' cflags  : %s\n' '$(CFLAGS)'
 
+# `speed` runs the full bench under BOTH XOF backends -- NGCC (SM3 Hash-DRBG)
+# first, then SHA3 (SHAKE) -- via two recursive sub-makes; speed_run is the
+# single-XOF-mode worker (the MODE make-var selects the backend).  speed_txt
+# captures both passes into one test/speed.txt.
+.PHONY: speed speed_run
 speed:
+	@$(MAKE) --no-print-directory speed_run MODE=
+	@$(MAKE) --no-print-directory speed_run MODE=SHA3
+speed_run:
 	@mkdir -p $(BINDIR)
 	@echo "-- XOF mode: $(MODELABEL) --"
 	@for m in $(MODES); do \
@@ -305,7 +313,7 @@ speed:
 
 speed_txt:
 	@{ echo "=== SHUTTLE  avx2/  end-to-end speed (tail/median rdtsc cycles, speed_sign) ==="; \
-	   echo " xof mode: $(MODELABEL)"; \
+	   echo " xof modes: NGCC then SHA3 (both passes below)"; \
 	   $(MACHINFO); \
 	   echo " stability metrics: p25/p50/p75/p90/p99 percentiles; StQ1/StQ2/StQ3 stabilized quartiles;"; \
 	   echo "   stddev / cv (stddev/avg); outlier_count(>p50*1.5); p90/p50 & p99/p50 tail ratios."; \
@@ -313,7 +321,13 @@ speed_txt:
 	@$(MAKE) --no-print-directory speed >> test/speed.txt
 	@echo "wrote test/speed.txt"; cat test/speed.txt
 
+# `profile` runs both XOF backends (NGCC then SHA3) like `speed`; profile_run
+# is the single-XOF-mode worker.
+.PHONY: profile profile_run
 profile:
+	@$(MAKE) --no-print-directory profile_run MODE=
+	@$(MAKE) --no-print-directory profile_run MODE=SHA3
+profile_run:
 	@mkdir -p $(BINDIR)
 	@echo "-- XOF mode: $(MODELABEL) --"
 	@for m in $(MODES); do \
@@ -327,7 +341,7 @@ profile:
 
 profile_txt:
 	@{ echo "=== SHUTTLE  avx2/  per-component profile (cycles/op, make profile) ==="; \
-	   echo " xof mode: $(MODELABEL)"; \
+	   echo " xof modes: NGCC then SHA3 (both passes below)"; \
 	   $(MACHINFO); echo; echo "-- AVX2 backend --"; } > test/profiling.txt
 	@$(MAKE) --no-print-directory profile >> test/profiling.txt
 	@echo "wrote test/profiling.txt"
