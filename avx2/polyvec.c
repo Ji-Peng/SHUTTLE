@@ -94,22 +94,29 @@
 #    define SHUTTLE_XOF_DECLARE_AVX2 1
 #    include "symmetric.h" /* xof_ctx_avx2, xof128/256_avx2_init/squeeze */
 
-/* Number of N-way passes to cover the 16 logical streams (2 for 8-way SM3,
- * 4 for 4-way SHAKE).  XOF_STREAMS is a multiple of XOF_LANES_AVX2 for
- * both MODEs (16 % 8 == 0, 16 % 4 == 0), so the passes tile the streams
- * exactly with no partial trailing pass. */
-#    define XOF_NWAY_PASSES (XOF_STREAMS / XOF_LANES_AVX2)
+/* At most XOF_STREAMS/XOF_LANES_AVX2 N-way passes cover the 16 logical
+ * streams (2 for 8-way SM3, 4 for 4-way SHAKE).  XOF_STREAMS is a multiple
+ * of XOF_LANES_AVX2 for both MODEs (16 % 8 == 0, 16 % 4 == 0), so the
+ * passes tile the streams exactly with no partial trailing pass; a caller
+ * that needs only nfill streams drives ceil(nfill / lanes) of them. */
 _Static_assert(
     (XOF_STREAMS % XOF_LANES_AVX2) == 0,
     "16 logical streams must tile the N-way lane count exactly");
 
-/* Batch-fill the refill==0 block of all XOF_STREAMS lanes with the N-way
- * XOF.  `nonces[t]` is the fully-built absorbed nonce for stream t
- * (tag||seed||LE16(t)||LE16(0)); `nonce_len` is shared (the producer
- * builds them all the same length).  `dst[t]` receives `block_len` bytes
- * for stream t.  `use_xof128` selects the 128 (public, ExpandA) vs 256
- * family; under NGCC_MODE the two collapse to the same SM3 DRBG (the
- * 128/256 XOF collapse).
+/* Batch-fill the refill==0 block of the leading `nfill` lanes (slots
+ * 0..nfill-1) with the N-way XOF.  `nonces[t]` is the fully-built absorbed
+ * nonce for stream t (tag||seed||LE16(t)||LE16(0)); `nonce_len` is shared
+ * (the producer builds them all the same length).  `dst[t]` receives
+ * `block_len` bytes for stream t.  `use_xof128` selects the 128 (public,
+ * ExpandA) vs 256 family; under NGCC_MODE the two collapse to the same SM3
+ * DRBG (the 128/256 XOF collapse).
+ *
+ * Callers compact their active lanes into the leading `nfill` slots, so we
+ * issue only ceil(nfill / lanes) passes: a pass whose lanes are all >=
+ * nfill would fill nothing the caller reads.  When the lane width covers
+ * all 16 streams in one pass this is always a single pass; the win is in
+ * the SHAKE path, where a caller needing <= lanes streams skips the
+ * trailing passes entirely.
  *
  * Lane k of pass p serves logical stream (p*XOF_LANES_AVX2 + k), matching
  * shuttle_xof_stream_of() -- so dst[stream_idx] gets lane k's bytes, which
@@ -118,10 +125,12 @@ _Static_assert(
 static void xof_nway_fill16(uint8_t *const dst[XOF_STREAMS],
                             const uint8_t *const nonces[XOF_STREAMS],
                             size_t nonce_len, size_t block_len,
-                            int use_xof128)
+                            int use_xof128, unsigned nfill)
 {
+    const unsigned passes =
+        (nfill + (unsigned)XOF_LANES_AVX2 - 1) / (unsigned)XOF_LANES_AVX2;
     unsigned pass, k;
-    for (pass = 0; pass < (unsigned)XOF_NWAY_PASSES; pass++) {
+    for (pass = 0; pass < passes; pass++) {
         const uint8_t *seedp[XOF_LANES_AVX2];
         uint8_t *outp[XOF_LANES_AVX2];
         xof_ctx_avx2 ctx;
@@ -501,7 +510,7 @@ void expand_a(poly16 agen[EM], poly16 hAgen[EM * ELL],
             }
             /* ExpandA uses xof128 (public material, tag 0x02). */
             xof_nway_fill16(dst, nonces, us[0].nonce_len, UNIFORM_DRAW,
-                            /*use_xof128=*/1);
+                            /*use_xof128=*/1, /*nfill=*/XOF_STREAMS);
             for (t = 0; t < XOF_STREAMS; t++) {
                 /* First slice resident; ctx not yet live -- a continuation
                  * slice (rare) lazily inits the scalar ctx and skips
@@ -621,7 +630,7 @@ static void gs_batch_first_fill(gauss_stream gss[XOF_STREAMS])
     /* All gauss streams use xof256 (ExpandS tag 0x03 / SampleY tag 0x08).
      */
     xof_nway_fill16(dst, noncep, nlen, blk,
-                    /*use_xof128=*/0);
+                    /*use_xof128=*/0, /*nfill=*/XOF_STREAMS);
     for (t = 0; t < XOF_STREAMS; t++) {
         gss[t].pos = 0;
         gss[t].avail = blk;
@@ -773,22 +782,29 @@ static void expands_roundrobin(gauss_stream gss[XOF_STREAMS],
             }
         }
 
-        /* (2) one N-way pass fills all queued lanes' next block at once.
-         * The `nfill` lanes needing a fill occupy the leading slots; the
-         * rest are padded to DISTINCT throwaway buffers (never consumed)
-         * so the producer always issues whole N-way passes.  Correctness
-         * depends only on the leading `nfill` slots, whose bytes land in
-         * the real lane buffers and match the scalar single-stream squeeze
-         * over the SAME nonce (lane-equivalence). */
+        /* (2) the queued lanes get their next block in ceil(nfill / lanes)
+         * N-way passes.  The `nfill` lanes needing a fill occupy the
+         * leading slots; the trailing slots of the LAST (partial) pass are
+         * padded to DISTINCT throwaway buffers (never consumed) so each
+         * issued pass is a whole N-way squeeze.  Passes that would serve
+         * only slots >= nfill are skipped inside xof_nway_fill16 --
+         * byte-neutral, since the caller never reads those slots.
+         * Correctness depends only on the leading `nfill` slots, whose
+         * bytes land in the real lane buffers and match the scalar
+         * single-stream squeeze over the SAME nonce (lane-equivalence). */
         if (nfill) {
+            const unsigned padto =
+                ((nfill + (unsigned)XOF_LANES_AVX2 - 1) /
+                 (unsigned)XOF_LANES_AVX2) *
+                (unsigned)XOF_LANES_AVX2;
             PROF_START(t_sh);
-            for (t = nfill; t < XOF_STREAMS; t++) {
+            for (t = nfill; t < padto; t++) {
                 noncep[t] =
                     noncep[0]; /* any valid nonce; output discarded */
                 dstp[t] = scratch[t];
             }
             xof_nway_fill16(dstp, noncep, nlen, blk,
-                            /*use_xof128=*/0);
+                            /*use_xof128=*/0, nfill);
             for (t = 0; t < nfill; t++)
                 gss[fill_lane[t]].avail += blk;
             PROF_STOP(PT_G_SHAKE, t_sh);
@@ -1301,26 +1317,33 @@ static void gauss_roundrobin(gauss_stream gss[XOF_STREAMS],
             }
         }
 
-        /* (2) one N-way pass fills all queued lanes' next block at once.
-         * xof_nway_fill16 wants XOF_STREAMS-length nonce/dst arrays
-         * indexed by physical N-way slot; the `nfill` lanes needing a fill
-         * occupy the leading slots and the rest are padded to DISTINCT
-         * throwaway buffers (never consumed) so the producer always issues
-         * whole N-way passes with the SIMD fully utilised.  Each padding
-         * slot reuses an active nonce (any valid absorb) but its own
-         * scratch dst, so there is no aliasing -- correctness depends only
-         * on the leading `nfill` slots, whose bytes land in the real lane
-         * buffers and match the scalar single-stream squeeze over the SAME
-         * nonce (lane-equivalence). */
+        /* (2) the queued lanes get their next block in ceil(nfill / lanes)
+         * N-way passes.  xof_nway_fill16 wants XOF_STREAMS-length
+         * nonce/dst arrays indexed by physical N-way slot; the `nfill`
+         * lanes needing a fill occupy the leading slots and the trailing
+         * slots of the LAST (partial) pass are padded to DISTINCT
+         * throwaway buffers (never consumed) so each issued pass is a
+         * whole N-way squeeze with the SIMD fully utilised.  Passes that
+         * would serve only slots >= nfill are skipped inside
+         * xof_nway_fill16 -- byte-neutral, since the caller never reads
+         * those slots.  Each padding slot reuses an active nonce (any
+         * valid absorb) but its own scratch dst, so there is no aliasing
+         * -- correctness depends only on the leading `nfill` slots, whose
+         * bytes land in the real lane buffers and match the scalar
+         * single-stream squeeze over the SAME nonce (lane-equivalence). */
         if (nfill) {
+            const unsigned padto =
+                ((nfill + (unsigned)XOF_LANES_AVX2 - 1) /
+                 (unsigned)XOF_LANES_AVX2) *
+                (unsigned)XOF_LANES_AVX2;
             PROF_START(t_sh);
-            for (t = nfill; t < XOF_STREAMS; t++) {
+            for (t = nfill; t < padto; t++) {
                 noncep[t] =
                     noncep[0]; /* any valid nonce; output discarded */
                 dstp[t] = scratch[t];
             }
             xof_nway_fill16(dstp, noncep, nlen, blk,
-                            /*use_xof128=*/0);
+                            /*use_xof128=*/0, nfill);
             for (t = 0; t < nfill; t++)
                 gss[fill_lane[t]].avail += blk;
             PROF_STOP(PT_G_SHAKE, t_sh);
