@@ -14,3 +14,15 @@ test/.ct_scan_objs/
 *.a
 massif.out*
 *.massif
+
+# Packaged NGCC submission tree (regenerable via pack_ngcc.sh).
+dist/
+
+# Generated audit/report snapshots (regenerable via the audit scripts).
+test/diff_fuzz_matrix.txt
+test/integration_audit_matrix.txt
+test/leak_audit.txt
+test/perf_review_checklist_status.txt
+
+# bulk-K derivation intermediates; the script + bulk_k.log are committed.
+tools/gen_bulk_k/hist_*.txt

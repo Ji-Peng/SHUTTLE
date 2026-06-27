@@ -225,10 +225,15 @@ int main(void)
             if (pk2[SEEDBYTES + 5] == saved)
                 pk2[SEEDBYTES + 5] ^= 0x02;
             v = crypto_sign_verify(sig, siglen, msg, sizeof msg, pk2);
-            if (v != -1) {
+            /* A tampered pk must be REJECTED; the reject may surface either
+             * as -1 (commitment/hash mismatch) or as -2 (pkDecode: the
+             * flipped byte pushes a packed b coefficient out of range).
+             * Both are correct rejections -- which one fires depends on the
+             * key's concrete coefficient values, so accept either. */
+            if (v != -1 && v != -2) {
                 printf(
                     "[e] FAIL: tampered-pk verify returned %d "
-                    "(expected -1)\n",
+                    "(expected -1 or -2)\n",
                     v);
                 fails++;
             }

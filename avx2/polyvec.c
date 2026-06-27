@@ -221,20 +221,18 @@ void expand_signing_seeds(uint8_t seedY[SEEDBYTES],
 /* ===================================================================== *
  *  16-lane uniform-reject stream (ExpandA)                              *
  *                                                                       *
- *  A per-(lane,refill) XOF instance supplies UNIFORM_BLOCK logical      *
- *  bytes; the sampler crosses to the next instance (refill+1) only after *
- *  all of them are consumed.  We draw the block LAZILY in UNIFORM_DRAW   *
- *  slices from the same persisted ctx -- squeezing N then M bytes yields *
- *  the same bytes as one N+M squeeze (SHAKE/SM3-DRBG are streams), so    *
- *  the consumed byte sequence and the refill boundary are byte-identical *
- *  to one big squeeze; only the wasted tail is never squeezed.          *
- * ===================================================================== */
-#define UNIFORM_BLOCK 4096
+ *  Each lane opens ONE XOF instance (nonce = tag||seedA||LE16(lane)) and *
+ *  is advanced purely by repeated fixed-size UNIFORM_DRAW squeezes off   *
+ *  that persisted ctx.  Under NGCC each squeeze is one SM3 DRBG Generate *
+ *  (V advances one step); the fixed UNIFORM_DRAW block size is what keeps
+ * * ref and this N-way fork byte-exact.  Only the unused tail is never *
+ *  squeezed. */
 
 /* Right-sized slice: ceil-to-granularity of ~2x the mean per-lane byte
  * need (per-lane coeffs * BQ * 2, mean acceptance ~q/2^DQ).  Covers the
  * largest mode in one slice with margin; lazy continuation almost never
- * runs.  The refill boundary is governed by the UNIFORM_BLOCK cap. */
+ * runs.  It is the FIXED per-squeeze block size ref and this fork agree
+ * on. */
 #define UNIFORM_LANE_COEFFS ((size_t)EM * N * (1u + ELL) / XOF_STREAMS)
 #define UNIFORM_DRAW_RAW (UNIFORM_LANE_COEFFS * (size_t)BQ * 2u)
 #define UNIFORM_DRAW                                                    \
@@ -246,9 +244,8 @@ void expand_signing_seeds(uint8_t seedY[SEEDBYTES],
  * The mean candidate need is sum_{i=n-tau}^{n-1} 2^DN/(i+1) BN-byte draws
  * (well under 256 B for every mode); TAU*BN*4 ceil-to-granularity gives a
  * comfortable margin so the first slice covers the whole challenge in
- * essentially every call.  The instance still caps at SAMPLEC_BLOCK bytes,
- * preserving the per-refill XOF boundary byte-for-byte. */
-#define SAMPLEC_BLOCK UNIFORM_BLOCK /* logical per-refill instance cap */
+ * essentially every call.  SampleC opens ONE ctx and is advanced by
+ * repeated fixed-size SAMPLEC_DRAW squeezes off it. */
 #define SAMPLEC_DRAW_RAW ((size_t)TAU * (size_t)BN * 2u)
 #define SAMPLEC_DRAW                                                    \
     (((SAMPLEC_DRAW_RAW + (size_t)XOF_SQUEEZE_GRANULARITY_BYTES - 1u) / \
@@ -256,29 +253,26 @@ void expand_signing_seeds(uint8_t seedY[SEEDBYTES],
      (size_t)XOF_SQUEEZE_GRANULARITY_BYTES)
 
 typedef struct {
-    uint8_t
-        nonce[1 + SEEDBYTES + 2 + 2]; /* tag||seed||LE16(lane)||LE16(rc) */
+    uint8_t nonce[1 + SEEDBYTES + 2]; /* tag||seed||LE16(lane) */
     size_t nonce_len;
-    uint16_t lane, refill;
+    uint16_t lane;
     size_t pos, avail; /* cursor / valid bytes within buf            */
-    size_t drawn;      /* bytes squeezed from the current XOF instance */
-    int ctx_ready;     /* persisted ctx initialised for this instance  */
-    xof_ctx ctx;       /* live XOF instance for incremental slices      */
+    size_t drawn;      /* bytes squeezed from the persisted XOF chain  */
+    int ctx_ready;     /* persisted ctx initialised                    */
+    xof_ctx ctx;       /* live XOF instance: single init, then squeeze  */
     uint8_t buf[UNIFORM_DRAW];
 } uniform_stream;
 
-/* Squeeze the next slice of the CURRENT XOF instance into buf.  If the
- * persisted ctx is not yet live (the initial slice was filled by the N-way
- * batched path), init it from the nonce and fast-forward past the `drawn`
- * bytes already consumed -- identical bytes either way (stream). */
+/* Squeeze the next UNIFORM_DRAW slice off the persisted XOF chain into
+ * buf. If the persisted ctx is not yet live (the initial slice was filled
+ * by the N-way batched path), init it from the nonce and fast-forward past
+ * the `drawn` bytes already produced -- replaying the chain in
+ * UNIFORM_DRAW units gives the identical V evolution, so the bytes match
+ * either way. */
 static void us_draw_slice(uniform_stream *us)
 {
-    size_t want = UNIFORM_BLOCK - us->drawn;
-    if (want > UNIFORM_DRAW)
-        want = UNIFORM_DRAW;
     if (!us->ctx_ready) {
         put_le16(us->nonce + 1 + SEEDBYTES, us->lane);
-        put_le16(us->nonce + 1 + SEEDBYTES + 2, us->refill);
         xof128_init(&us->ctx, us->nonce, us->nonce_len);
         if (us->drawn) {
             uint8_t skip[UNIFORM_DRAW];
@@ -291,10 +285,10 @@ static void us_draw_slice(uniform_stream *us)
         }
         us->ctx_ready = 1;
     }
-    xof128_squeeze(&us->ctx, us->buf, want);
+    xof128_squeeze(&us->ctx, us->buf, UNIFORM_DRAW);
     us->pos = 0;
-    us->avail = want;
-    us->drawn += want;
+    us->avail = UNIFORM_DRAW;
+    us->drawn += UNIFORM_DRAW;
 }
 
 static void us_fill(uniform_stream *us)
@@ -306,18 +300,16 @@ static void us_fill(uniform_stream *us)
 
 /* us_setup: build the per-lane nonce + state WITHOUT drawing the first
  * slice (so the 16 lanes' initial fills can be batched N-way).  The
- * nonce's LE16(lane) / LE16(refill) fields are written here for refill==0
- * so the batched N-way fill can absorb us->nonce directly. */
+ * nonce's LE16(lane) field is written here so the batched N-way fill can
+ * absorb us->nonce directly. */
 static void us_setup(uniform_stream *us, const uint8_t *seedA,
                      unsigned lane)
 {
     us->nonce[0] = DS_EXPAND_A;
     memcpy(us->nonce + 1, seedA, SEEDBYTES);
-    us->nonce_len = 1 + SEEDBYTES + 2 + 2;
+    us->nonce_len = 1 + SEEDBYTES + 2;
     us->lane = (uint16_t)lane;
-    us->refill = 0;
-    put_le16(us->nonce + 1 + SEEDBYTES, us->lane);       /* LE16(lane)   */
-    put_le16(us->nonce + 1 + SEEDBYTES + 2, us->refill); /* LE16(rc=0) */
+    put_le16(us->nonce + 1 + SEEDBYTES, us->lane); /* LE16(lane) */
     us->pos = 0;
     us->avail = 0; /* not yet filled */
     us->drawn = 0;
@@ -328,25 +320,18 @@ static void us_init(uniform_stream *us, const uint8_t *seedA,
                     unsigned lane)
 {
     us_setup(us, seedA, lane);
-    us_fill(us); /* scalar single-stream fill (refill==0) */
+    us_fill(us); /* scalar single-stream fill */
 }
 
 /* Pull BQ bytes (a uniform-Z_q candidate).  When the current slice runs
- * out, draw the next slice of the same instance; only after the whole
- * UNIFORM_BLOCK is consumed do we advance to the next instance (refill+1).
- */
+ * out, squeeze the next UNIFORM_DRAW block off the SAME persisted ctx (the
+ * V chain just advances one Generate -- no re-init, no refill counter). */
 static uint16_t us_next_candidate(uniform_stream *us)
 {
     uint32_t mask = (1u << DQ_BITS) - 1u;
     uint16_t a;
-    if (us->pos + BQ > us->avail) {
-        if (us->drawn < UNIFORM_BLOCK) {
-            us_draw_slice(us); /* same instance, next slice */
-        } else {
-            us->refill++; /* instance exhausted: next instance */
-            us_fill(us);
-        }
-    }
+    if (us->pos + BQ > us->avail)
+        us_draw_slice(us);
     a = (uint16_t)get_le_masked(us->buf + us->pos, BQ, mask);
     us->pos += BQ;
     return a;
@@ -541,21 +526,9 @@ void expand_a(poly16 agen[EM], poly16 hAgen[EM * ELL],
 /* ===================================================================== *
  *  16-lane noise/gauss stream (ExpandS, SampleY) -- one-squeeze-per-fill *
  * ===================================================================== */
-void gauss_stream_init(gauss_stream *gs, uint8_t tag, const uint8_t *seed,
-                       unsigned lane)
-{
-    gs->tag = tag;
-    gs->seed = seed;
-    gs->lane = (uint16_t)lane;
-    gs->refill = 0;
-    gs->pos = 0;
-    gs->avail = 0;
-}
-
-/* Build the per-(lane,refill) absorbed nonce for a gauss_stream into
- * `nonce`; returns the nonce length.  Shared by gs_fill (scalar) and the
- * N-way batched first fill so the byte layout is defined in exactly one
- * place (tag || seed || LE16(lane) || LE16(refill)). */
+/* Build the absorbed nonce (tag || seed || LE16(lane), no refill) into
+ * `nonce`; returns the nonce length.  Shared by gauss_stream_init and the
+ * gs_fill SHA3 fallback so the byte layout is defined in one place. */
 static size_t gs_build_nonce(const gauss_stream *gs, uint8_t *nonce)
 {
     size_t seedlen =
@@ -563,19 +536,54 @@ static size_t gs_build_nonce(const gauss_stream *gs, uint8_t *nonce)
     nonce[0] = gs->tag;
     memcpy(nonce + 1, gs->seed, seedlen);
     put_le16(nonce + 1 + seedlen, gs->lane);
-    put_le16(nonce + 1 + seedlen + 2, gs->refill);
-    return 1 + seedlen + 2 + 2;
+    return 1 + seedlen + 2;
 }
 
+void gauss_stream_init(gauss_stream *gs, uint8_t tag, const uint8_t *seed,
+                       unsigned lane)
+{
+    uint8_t nonce[1 + CHALLENGESEEDBYTES + 2];
+    size_t nlen;
+    gs->tag = tag;
+    gs->seed = seed;
+    gs->lane = (uint16_t)lane;
+    gs->pos = 0;
+    gs->avail = 0;
+    gs->bulk_ptr = NULL; /* scalar path: always XOF off gs->ctx */
+    gs->bulk_left = 0;
+    gs->ff_blocks = 0;
+    nlen = gs_build_nonce(gs, nonce);
+    xof256_init(&gs->ctx, nonce, nlen);
+}
+
+/* Draw one gauss_block_bytes block into gs->buf+gs->avail.  Source order:
+ *  (1) if N-way pre-filled blocks remain, memcpy the next one (the AVX
+ * bulk path);  (2) else squeeze off the persisted per-lane ctx -- which is
+ *      already at V_K (the post-bulk state, copied out of the N-way ctx
+ *      under NGCC) or, under SHA3, lazily re-derived by fast-forwarding
+ *      ff_blocks blocks on the first fallback. */
 static void gs_fill(gauss_stream *gs)
 {
-    uint8_t nonce[1 + CHALLENGESEEDBYTES + 2 + 2];
     size_t blk = gauss_block_bytes(gs->tag);
-    size_t nlen;
-    xof_ctx ctx;
-    nlen = gs_build_nonce(gs, nonce);
-    xof256_init(&ctx, nonce, nlen);
-    xof256_squeeze(&ctx, gs->buf + gs->avail, blk);
+    if (gs->bulk_left) {
+        memcpy(gs->buf + gs->avail, gs->bulk_ptr, blk);
+        gs->bulk_ptr += blk;
+        gs->bulk_left--;
+        gs->avail += blk;
+        return;
+    }
+    if (gs->ff_blocks) {
+        uint8_t nonce[1 + CHALLENGESEEDBYTES + 2];
+        size_t nlen = gs_build_nonce(gs, nonce);
+        size_t f;
+        xof256_init(&gs->ctx, nonce, nlen);
+        for (f = 0; f < gs->ff_blocks; f++) {
+            uint8_t skip[GAUSS_STREAM_BLOCK];
+            xof256_squeeze(&gs->ctx, skip, blk);
+        }
+        gs->ff_blocks = 0;
+    }
+    xof256_squeeze(&gs->ctx, gs->buf + gs->avail, blk);
     gs->avail += blk;
 }
 
@@ -589,52 +597,125 @@ void gs_ensure(gauss_stream *gs, size_t need)
             memmove(gs->buf, gs->buf + gs->pos, left);
         gs->pos = 0;
         gs->avail = left;
-        gs->refill++;
         gs_fill(gs);
     }
 }
 
 #if defined(USE_AVX2_XOF_NWAY) && defined(__AVX2__)
-/* gs_batch_first_fill: draw the FIRST GAUSS_STREAM_BLOCK of all
- * XOF_STREAMS gauss_streams N-at-a-time (xof256: 8-way SM3 / 4-way SHAKE).
+/* gauss_bulk_setup: N-way pre-fill of the gauss lane buffers (xof256:
+ * 8-way SM3 = 2 passes / 4-way SHAKE = 4 passes), preserving each lane's
+ * single-init model.
  *
- * BYTE-EXACT to 16 sequential scalar first fills.  Note the scalar
- * discipline (gauss_stream_init sets refill=0; the first gs_ensure does
- * refill++ THEN gs_fill): the first block is therefore drawn with
- * refill==1 in the absorbed nonce.  We replicate that EXACTLY -- set each
- * lane's refill to 1, build the nonce with LE16(refill=1), batch-fill
- * buf[0..GAUSS_STREAM_BLOCK), and set pos=0 / avail=GAUSS_STREAM_BLOCK.
- * Subsequent (rare) continuation refills then run the scalar gs_ensure
- * path with refill = 2,3,... -- byte-identical to ref.  Lane k of the
- * N-way squeeze over nonce(stream s, rc=1) equals the scalar xof256 over
- * the same nonce (lane-equivalence).
- *
- * `gss[t]` must already be gauss_stream_init()'d (tag/seed/lane set). */
-static void gs_batch_first_fill(gauss_stream gss[XOF_STREAMS])
+ * Kyber gen_matrix-style **bulk-preset K + scalar fallback**: one
+ * persisted N-way XOF ctx per pass squeezes K fixed-size blocks for all
+ * XOF_STREAMS lanes in lockstep (uniform, no skip problem since every lane
+ * draws exactly K blocks), then each lane consumes scalar from its K*blk
+ * private region. A lane that needs a (K+1)-th block hits gs_fill's
+ * fallback: under NGCC the lane's evolved DRBG state V_K is copied
+ * straight out of the post-bulk N-way ctx (drng_copy_lane, one SoA
+ * memcpy), so the lane's gs->ctx is already at V_K and continuation
+ * squeezes are byte-identical to ref; under SHA3 the lane re-inits and
+ * fast-forwards K blocks (ff_blocks) on its first fallback.  K is tuned
+ * (BULK_K_* in polyvec.h) so P(lane exceeds K) <= 1/16
+ * -- the marginal N-way block pays for itself exactly when >=1/16 of the
+ * 16 lanes still need it -- so almost every lane finishes inside the bulk
+ * and the fallback waste is negligible (see the polyvec.h cost-model
+ * comment). */
+
+#    ifndef SHA3_MODE
+/* Copy lane `lane`'s evolved SM3-DRBG state out of a (post-bulk) N-way ctx
+ * into a scalar ctx, so scalar squeezes continue the exact same V-chain.
+ */
+static void drng_copy_lane(xof_ctx *dst, const xof_ctx_avx2 *src,
+                           unsigned lane)
 {
-    uint8_t nonces[XOF_STREAMS][1 + CHALLENGESEEDBYTES + 2 + 2];
-    const uint8_t *noncep[XOF_STREAMS];
-    uint8_t *dst[XOF_STREAMS];
-    /* All lanes in one ExpandS/SampleY call share the tag, hence the same
-     * tag-tuned per-refill block size (no over-squeezed tail). */
-    size_t blk = gauss_block_bytes(gss[0].tag);
-    size_t nlen = 0;
-    unsigned t;
+    memcpy(dst->V, src->V[lane], SEEDLEN);
+    memcpy(dst->C, src->C[lane], SEEDLEN);
+    memcpy(dst->reseed_counter, src->reseed_counter[lane], SEEDLEN);
+}
+#    endif
+
+/* Bulk-preset K blocks for all XOF_STREAMS gauss lanes and arm each gss[t]
+ * to consume from its private region (with the V_K fallback ctx prepared).
+ * Returns the malloc'd bulk buffer (caller frees) or NULL on OOM. */
+static uint8_t *gauss_bulk_setup(gauss_stream gss[XOF_STREAMS],
+                                 uint8_t tag, const uint8_t *seed,
+                                 size_t K)
+{
+    const size_t lanes = (size_t)XOF_LANES_AVX2;
+    const size_t passes = (size_t)XOF_STREAMS / lanes;
+    size_t blk = gauss_block_bytes(tag);
+    size_t seedlen = (tag == DS_SAMPLE_Y) ? SEEDBYTES : CHALLENGESEEDBYTES;
+    size_t nlen = 1 + seedlen + 2;
+    uint8_t nonces[XOF_STREAMS][1 + CHALLENGESEEDBYTES + 2];
+    xof_ctx_avx2 nctx[XOF_STREAMS / XOF_LANES_AVX2];
+    uint8_t *bulk;
+    size_t i, p, k, t;
+
+    bulk = (uint8_t *)malloc((size_t)XOF_STREAMS * K * blk);
+    if (!bulk)
+        return NULL;
+
     for (t = 0; t < XOF_STREAMS; t++) {
-        gss[t].refill =
-            1; /* matches the scalar refill++ on the 1st fill */
-        nlen = gs_build_nonce(&gss[t], nonces[t]);
-        noncep[t] = nonces[t];
-        dst[t] = gss[t].buf;
+        nonces[t][0] = tag;
+        memcpy(nonces[t] + 1, seed, seedlen);
+        put_le16(nonces[t] + 1 + seedlen, (uint16_t)t);
     }
-    /* All gauss streams use xof256 (ExpandS tag 0x03 / SampleY tag 0x08).
-     */
-    xof_nway_fill16(dst, noncep, nlen, blk,
-                    /*use_xof128=*/0, /*nfill=*/XOF_STREAMS);
+    for (p = 0; p < passes; p++) {
+        const uint8_t *seedp[XOF_LANES_AVX2];
+        for (k = 0; k < lanes; k++)
+            seedp[k] = nonces[p * lanes + k];
+        xof256_avx2_init(&nctx[p], seedp, nlen);
+    }
+#    ifdef SHA3_MODE
+    /* SHA3: the scalar xof256_squeeze is rate-buffered/continuous (it
+     * tracks a leftover-rate cursor), so ref's K consecutive blk-squeezes
+     * == one continuous (K*blk)-squeeze.  The x4 squeeze, by contrast, is
+     * block-granular and DISCARDS the sub-rate tail of each call (blk is
+     * not a multiple of the SHAKE rate).  So issue ONE N-way squeeze of
+     * K*blk per lane (lane t's K blocks are contiguous in `bulk`): the
+     * only discarded tail is past the K*blk boundary, which the fallback
+     * re-derives via ff_blocks.  A per-block loop would wrongly drop every
+     * block's tail. */
+    for (p = 0; p < passes; p++) {
+        uint8_t *outp[XOF_LANES_AVX2];
+        for (k = 0; k < lanes; k++)
+            outp[k] = bulk + (p * lanes + k) * K * blk;
+        xof256_avx2_squeeze(&nctx[p], outp, K * blk);
+    }
+    (void)i;
+#    else
+    /* NGCC: each squeeze is one independent SM3 Generate advancing V
+     * exactly one step, matching ref's K separate gs_fill squeezes -- so
+     * issue K separate N-way squeezes (one big K*blk call would evolve V
+     * only once and diverge).  Squeeze i fills block i of every lane. */
+    for (i = 0; i < K; i++)
+        for (p = 0; p < passes; p++) {
+            uint8_t *outp[XOF_LANES_AVX2];
+            for (k = 0; k < lanes; k++) {
+                t = p * lanes + k;
+                outp[k] = bulk + (t * K + i) * blk;
+            }
+            xof256_avx2_squeeze(&nctx[p], outp, blk);
+        }
+#    endif
     for (t = 0; t < XOF_STREAMS; t++) {
+        gss[t].tag = tag;
+        gss[t].seed = seed;
+        gss[t].lane = (uint16_t)t;
         gss[t].pos = 0;
-        gss[t].avail = blk;
+        gss[t].avail = 0;
+        gss[t].bulk_ptr = bulk + t * K * blk;
+        gss[t].bulk_left = K;
+#    ifdef SHA3_MODE
+        gss[t].ff_blocks = K; /* lazy re-init+fast-forward on overflow */
+#    else
+        drng_copy_lane(&gss[t].ctx, &nctx[t / lanes],
+                       (unsigned)(t % lanes));
+        gss[t].ff_blocks = 0;
+#    endif
     }
+    return bulk;
 }
 #endif /* USE_AVX2_XOF_NWAY && __AVX2__ */
 
@@ -686,153 +767,6 @@ static void noise_minibatch(gauss_stream *gs, int32_t *dst, size_t *cnt,
     noise_consume_minibatch(gs, dst, cnt, want, Z, entries);
 }
 
-#if defined(USE_AVX2_XOF_NWAY) && defined(__AVX2__)
-/* gs_lane_refill_prep (defined with the SampleY driver below) replicates
- * the scalar gs_ensure(need) bookkeeping for one lane WITHOUT issuing the
- * scalar squeeze, so the ExpandS round-robin driver can batch the squeeze
- * N-way. */
-static size_t gs_lane_refill_prep(gauss_stream *gs, uint8_t *nonce,
-                                  size_t *fill_at);
-
-/* ------------------------------------------------------------------- *
- *  N-way round-robin ExpandS driver (B).                              *
- * ------------------------------------------------------------------- *
- *
- *  ExpandS's per-lane work is a fixed, PUBLIC sequence of NOISE_BATCH
- *  mini-batches: ceil-driven runs that fill `ws` s-coeffs then `we`
- *  e-coeffs (the run lengths are bounded by the PUBLIC widths -- each
- *  mini-batch's whole NOISE_MINIBATCH_RAND_BYTES tail is consumed
- *  up front, so the number of mini-batches per lane is data-independent).
- *  Like the SampleY driver, every refill across the 16 lanes is issued
- *  N-at-a-time (8-way SM3 / 4-way SHAKE) instead of one scalar squeeze per
- *  lane.  Byte-exact to ref (consumed-bytes invariance: each lane's
- *  gauss_stream is the same deterministic nonce schedule, consumed by the
- *  same noise_consume_minibatch body; only WHERE the bytes are produced
- *  moves to the N-way batch). */
-typedef struct {
-    int32_t *sdst; /* this lane's s-output slice            */
-    int32_t *edst; /* this lane's e-output slice            */
-    size_t ws;     /* s-coeffs to produce (lane width)      */
-    size_t we;     /* e-coeffs to produce (lane width)      */
-    size_t scnt;   /* s-coeffs produced so far              */
-    size_t ecnt;   /* e-coeffs produced so far              */
-    int phase;     /* 0 = filling s, 1 = filling e, 2 done  */
-} noise_lane_state;
-
-/* noise_lane_advance_phase: roll the lane to its next non-finished phase.
- */
-static void noise_lane_advance_phase(noise_lane_state *st)
-{
-    if (st->phase == 0 && st->scnt >= st->ws)
-        st->phase = (st->we > 0) ? 1 : 2;
-    if (st->phase == 1 && st->ecnt >= st->we)
-        st->phase = 2;
-}
-
-/* expands_roundrobin: drive all XOF_STREAMS ExpandS lanes in lockstep with
- * N-way batched refills.  `gss` are init'd (refill=0, first block already
- * filled by gs_batch_first_fill); `lst` carry the per-lane s/e slices.
- * Loops in rounds:
- *   (1) for each not-done lane whose buffer is short for its next
- *       mini-batch, prep its refill (memmove + refill++ + nonce) and queue
- *       an N-way fill;
- *   (2) one N-way pass (xof_nway_fill16) tops up every queued lane;
- *   (3) each not-done lane consumes ONE mini-batch from its now-resident
- *       buffer (s-table or e-table per its phase).
- * Round count is bounded by the PUBLIC per-lane mini-batch count -- no
- * secret-dependent loop bound. */
-static void expands_roundrobin(gauss_stream gss[XOF_STREAMS],
-                               noise_lane_state lst[XOF_STREAMS])
-{
-    int all_done = 0;
-    /* ExpandS: every lane shares tag DS_EXPAND_S -> the same per-refill
-     * block size (NOISE_MINIBATCH_RAND_BYTES, no over-squeezed tail). */
-    size_t blk = gauss_block_bytes(gss[0].tag);
-    unsigned t;
-
-    for (t = 0; t < XOF_STREAMS; t++)
-        noise_lane_advance_phase(&lst[t]);
-
-    while (!all_done) {
-        uint8_t nonces[XOF_STREAMS][1 + CHALLENGESEEDBYTES + 2 + 2];
-        const uint8_t *noncep[XOF_STREAMS];
-        uint8_t *dstp[XOF_STREAMS];
-        /* Per-round throwaway destinations for the inactive N-way slots,
-         * so no two slots ever alias a live buffer (each padding slot gets
-         * its OWN region; its bytes are discarded). */
-        uint8_t scratch[XOF_STREAMS][GAUSS_STREAM_BLOCK];
-        size_t nlen = 0;
-        unsigned nfill = 0;
-        unsigned fill_lane[XOF_STREAMS];
-
-        /* (1) collect the lanes that need a refill for their next
-         * mini-batch. */
-        for (t = 0; t < XOF_STREAMS; t++) {
-            if (lst[t].phase == 2)
-                continue;
-            if (gss[t].avail - gss[t].pos <
-                (size_t)NOISE_MINIBATCH_RAND_BYTES) {
-                size_t fill_at;
-                nlen =
-                    gs_lane_refill_prep(&gss[t], nonces[nfill], &fill_at);
-                noncep[nfill] = nonces[nfill];
-                dstp[nfill] = gss[t].buf + fill_at;
-                fill_lane[nfill] = t;
-                nfill++;
-            }
-        }
-
-        /* (2) the queued lanes get their next block in ceil(nfill / lanes)
-         * N-way passes.  The `nfill` lanes needing a fill occupy the
-         * leading slots; the trailing slots of the LAST (partial) pass are
-         * padded to DISTINCT throwaway buffers (never consumed) so each
-         * issued pass is a whole N-way squeeze.  Passes that would serve
-         * only slots >= nfill are skipped inside xof_nway_fill16 --
-         * byte-neutral, since the caller never reads those slots.
-         * Correctness depends only on the leading `nfill` slots, whose
-         * bytes land in the real lane buffers and match the scalar
-         * single-stream squeeze over the SAME nonce (lane-equivalence). */
-        if (nfill) {
-            const unsigned padto =
-                ((nfill + (unsigned)XOF_LANES_AVX2 - 1) /
-                 (unsigned)XOF_LANES_AVX2) *
-                (unsigned)XOF_LANES_AVX2;
-            PROF_START(t_sh);
-            for (t = nfill; t < padto; t++) {
-                noncep[t] =
-                    noncep[0]; /* any valid nonce; output discarded */
-                dstp[t] = scratch[t];
-            }
-            xof_nway_fill16(dstp, noncep, nlen, blk,
-                            /*use_xof128=*/0, nfill);
-            for (t = 0; t < nfill; t++)
-                gss[fill_lane[t]].avail += blk;
-            PROF_STOP(PT_G_SHAKE, t_sh);
-        }
-
-        /* (3) each not-done lane consumes ONE mini-batch from the buffer.
-         */
-        all_done = 1;
-        for (t = 0; t < XOF_STREAMS; t++) {
-            noise_lane_state *st = &lst[t];
-            if (st->phase == 2)
-                continue;
-            if (st->phase == 0)
-                noise_consume_minibatch(&gss[t], st->sdst, &st->scnt,
-                                        st->ws, RCDT_NOISE_S,
-                                        RCDT_NOISE_S_ENTRIES);
-            else
-                noise_consume_minibatch(&gss[t], st->edst, &st->ecnt,
-                                        st->we, RCDT_NOISE_E,
-                                        RCDT_NOISE_E_ENTRIES);
-            noise_lane_advance_phase(st);
-            if (st->phase != 2)
-                all_done = 0;
-        }
-    }
-}
-#endif /* USE_AVX2_XOF_NWAY && __AVX2__ */
-
 void expand_s(poly s1s2[ELL + EM],
               const uint8_t seedsk[CHALLENGESEEDBYTES])
 {
@@ -853,37 +787,37 @@ void expand_s(poly s1s2[ELL + EM],
                    "s1s2 holds ELL s-polys then EM e-polys");
 
 #if defined(USE_AVX2_XOF_NWAY) && defined(__AVX2__)
-    /* N-WAY ROUND-ROBIN (B): keep ALL of ExpandS's XOF on the N-way path.
-     * Prime all 16 gauss_streams, batch their first block N-at-a-time
-     * (xof256: 8-way SM3 / 4-way SHAKE), then drive the 16 lanes in
-     * lockstep so EVERY subsequent refill -- not just block 0 -- is
-     * computed N-way instead of one scalar squeeze per lane.  Byte-exact
-     * to ref (consumed-bytes invariance, see expands_roundrobin). */
+    /* N-WAY BULK PRESET: keep ALL of ExpandS's gauss XOF on the N-way path
+     * via gauss_bulk_setup -- pre-fill BULK_K_EXPAND_S blocks for all 16
+     * lanes N-at-a-time, then consume each lane scalar from its private
+     * region (the rare (K+1)-th block falls back to a scalar squeeze off
+     * the lane's V_K ctx).  Byte-exact to ref. */
     {
         gauss_stream *gss = (gauss_stream *)malloc((size_t)XOF_STREAMS *
                                                    sizeof(gauss_stream));
-        noise_lane_state *lst = (noise_lane_state *)malloc(
-            (size_t)XOF_STREAMS * sizeof(noise_lane_state));
-        if (gss && lst) {
-            for (t = 0; t < XOF_STREAMS; t++) {
-                gauss_stream_init(&gss[t], DS_EXPAND_S, seedsk, t);
-                lst[t].sdst = sbar + (size_t)t * ws;
-                lst[t].edst = ebar + (size_t)t * we;
-                lst[t].ws = ws;
-                lst[t].we = we;
-                lst[t].scnt = 0;
-                lst[t].ecnt = 0;
-                lst[t].phase = 0;
+        if (gss) {
+            uint8_t *bulk = gauss_bulk_setup(gss, DS_EXPAND_S, seedsk,
+                                             BULK_K_EXPAND_S);
+            if (bulk) {
+                for (t = 0; t < XOF_STREAMS; t++) {
+                    size_t cnt = 0;
+                    while (cnt < ws)
+                        noise_minibatch(&gss[t], sbar + (size_t)t * ws,
+                                        &cnt, ws, RCDT_NOISE_S,
+                                        RCDT_NOISE_S_ENTRIES);
+                    cnt = 0;
+                    while (cnt < we)
+                        noise_minibatch(&gss[t], ebar + (size_t)t * we,
+                                        &cnt, we, RCDT_NOISE_E,
+                                        RCDT_NOISE_E_ENTRIES);
+                }
+                free(bulk);
+                free(gss);
+                return;
             }
-            gs_batch_first_fill(gss);
-            expands_roundrobin(gss, lst);
             free(gss);
-            free(lst);
-            return;
         }
         /* malloc failure: fall through to the scalar per-lane path. */
-        free(gss);
-        free(lst);
     }
 #endif
 
@@ -907,23 +841,16 @@ void expand_s(poly s1s2[ELL + EM],
  * ===================================================================== */
 void sample_c(poly *c, const uint8_t seedC[CHALLENGESEEDBYTES])
 {
-    /* Single-stream rejection sampler over the public seedC.  Each refill
-     * is a distinct XOF instance (tag||seedC||LE16(0)||LE16(refill)) that
-     * logically supplies SAMPLEC_BLOCK bytes; we draw those bytes LAZILY
-     * in SAMPLEC_DRAW-byte slices from the SAME persisted ctx and only
-     * roll to the next instance (refill+1) once all SAMPLEC_BLOCK bytes of
-     * the current one are consumed.  Squeezing N then M bytes from one
-     * stream yields the same bytes as one N+M squeeze, so the consumed-
-     * byte sequence and the refill boundary are byte-identical to the old
-     * single 4096 B squeeze -- only the wasted tail is never squeezed.
+    /* Single-stream rejection sampler over the public seedC.  ONE XOF.Init
+     * (tag||seedC||LE16(0)), then the stream is advanced purely by
+     * repeated fixed-size SAMPLEC_DRAW squeezes off the SAME persisted ctx
+     * (under NGCC each squeeze is one SM3 Generate advancing V one step;
+     * the fixed block size is what keeps ref and this fork byte-exact).
      * Variable-time loop is fine here (seedC is public). */
-    uint8_t nonce[1 + CHALLENGESEEDBYTES + 2 + 2];
+    uint8_t nonce[1 + CHALLENGESEEDBYTES + 2];
     uint8_t block[SAMPLEC_DRAW];
-    uint16_t refill = 0;
     /* cursor / valid bytes within block */
     size_t pos = 0, avail = 0;
-    /* bytes squeezed from the current instance */
-    size_t drawn = 0;
     uint32_t mask = (1u << DN_BITS) - 1u;
     int i;
     xof_ctx ctx;
@@ -931,6 +858,7 @@ void sample_c(poly *c, const uint8_t seedC[CHALLENGESEEDBYTES])
     nonce[0] = DS_SAMPLE_C;
     memcpy(nonce + 1, seedC, CHALLENGESEEDBYTES);
     put_le16(nonce + 1 + CHALLENGESEEDBYTES, 0u); /* single stream idx 0 */
+    xof256_init(&ctx, nonce, sizeof(nonce));      /* single init */
 
     for (i = 0; i < N; i++)
         c->coeffs[i] = 0;
@@ -939,23 +867,9 @@ void sample_c(poly *c, const uint8_t seedC[CHALLENGESEEDBYTES])
         uint32_t j;
         do {
             if (pos + BN > avail) {
-                size_t want;
-                if (drawn >= SAMPLEC_BLOCK) {
-                    /* current instance exhausted: advance to refill+1 */
-                    refill++;
-                    drawn = 0;
-                }
-                if (drawn == 0) {
-                    put_le16(nonce + 1 + CHALLENGESEEDBYTES + 2, refill);
-                    xof256_init(&ctx, nonce, sizeof(nonce));
-                }
-                want = SAMPLEC_BLOCK - drawn;
-                if (want > SAMPLEC_DRAW)
-                    want = SAMPLEC_DRAW;
-                xof256_squeeze(&ctx, block, want);
+                xof256_squeeze(&ctx, block, SAMPLEC_DRAW); /* next block */
                 pos = 0;
-                avail = want;
-                drawn += want;
+                avail = SAMPLEC_DRAW;
             }
             j = get_le_masked(block + pos, BN, mask);
             pos += BN;
@@ -1216,162 +1130,6 @@ void gauss_stream_chunk(gauss_stream *gs, int32_t *dst, size_t count)
     }
 }
 
-#if defined(USE_AVX2_XOF_NWAY) && defined(__AVX2__)
-/* ------------------------------------------------------------------- *
- *  N-way round-robin SampleY driver (B).                              *
- * ------------------------------------------------------------------- *
- *
- *  Per-lane resumable consumption state.  Each lane runs the SAME logical
- *  sequence as gauss_stream_chunk (load signs, then mini-batches until
- *  `count` accepted), but yields back to the driver whenever its buffer is
- *  too short for the next step, so the driver can batch that refill N-way
- *  across all lanes that need one.  `signs` is per-lane (OUTPUT-indexed
- * sign stream). */
-typedef struct {
-    int32_t *dst;     /* this lane's output slice              */
-    size_t count;     /* coeffs to produce for this lane (wy)  */
-    size_t coefcnt;   /* coeffs produced so far                */
-    size_t signbytes; /* (count+7)/8                           */
-    int signs_loaded; /* 0 until the up-front sign stream read */
-    int done;         /* coefcnt == count                      */
-    uint8_t signs[SIGN_BYTES_PER_CHUNK + SIGN_PAD_AVX512];
-} gauss_lane_state;
-
-/* gs_lane_bytes_needed: how many contiguous bytes lane `t` needs resident
- * in its buffer to make its NEXT step (sign-stream load, then each
- * mini-batch). This mirrors the gs_ensure(need) request in
- * gauss_stream_chunk EXACTLY, so the refill decision -- and therefore the
- * refill counter and consumed bytes
- * -- match the scalar path byte-for-byte. */
-static size_t gs_lane_bytes_needed(const gauss_lane_state *st)
-{
-    return st->signs_loaded ? (size_t)MINIBATCH_RAND_BYTES : st->signbytes;
-}
-
-/* gs_lane_refill_prep: replicate the gs_ensure(need) bookkeeping for one
- * lane WITHOUT issuing the scalar single-stream squeeze.  Memmoves the
- * unconsumed leftover to the front of the buffer, bumps the refill
- * counter, builds the continuation nonce, and reports the
- * destination/length so the driver can fill
- * gs->buf[avail..avail+GAUSS_STREAM_BLOCK) N-way.  Byte-identical to the
- * scalar gs_ensure(need) path (same memmove, same refill++, same nonce),
- * only the squeeze itself is deferred to the N-way batch.  Returns the
- * nonce length; `*fill_at` receives the buffer offset to fill. */
-static size_t gs_lane_refill_prep(gauss_stream *gs, uint8_t *nonce,
-                                  size_t *fill_at)
-{
-    size_t left = gs->avail - gs->pos;
-    if (left)
-        memmove(gs->buf, gs->buf + gs->pos, left);
-    gs->pos = 0;
-    gs->avail = left;
-    gs->refill++; /* matches scalar gs_ensure: refill++ THEN fill        */
-    *fill_at = gs->avail;
-    return gs_build_nonce(gs, nonce); /* continuation nonce (rc=refill)  */
-}
-
-/* gauss_roundrobin: drive all XOF_STREAMS lanes' SampleY in lockstep with
- * N-way batched refills.  `gss` are init'd (refill=0); `lst` carry the
- * per-lane dst/count.  Loops in rounds:
- *   (1) for each not-done lane whose buffer is short for its next step,
- *       prep its refill (memmove+refill++ +nonce) and queue an N-way fill;
- *   (2) one N-way pass (xof_nway_fill16) tops up every queued lane;
- *   (3) each not-done lane consumes its next step (sign load or one
- *       mini-batch) from the now-resident buffer.
- * Terminates when every lane is done.  Round count is bounded by the
- * PUBLIC per-lane work (sum of mini-batches) -- no secret-dependent loop
- * bound. */
-static void gauss_roundrobin(gauss_stream gss[XOF_STREAMS],
-                             gauss_lane_state lst[XOF_STREAMS])
-{
-    int all_done = 0;
-    /* SampleY: every lane shares the tag -> the same tag-tuned per-refill
-     * block size (right-sized, no over-squeezed tail). */
-    size_t blk = gauss_block_bytes(gss[0].tag);
-    while (!all_done) {
-        uint8_t nonces[XOF_STREAMS][1 + CHALLENGESEEDBYTES + 2 + 2];
-        const uint8_t *noncep[XOF_STREAMS];
-        uint8_t *dstp[XOF_STREAMS];
-        /* Per-round throwaway destinations for the inactive N-way slots,
-         * so no two slots ever alias a live buffer (each padding slot gets
-         * its OWN region; its bytes are discarded). */
-        uint8_t scratch[XOF_STREAMS][GAUSS_STREAM_BLOCK];
-        size_t nlen = 0;
-        unsigned t, nfill = 0;
-        unsigned fill_lane[XOF_STREAMS];
-
-        /* (1) collect the lanes that need a refill for their next step. */
-        for (t = 0; t < XOF_STREAMS; t++) {
-            size_t need;
-            if (lst[t].done)
-                continue;
-            need = gs_lane_bytes_needed(&lst[t]);
-            if (gss[t].avail - gss[t].pos < need) {
-                size_t fill_at;
-                nlen =
-                    gs_lane_refill_prep(&gss[t], nonces[nfill], &fill_at);
-                noncep[nfill] = nonces[nfill];
-                dstp[nfill] = gss[t].buf + fill_at;
-                fill_lane[nfill] = t;
-                nfill++;
-            }
-        }
-
-        /* (2) the queued lanes get their next block in ceil(nfill / lanes)
-         * N-way passes.  xof_nway_fill16 wants XOF_STREAMS-length
-         * nonce/dst arrays indexed by physical N-way slot; the `nfill`
-         * lanes needing a fill occupy the leading slots and the trailing
-         * slots of the LAST (partial) pass are padded to DISTINCT
-         * throwaway buffers (never consumed) so each issued pass is a
-         * whole N-way squeeze with the SIMD fully utilised.  Passes that
-         * would serve only slots >= nfill are skipped inside
-         * xof_nway_fill16 -- byte-neutral, since the caller never reads
-         * those slots.  Each padding slot reuses an active nonce (any
-         * valid absorb) but its own scratch dst, so there is no aliasing
-         * -- correctness depends only on the leading `nfill` slots, whose
-         * bytes land in the real lane buffers and match the scalar
-         * single-stream squeeze over the SAME nonce (lane-equivalence). */
-        if (nfill) {
-            const unsigned padto =
-                ((nfill + (unsigned)XOF_LANES_AVX2 - 1) /
-                 (unsigned)XOF_LANES_AVX2) *
-                (unsigned)XOF_LANES_AVX2;
-            PROF_START(t_sh);
-            for (t = nfill; t < padto; t++) {
-                noncep[t] =
-                    noncep[0]; /* any valid nonce; output discarded */
-                dstp[t] = scratch[t];
-            }
-            xof_nway_fill16(dstp, noncep, nlen, blk,
-                            /*use_xof128=*/0, nfill);
-            for (t = 0; t < nfill; t++)
-                gss[fill_lane[t]].avail += blk;
-            PROF_STOP(PT_G_SHAKE, t_sh);
-        }
-
-        /* (3) each not-done lane consumes its next step from the buffer.
-         */
-        all_done = 1;
-        for (t = 0; t < XOF_STREAMS; t++) {
-            gauss_lane_state *st = &lst[t];
-            if (st->done)
-                continue;
-            if (!st->signs_loaded) {
-                gs_load_sign_stream(&gss[t], st->signs, st->signbytes);
-                st->signs_loaded = 1;
-            } else {
-                gs_consume_minibatch(&gss[t], st->dst, &st->coefcnt,
-                                     st->count, st->signs);
-            }
-            if (st->coefcnt >= st->count)
-                st->done = 1;
-            else
-                all_done = 0;
-        }
-    }
-}
-#endif /* USE_AVX2_XOF_NWAY && __AVX2__ */
-
 void sample_y(poly y[KVEC], const uint8_t seedY[SEEDBYTES])
 {
     int32_t *ybar = y[0].coeffs; /* KVEC*n contiguous */
@@ -1384,39 +1142,28 @@ void sample_y(poly y[KVEC], const uint8_t seedY[SEEDBYTES])
     _Static_assert(sizeof(poly) == 4 * N, "poly flat layout");
 
 #if defined(USE_AVX2_XOF_NWAY) && defined(__AVX2__)
-    /* N-WAY ROUND-ROBIN (B): keep ALL of SampleY's XOF on the N-way path.
-     * Every refill across the 16 lanes is computed N-at-a-time (8-way SM3
-     * / 4-way SHAKE), not one scalar squeeze per lane -- so the BULK ~74
-     * KB/sig of gauss XOF (PT_G_SHAKE, ~93% of SampleY) runs at N-way
-     * throughput. Byte-exact to ref (consumed-bytes invariance, see the
-     * section comment).
-     */
+    /* N-WAY BULK PRESET: keep the BULK ~74 KB/sig of SampleY's gauss XOF
+     * (PT_G_SHAKE, ~93% of SampleY) on the N-way path via gauss_bulk_setup
+     * -- pre-fill BULK_K_SAMPLE_Y blocks for all 16 lanes N-at-a-time,
+     * then consume each lane scalar from its private region
+     * (gauss_stream_chunk), with the rare (K+1)-th block falling back to a
+     * scalar squeeze off the lane's V_K ctx.  Byte-exact to ref. */
     {
         gauss_stream *gss = (gauss_stream *)malloc((size_t)XOF_STREAMS *
                                                    sizeof(gauss_stream));
-        gauss_lane_state *lst = (gauss_lane_state *)malloc(
-            (size_t)XOF_STREAMS * sizeof(gauss_lane_state));
-        if (gss && lst) {
-            for (t = 0; t < XOF_STREAMS; t++) {
-                gauss_stream_init(&gss[t], DS_SAMPLE_Y, seedY, t);
-                lst[t].dst = ybar + (size_t)t * wy;
-                lst[t].count = wy;
-                lst[t].coefcnt = 0;
-                lst[t].signbytes = (wy + 7) / 8;
-                lst[t].signs_loaded = 0;
-                lst[t].done = 0;
-                /* zero the AVX512 LE64 over-read window in the sign array
-                 */
-                memset(lst[t].signs, 0, sizeof(lst[t].signs));
+        if (gss) {
+            uint8_t *bulk =
+                gauss_bulk_setup(gss, DS_SAMPLE_Y, seedY, BULK_K_SAMPLE_Y);
+            if (bulk) {
+                for (t = 0; t < XOF_STREAMS; t++)
+                    gauss_stream_chunk(&gss[t], ybar + (size_t)t * wy, wy);
+                free(bulk);
+                free(gss);
+                return;
             }
-            gauss_roundrobin(gss, lst);
             free(gss);
-            free(lst);
-            return;
         }
         /* malloc failure: fall through to the scalar per-lane path. */
-        free(gss);
-        free(lst);
     }
 #endif
 

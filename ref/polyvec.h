@@ -31,25 +31,26 @@
  * empirically: a 64-byte squeeze's prefix equals a 32-byte squeeze, but
  * its tail differs from a following 32-byte squeeze.)
  *
- * CONSEQUENCE: every producer here draws each logical stream's WHOLE byte
- * budget in ONE xof_squeeze call.  When a rejection-sampling stream needs
- * more than its initial buffer (statistically rare), it does NOT chain a
- * second squeeze on the same ctx; instead it RE-INITS a fresh ctx whose
- * absorbed nonce carries a 2-byte little-endian REFILL COUNTER appended
- * after the stream index, and squeezes the next block one-shot.  The same
- * refill discipline is applied under SHA3_MODE so both MODEs are
- * internally self-consistent (they are two DISTINCT KAT sets; within each
- * MODE, ref/avx2/avx512 must be byte-exact).
+ * CONSEQUENCE: each logical stream is opened with ONE xof_init and then
+ * advanced purely by repeated FIXED-SIZE xof_squeeze calls off the SAME
+ * persisted ctx.  Under NGCC each squeeze is one Generate that advances V
+ * by exactly one step (independent of length), so a chain of fixed-size
+ * squeezes is a proper per-lane DRBG stream; under SHA3 the squeezes are
+ * the rate-buffered continuation of one stream.  Because the per-squeeze
+ * block size is byte-determining under NGCC, it is PINNED identically
+ * across ref/avx2/avx512 (the gauss_block_bytes / UNIFORM_DRAW /
+ * SAMPLEC_DRAW units, all multiples of XOF_SQUEEZE_GRANULARITY_BYTES). The
+ * two MODEs are two DISTINCT KAT sets; within each MODE, ref/avx2/avx512
+ * must be byte-exact.
  *
  * The absorbed nonce layout for the 16-lane / single-ctx producers is thus
  *
- *     tag || seed || IntegerToBytes(stream_idx, 2) || IntegerToBytes(rc,
- * 2)
+ *     tag || seed || IntegerToBytes(stream_idx, 2)
  *
- * with rc = 0 for the first (almost always only) block; the single-context
- * one-shots (ExpandSeeds/ExpandSigningSeeds) need no rc because their
- * output length is fixed and small.  SampleC is single-stream but
- * rejection-driven, so it uses stream_idx = 0 and a refill counter.
+ * (no refill counter -- the persisted-ctx chain supplies every block); the
+ * single-context one-shots (ExpandSeeds/ExpandSigningSeeds) need no stream
+ * index because their output length is fixed and small.  SampleC is
+ * single-stream, so it uses stream_idx = 0.
  */
 #ifndef SHUTTLE_POLYVEC_H
 #define SHUTTLE_POLYVEC_H
@@ -133,59 +134,98 @@ void sample_y(poly y[KVEC], const uint8_t seedY[SEEDBYTES]);
  *                                                                       *
  *  The scalar reference services one lane at a time (the degenerate      *
  *  LANES=1 fold of the fixed 16-stream flow).  gauss_stream wraps the    *
- *  ONE-SQUEEZE-PER-FILL discipline: gs_fill draws GAUSS_STREAM_BLOCK     *
- *  bytes for the current (lane, refill-counter) in a single xof256       *
- *  squeeze; gs_ensure refills (bumping the refill counter and re-initing *
- *  a fresh ctx) when the cursor would run past `avail`.  The whole       *
- *  mini-batch tail is requested at once so the cursor advances           *
- *  identically across backends. */
+ *  SINGLE-INIT-THEN-SQUEEZE discipline: gauss_stream_init opens the lane *
+ *  ctx ONCE (nonce = tag||seed||LE16(lane), no refill); gs_fill draws    *
+ *  the next gauss_block_bytes block in a single xof256 squeeze off that  *
+ *  persisted ctx; gs_ensure advances the chain (one more squeeze) when   *
+ *  the cursor would run past `avail`.  The whole mini-batch tail is      *
+ *  requested at once so the cursor advances identically across backends.
+ */
 /* The wide-sampler lane chunk is KVEC*n/16 coeffs; its OUTPUT-indexed sign
  * stream is therefore (KVEC*n/16 + 7)/8 bytes (+ AVX512 LE64 read pad). */
 #define SIGN_BYTES_PER_CHUNK (((KVEC * N / XOF_STREAMS) + 7) / 8)
 
-/* ---- Right-sized per-refill block (no over-squeezed tail) -------------
- * * Each gauss_stream refill is a FRESH XOF instance
- * (tag||seed||LE16(lane)|| LE16(refill)) drawn in a SINGLE xof256 squeeze
- * of gauss_block_bytes(tag) bytes; consumption reads contiguous regions of
- * that one squeeze.  Because each refill is its OWN ctx and a SINGLE
- * squeeze (never a chained continuation), there is no rate-alignment
- * constraint -- the block can be the EXACT minimum that holds one logical
- * unit, with no granularity rounding and no magic slack (this is what
- * removes the over-squeeze; the old fixed block carried a +64 slack tail
- * on every refill):
+/* ---- Right-sized per-squeeze block (no over-squeezed tail) ------------
+ * * Each gauss_stream block is one xof256 squeeze of
+ * gauss_block_bytes(tag) bytes off the persisted per-lane ctx; consumption
+ * reads contiguous regions of that one squeeze.  The block is the EXACT
+ * minimum that holds one logical unit (one mini-batch, plus the sign
+ * stream on the first block), with no magic slack:
  *
  *   SampleY (tag 0x08): one GAUSS_BATCH mini-batch is
- * MINIBATCH_RAND_BYTES. Refill 1 ALSO holds the up-front OUTPUT-indexed
- * sign stream (SIGN_BYTES_PER_CHUNK bytes, + the AVX512 LE64 over-read
- * pad) ahead of the first mini-batch, so the block must cover
- *     SIGN_BYTES_PER_CHUNK + SIGN_PAD_AVX512 + MINIBATCH_RAND_BYTES; that
- * is also enough for every later refill (which holds exactly one
+ * MINIBATCH_RAND_BYTES. The FIRST block ALSO holds the up-front
+ * OUTPUT-indexed sign stream (SIGN_BYTES_PER_CHUNK bytes, + the AVX512
+ * LE64 over-read pad) ahead of the first mini-batch, so the block must
+ * cover SIGN_BYTES_PER_CHUNK + SIGN_PAD_AVX512 + MINIBATCH_RAND_BYTES;
+ * that is also enough for every later block (which holds exactly one
  * mini-batch after the small leftover is memmoved to the front -- never
- * enough to skip a refill, so one consume per instance). ExpandS (tag
- * 0x03): one noise mini-batch is NOISE_MINIBATCH_RAND_BYTES, consumed
- * whole per refill -- the block is exactly that.
+ * enough to skip a squeeze, so one consume per block). ExpandS (tag 0x03):
+ * one noise mini-batch is NOISE_MINIBATCH_RAND_BYTES, consumed whole per
+ * block -- the block is exactly that.
  *
- * GAUSS_STREAM_BLOCK is the larger of the two (the buffer/fill unit shared
- * by ref and the N-way SIMD fill); gauss_block_bytes() picks the tag-tuned
- * size at fill time.  Buffer = 2*block: one freshly drawn block plus the
- * memmoved leftover of the previous one. */
+ * The per-squeeze block size is byte-determining under NGCC, so it is the
+ * SAME fixed size on every squeeze of the chain and is PINNED identically
+ * across ref/avx2/avx512.  GAUSS_STREAM_BLOCK is the larger of the two
+ * (the buffer/fill unit shared by ref and the N-way SIMD fill);
+ * gauss_block_bytes() picks the tag-tuned size at fill time.  Buffer =
+ * 2*block: one freshly drawn block plus the memmoved leftover of the
+ * previous one. */
 #define GAUSS_BLOCK_Y \
     ((size_t)SIGN_BYTES_PER_CHUNK + SIGN_PAD_AVX512 + MINIBATCH_RAND_BYTES)
 #define GAUSS_BLOCK_S ((size_t)NOISE_MINIBATCH_RAND_BYTES)
 #define GAUSS_STREAM_BLOCK \
     (GAUSS_BLOCK_Y > GAUSS_BLOCK_S ? GAUSS_BLOCK_Y : GAUSS_BLOCK_S)
 typedef struct {
-    xof_ctx ctx;         /* current backend xof256 state               */
+    xof_ctx ctx;         /* persisted per-lane xof256 state            */
     uint8_t tag;         /* domain-separation tag (DS_SAMPLE_Y)        */
     const uint8_t *seed; /* lane seed (SEEDBYTES)                      */
     uint16_t lane;       /* logical stream index 0..15                 */
-    uint16_t refill;     /* refill counter (continuation nonce)        */
     size_t pos, avail;   /* cursor into buf                            */
+    /* AVX N-way bulk source (ref leaves these 0 -> gs_fill always XOF).
+     * When the AVX forks pre-fill K blocks N-at-a-time, gs_fill draws each
+     * block from `bulk_ptr` (bulk_left counts the remaining pre-filled
+     * blocks) instead of squeezing; once exhausted it falls back to a
+     * scalar squeeze off ctx (already advanced to V_K -- copied out of the
+     * N-way ctx under NGCC, or re-derived by ff_blocks fast-forward under
+     * SHA3). */
+    const uint8_t *bulk_ptr; /* next pre-filled block, or NULL          */
+    size_t bulk_left;        /* pre-filled blocks remaining             */
+    size_t ff_blocks;        /* SHA3 fallback: blocks to fast-forward    */
     uint8_t
         buf[2 * GAUSS_STREAM_BLOCK]; /* one block + memmoved leftover */
 } gauss_stream;
 
-/* Tag-tuned per-refill block size (bytes drawn in one squeeze). */
+/* Cost-optimal N-way bulk preset K (blocks pre-filled per lane by the AVX
+ * forks before per-lane scalar consume).  Measured empirically (320k J
+ * samples/cell via the MEASURE_JK hook) and pinned to K* = the smallest K
+ * with per-lane overflow P(J>K) <= 1/16 -- the zero-crossing of the cost
+ * model E[cost](K) = K + 16*sum_{j>K}(j-K)P(J=j) (one extra bulk block
+ * costs one N-way squeeze and saves the ~1 of 16 lanes still active
+ * there). The fallback path is mandatory anyway (a fixed K can be exceeded
+ * by an unlucky seed) -- K only trades bulk-waste against fallback-cost,
+ * it is NEVER a correctness constant (KAT is identical for any K).
+ * Reproduced (and CI-checkable via --check) by tools/gen_bulk_k.sh; per
+ * (sampler,mode), 320k samples/cell, with the measured per-lane overflow
+ * P(J>K*): ExpandS  jmax 7 / 10 / 18,  K* = 6 / 9 / 16,  P(J>K*)
+ * 2e-4/6e-4/0.030 SampleY  jmax 5 /  8 / 14,  K* = 5 / 7 / 13,  P(J>K*) 0
+ * /0.051/0.014 */
+#if SHUTTLE_MODE == 128
+#    define BULK_K_EXPAND_S 6
+#    define BULK_K_SAMPLE_Y 5
+#elif SHUTTLE_MODE == 256
+#    define BULK_K_EXPAND_S 9
+#    define BULK_K_SAMPLE_Y 7
+#elif SHUTTLE_MODE == 512
+#    define BULK_K_EXPAND_S 16
+#    define BULK_K_SAMPLE_Y 13
+#endif
+static inline size_t gauss_bulk_k(uint8_t tag)
+{
+    return (tag == DS_SAMPLE_Y) ? (size_t)BULK_K_SAMPLE_Y
+                                : (size_t)BULK_K_EXPAND_S;
+}
+
+/* Tag-tuned per-squeeze block size (bytes drawn in one squeeze). */
 static inline size_t gauss_block_bytes(uint8_t tag)
 {
     return (tag == DS_SAMPLE_Y) ? (size_t)GAUSS_BLOCK_Y

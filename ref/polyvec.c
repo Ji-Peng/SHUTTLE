@@ -7,11 +7,15 @@
  * byte-identical to this scalar oracle within each MODE.
  *
  * Read polyvec.h FIRST for the binding NGCC-DRBG no-rate-cursor rule and
- * the 16-stream nonce layout: every logical stream draws its whole byte
- * budget in ONE squeeze; refills re-init a fresh ctx with a 2-byte refill
- * counter appended to the nonce.  This is what keeps ref==avx2==avx512
- * byte-exact and what makes the cursor advance independent of any
- * early rejection break.
+ * the 16-stream nonce layout: each logical stream is opened with ONE
+ * XOF.Init (nonce = tag||seed||LE16(lane), no refill counter) and is then
+ * advanced purely by repeated fixed-size XOF.Squeeze calls off the SAME
+ * persisted ctx.  Under NGCC each squeeze is one SM3 DRBG Generate that
+ * evolves V by one step (independent of length), so a chain of fixed-size
+ * squeezes is a proper per-lane DRBG stream; the per-squeeze block size is
+ * pinned identically across ref/avx2/avx512.  This is what keeps
+ * ref==avx2==avx512 byte-exact and what makes the cursor advance
+ * independent of any early rejection break.
  *
  * ===================================================================== *
  *  PINNED PRNG byte schedules (KAT-NORMATIVE)                            *
@@ -20,17 +24,17 @@
  *                      squeeze 5*LAMBDA/8 bytes. * ExpandSigningSeeds :
  * absorb 0x01 || K || rnd || mu || LE32(kappa);     * squeeze SEEDBYTES
  * bytes.                           * ExpandA (per lane) : nonce 0x02 ||
- * seedA || LE16(t) || LE16(rc);       * per coeff REPEAT{ 2 bytes; a = LE
+ * seedA || LE16(t); single init    * per coeff REPEAT{ 2 bytes; a = LE
  * & (2^DQ-1) }     * UNTIL a < q.  agen chunk THEN hAgen chunk.         *
- * ExpandS (per lane) : nonce 0x03 || seedsk || LE16(t) || LE16(rc);      *
+ * ExpandS (per lane) : nonce 0x03 || seedsk || LE16(t); single init      *
  *                      per coeff via a NOISE-style mini-batch: 384-byte *
  *                      grouped rho_u (cdt_scan96) + 8-byte 2-bit tail *
  *                      (bit0 sign, bit1 zero-fold), whole tail up front. *
  *                      s chunk (RCDT_NOISE_S) THEN e chunk
- * (RCDT_NOISE_E).* SampleC            : nonce 0x07 || seedC || LE16(0) ||
- * LE16(rc);       * per draw REPEAT{ BN bytes; j = LE & (2^DN-1) }     *
+ * (RCDT_NOISE_E).* SampleC            : nonce 0x07 || seedC || LE16(0);
+ * single init     * per draw REPEAT{ BN bytes; j = LE & (2^DN-1) }     *
  *                      UNTIL j <= i. * SampleY (per lane) : nonce 0x08 ||
- * seedY || LE16(t) || LE16(rc);       * per poly: SIGN_BYTES_PER_POLY
+ * seedY || LE16(t); single init    * per poly: SIGN_BYTES_PER_POLY
  * up-front sign bits,  * then mini-batches of GAUSS_BATCH candidates: *
  *                      384-byte rho_u (cdt_scan96 RCDT_Z) + 32-byte y + *
  *                      256-byte (32x8) Bernoulli tails, whole tail up *
@@ -43,6 +47,26 @@
 #include "approx_exp.h" /* approx_exp_accept_q64_x4, approx_exp_accept_q64 */
 #include "rcdt_tables.h" /* SHUTTLE_RCDT_Z, SHUTTLE_RCDT_NOISE_* */
 #include "test/prof.h" /* PT_G_SHAKE/BASESAMP/APPROXEXP/FINAL -- ((void)0) unless PROF_TIME */
+
+#ifdef MEASURE_JK
+/* OFF-PATH measurement hook (gated; zero effect on normal builds): count
+ * the number of per-lane XOF blocks J each gauss_stream consumes, to pin
+ * the N-way bulk-preset K for the AVX forks (K* = ceil(15/16-quantile of
+ * J)). shuttle_jk_blocks bumps once per gs_fill (one block); begin/end
+ * snapshot a lane's J into shuttle_jk_hist. Read by test/measure_jk.c. */
+unsigned long shuttle_jk_blocks = 0;
+unsigned long shuttle_jk_hist[8192] = {0};
+static unsigned long shuttle_jk_snap = 0;
+static void shuttle_jk_begin(void)
+{
+    shuttle_jk_snap = shuttle_jk_blocks;
+}
+static void shuttle_jk_end(void)
+{
+    unsigned long j = shuttle_jk_blocks - shuttle_jk_snap;
+    shuttle_jk_hist[j < 8192 ? j : 8191]++;
+}
+#endif
 
 /* ===================================================================== *
  *  Local little-endian byte helpers (data-independent schedule)         *
@@ -115,29 +139,25 @@ void expand_signing_seeds(uint8_t seedY[SEEDBYTES],
 /* ===================================================================== *
  *  16-lane uniform-reject stream (ExpandA)                              *
  *                                                                       *
- *  Each (lane, refill) XOF instance supplies UNIFORM_BLOCK logical      *
- *  bytes, drawn lazily in UNIFORM_DRAW slices; on exhaustion the next   *
- *  instance is re-init'd with refill+1.                                 *
+ *  Each lane opens ONE XOF instance (nonce = tag||seedA||LE16(lane))    *
+ *  and is advanced purely by repeated fixed-size UNIFORM_DRAW squeezes  *
+ *  off that persisted ctx.                                              *
  * ===================================================================== */
-/* A per-(lane,refill) XOF instance supplies UNIFORM_BLOCK logical bytes;
- * the rejection sampler reads them as BQ-byte candidates and only crosses
- * into the next instance (refill+1) after all UNIFORM_BLOCK bytes of the
- * current one are consumed.  We never need the whole block: each coeff
- * accepts with prob ~q/2^DQ, so the per-lane chunk (agen then hAgen, total
- * EM*n*(1+ELL)/16 coeffs) needs only ~that many BQ-byte candidates.  We
- * therefore draw the block LAZILY in UNIFORM_DRAW-byte slices from the
- * same persisted XOF ctx -- squeezing N then M bytes yields the same bytes
- * as one N+M squeeze (SHAKE/SM3-DRBG are streams), so the consumed byte
- * sequence and the refill boundary are byte-identical to one big squeeze;
- * only the wasted tail is never squeezed. */
-#define UNIFORM_BLOCK 4096
+/* The rejection sampler reads each lane's stream as BQ-byte candidates.
+ * Each coeff accepts with prob ~q/2^DQ, so the per-lane chunk (agen then
+ * hAgen, total EM*n*(1+ELL)/16 coeffs) needs only ~that many BQ-byte
+ * candidates.  We draw the stream in UNIFORM_DRAW-byte slices from the
+ * persisted XOF ctx: under NGCC each squeeze is one SM3 DRBG Generate that
+ * evolves V by one step, so successive UNIFORM_DRAW squeezes form a proper
+ * per-lane chain; under SHA3 they are the rate-buffered continuation of
+ * one stream.  The fixed UNIFORM_DRAW block size is what keeps ref and the
+ * N-way AVX forks byte-exact; only the unused tail is never squeezed. */
 
-/* Right-sized first/continuation slice: ceil-to-granularity of ~2x the
- * mean per-lane byte need (per-lane coeffs * BQ * 2, mean acceptance
- * ~q/2^DQ). Covers the largest mode in one slice with margin, so the slow
- * lazy continuation almost never runs; UNIFORM_DRAW divides nothing it
- * must, the refill boundary is governed by the UNIFORM_BLOCK cap, not by
- * UNIFORM_DRAW.
+/* Right-sized continuation slice: ceil-to-granularity of ~2x the mean
+ * per-lane byte need (per-lane coeffs * BQ * 2, mean acceptance ~q/2^DQ).
+ * Covers the largest mode in one slice with margin, so the slow lazy
+ * continuation almost never runs; it is the FIXED per-squeeze block size
+ * that ref and the AVX forks must agree on byte-for-byte.
  */
 #define UNIFORM_LANE_COEFFS ((size_t)EM * N * (1u + ELL) / XOF_STREAMS)
 #define UNIFORM_DRAW_RAW (UNIFORM_LANE_COEFFS * (size_t)BQ * 2u)
@@ -146,13 +166,12 @@ void expand_signing_seeds(uint8_t seedY[SEEDBYTES],
       (size_t)XOF_SQUEEZE_GRANULARITY_BYTES) *                          \
      (size_t)XOF_SQUEEZE_GRANULARITY_BYTES)
 
-/* Right-sized first/continuation slice for SampleC's partial Fisher-Yates.
+/* Right-sized continuation slice for SampleC's partial Fisher-Yates.
  * The mean candidate need is sum_{i=n-tau}^{n-1} 2^DN/(i+1) BN-byte draws
  * (well under 256 B for every mode); TAU*BN*4 ceil-to-granularity gives a
  * comfortable margin so the first slice covers the whole challenge in
- * essentially every call.  The instance still caps at SAMPLEC_BLOCK bytes,
- * preserving the per-refill XOF boundary byte-for-byte. */
-#define SAMPLEC_BLOCK UNIFORM_BLOCK /* logical per-refill instance cap */
+ * essentially every call.  SampleC opens ONE ctx and is advanced by
+ * repeated fixed-size SAMPLEC_DRAW squeezes off it. */
 #define SAMPLEC_DRAW_RAW ((size_t)TAU * (size_t)BN * 2u)
 #define SAMPLEC_DRAW                                                    \
     (((SAMPLEC_DRAW_RAW + (size_t)XOF_SQUEEZE_GRANULARITY_BYTES - 1u) / \
@@ -160,30 +179,27 @@ void expand_signing_seeds(uint8_t seedY[SEEDBYTES],
      (size_t)XOF_SQUEEZE_GRANULARITY_BYTES)
 
 typedef struct {
-    uint8_t
-        nonce[1 + SEEDBYTES + 2 + 2]; /* tag||seed||LE16(lane)||LE16(rc) */
+    uint8_t nonce[1 + SEEDBYTES + 2]; /* tag||seed||LE16(lane) */
     size_t nonce_len;
-    uint16_t lane, refill;
+    uint16_t lane;
     size_t pos, avail; /* cursor / valid bytes within buf            */
-    size_t drawn;      /* bytes squeezed from the current XOF instance */
-    int ctx_ready;     /* persisted ctx initialised for this instance  */
-    xof_ctx ctx;       /* live XOF instance for incremental slices      */
+    size_t drawn;      /* bytes squeezed from the persisted XOF chain  */
+    int ctx_ready;     /* persisted ctx initialised                    */
+    xof_ctx ctx;       /* live XOF instance: single init, then squeeze  */
     uint8_t buf[UNIFORM_DRAW];
 } uniform_stream;
 
-/* Squeeze the next slice of the CURRENT XOF instance into buf.  If the
- * persisted ctx is not yet live (e.g. the initial block was filled by the
- * N-way batched path), init it from the nonce and fast-forward past the
- * `drawn` bytes already consumed -- identical bytes either way (stream).
+/* Squeeze the next UNIFORM_DRAW slice off the persisted XOF chain into
+ * buf. If the persisted ctx is not yet live (e.g. the initial block was
+ * filled by the N-way batched path), init it from the nonce and
+ * fast-forward past the `drawn` bytes already produced -- replaying the
+ * chain in UNIFORM_DRAW units yields the identical V evolution, so the
+ * bytes match either way.
  */
 static void us_draw_slice(uniform_stream *us)
 {
-    size_t want = UNIFORM_BLOCK - us->drawn;
-    if (want > UNIFORM_DRAW)
-        want = UNIFORM_DRAW;
     if (!us->ctx_ready) {
         put_le16(us->nonce + 1 + SEEDBYTES, us->lane);
-        put_le16(us->nonce + 1 + SEEDBYTES + 2, us->refill);
         xof128_init(&us->ctx, us->nonce, us->nonce_len);
         if (us->drawn) {
             uint8_t skip[UNIFORM_DRAW];
@@ -196,10 +212,10 @@ static void us_draw_slice(uniform_stream *us)
         }
         us->ctx_ready = 1;
     }
-    xof128_squeeze(&us->ctx, us->buf, want);
+    xof128_squeeze(&us->ctx, us->buf, UNIFORM_DRAW);
     us->pos = 0;
-    us->avail = want;
-    us->drawn += want;
+    us->avail = UNIFORM_DRAW;
+    us->drawn += UNIFORM_DRAW;
 }
 
 static void us_fill(uniform_stream *us)
@@ -214,28 +230,20 @@ static void us_init(uniform_stream *us, const uint8_t *seedA,
 {
     us->nonce[0] = DS_EXPAND_A;
     memcpy(us->nonce + 1, seedA, SEEDBYTES);
-    us->nonce_len = 1 + SEEDBYTES + 2 + 2;
+    us->nonce_len = 1 + SEEDBYTES + 2;
     us->lane = (uint16_t)lane;
-    us->refill = 0;
     us_fill(us);
 }
 
 /* Pull BQ bytes (a uniform-Z_q candidate).  When the current slice runs
- * out, draw the next slice of the same instance; only after the whole
- * UNIFORM_BLOCK is consumed do we advance to the next instance (refill+1).
- */
+ * out, squeeze the next UNIFORM_DRAW block off the SAME persisted ctx (the
+ * V chain just advances one Generate -- no re-init, no refill counter). */
 static uint16_t us_next_candidate(uniform_stream *us)
 {
     uint32_t mask = (1u << DQ_BITS) - 1u;
     uint16_t a;
-    if (us->pos + BQ > us->avail) {
-        if (us->drawn < UNIFORM_BLOCK) {
-            us_draw_slice(us); /* same instance, next slice */
-        } else {
-            us->refill++; /* instance exhausted: next instance */
-            us_fill(us);
-        }
-    }
+    if (us->pos + BQ > us->avail)
+        us_draw_slice(us);
     a = (uint16_t)get_le_masked(us->buf + us->pos, BQ, mask);
     us->pos += BQ;
     return a;
@@ -302,33 +310,37 @@ void expand_a(poly16 agen[EM], poly16 hAgen[EM * ELL],
 void gauss_stream_init(gauss_stream *gs, uint8_t tag, const uint8_t *seed,
                        unsigned lane)
 {
+    /* Single XOF.Init per lane (nonce = tag||seed||LE16(lane), no refill);
+     * the stream is then advanced purely by gs_fill squeezes off gs->ctx.
+     * seed length differs by tag: SampleY uses SEEDBYTES, ExpandS uses
+     * CHALLENGESEEDBYTES. */
+    uint8_t nonce[1 + CHALLENGESEEDBYTES + 2];
+    size_t seedlen = (tag == DS_SAMPLE_Y) ? SEEDBYTES : CHALLENGESEEDBYTES;
     gs->tag = tag;
     gs->seed = seed;
     gs->lane = (uint16_t)lane;
-    gs->refill = 0;
     gs->pos = 0;
     gs->avail = 0;
+    gs->bulk_ptr = NULL; /* ref: always XOF, no N-way bulk source */
+    gs->bulk_left = 0;
+    gs->ff_blocks = 0;
+    nonce[0] = tag;
+    memcpy(nonce + 1, seed, seedlen);
+    put_le16(nonce + 1 + seedlen, gs->lane);
+    xof256_init(&gs->ctx, nonce, 1 + seedlen + 2);
 }
 
-/* Build the per-(lane,refill) nonce and draw GAUSS_STREAM_BLOCK bytes in
- * ONE xof256 squeeze, appending after any leftover already memmoved to the
- * front of buf.  seed length differs by tag: SampleY uses SEEDBYTES,
- * ExpandS uses CHALLENGESEEDBYTES.  We carry the length via the tag. */
+/* Draw one gauss_block_bytes block in ONE xof256 squeeze off the persisted
+ * gs->ctx, appending after any leftover already memmoved to the front of
+ * buf.  Under NGCC each squeeze is one SM3 Generate (V advances one step);
+ * the fixed block size is what keeps ref and the AVX forks byte-exact. */
 static void gs_fill(gauss_stream *gs)
 {
-    uint8_t nonce[1 + CHALLENGESEEDBYTES + 2 + 2];
-    size_t seedlen =
-        (gs->tag == DS_SAMPLE_Y) ? SEEDBYTES : CHALLENGESEEDBYTES;
     size_t blk = gauss_block_bytes(gs->tag);
-    size_t nlen;
-    xof_ctx ctx;
-    nonce[0] = gs->tag;
-    memcpy(nonce + 1, gs->seed, seedlen);
-    put_le16(nonce + 1 + seedlen, gs->lane);
-    put_le16(nonce + 1 + seedlen + 2, gs->refill);
-    nlen = 1 + seedlen + 2 + 2;
-    xof256_init(&ctx, nonce, nlen);
-    xof256_squeeze(&ctx, gs->buf + gs->avail, blk);
+#ifdef MEASURE_JK
+    shuttle_jk_blocks++;
+#endif
+    xof256_squeeze(&gs->ctx, gs->buf + gs->avail, blk);
     gs->avail += blk;
 }
 
@@ -336,14 +348,13 @@ void gs_ensure(gauss_stream *gs, size_t need)
 {
     if (gs->avail - gs->pos >= need)
         return;
-    /* memmove leftover to the front, bump refill, draw a fresh block. */
+    /* memmove leftover to the front, draw the next block off the chain. */
     {
         size_t left = gs->avail - gs->pos;
         if (left)
             memmove(gs->buf, gs->buf + gs->pos, left);
         gs->pos = 0;
         gs->avail = left;
-        gs->refill++;
         gs_fill(gs);
     }
 }
@@ -405,6 +416,9 @@ void expand_s(poly s1s2[ELL + EM],
         /* s chunk uses RCDT_NOISE_S; e chunk uses RCDT_NOISE_E.  Both ride
          * the SAME per-lane stream (s first, then e), so the byte cursor
          * threads s->e exactly like the spec's flattened lane chunk. */
+#ifdef MEASURE_JK
+        shuttle_jk_begin();
+#endif
         gauss_stream_init(&gs, DS_EXPAND_S, seedsk, t);
         cnt = 0;
         while (cnt < ws)
@@ -414,6 +428,9 @@ void expand_s(poly s1s2[ELL + EM],
         while (cnt < we)
             noise_minibatch(&gs, ebar + (size_t)t * we, &cnt, we,
                             RCDT_NOISE_E, RCDT_NOISE_E_ENTRIES);
+#ifdef MEASURE_JK
+        shuttle_jk_end();
+#endif
     }
 }
 
@@ -422,23 +439,16 @@ void expand_s(poly s1s2[ELL + EM],
  * ===================================================================== */
 void sample_c(poly *c, const uint8_t seedC[CHALLENGESEEDBYTES])
 {
-    /* Single-stream rejection sampler over the public seedC.  Each refill
-     * is a distinct XOF instance (tag||seedC||LE16(0)||LE16(refill)) that
-     * logically supplies SAMPLEC_BLOCK bytes; we draw those bytes LAZILY
-     * in SAMPLEC_DRAW-byte slices from the SAME persisted ctx and only
-     * roll to the next instance (refill+1) once all SAMPLEC_BLOCK bytes of
-     * the current one are consumed.  Squeezing N then M bytes from one
-     * stream yields the same bytes as one N+M squeeze, so the consumed-
-     * byte sequence and the refill boundary are byte-identical to the old
-     * single 4096 B squeeze -- only the wasted tail is never squeezed.
-     * Variable-time loop is fine here (seedC is public). */
-    uint8_t nonce[1 + CHALLENGESEEDBYTES + 2 + 2];
+    /* Single-stream rejection sampler over the public seedC.  ONE XOF.Init
+     * (tag||seedC||LE16(0)), then the stream is advanced purely by
+     * repeated fixed-size SAMPLEC_DRAW squeezes off the SAME persisted ctx
+     * (under NGCC each squeeze is one SM3 Generate advancing V one step;
+     * the fixed block size is what keeps ref and the AVX forks
+     * byte-exact). Variable-time loop is fine here (seedC is public). */
+    uint8_t nonce[1 + CHALLENGESEEDBYTES + 2];
     uint8_t block[SAMPLEC_DRAW];
-    uint16_t refill = 0;
     /* cursor / valid bytes within block */
     size_t pos = 0, avail = 0;
-    /* bytes squeezed from the current instance */
-    size_t drawn = 0;
     uint32_t mask = (1u << DN_BITS) - 1u;
     int i;
     xof_ctx ctx;
@@ -446,6 +456,7 @@ void sample_c(poly *c, const uint8_t seedC[CHALLENGESEEDBYTES])
     nonce[0] = DS_SAMPLE_C;
     memcpy(nonce + 1, seedC, CHALLENGESEEDBYTES);
     put_le16(nonce + 1 + CHALLENGESEEDBYTES, 0u); /* single stream idx 0 */
+    xof256_init(&ctx, nonce, sizeof(nonce));      /* single init */
 
     for (i = 0; i < N; i++)
         c->coeffs[i] = 0;
@@ -456,23 +467,9 @@ void sample_c(poly *c, const uint8_t seedC[CHALLENGESEEDBYTES])
         uint32_t j;
         do {
             if (pos + BN > avail) {
-                size_t want;
-                if (drawn >= SAMPLEC_BLOCK) {
-                    /* current instance exhausted: advance to refill+1 */
-                    refill++;
-                    drawn = 0;
-                }
-                if (drawn == 0) {
-                    put_le16(nonce + 1 + CHALLENGESEEDBYTES + 2, refill);
-                    xof256_init(&ctx, nonce, sizeof(nonce));
-                }
-                want = SAMPLEC_BLOCK - drawn;
-                if (want > SAMPLEC_DRAW)
-                    want = SAMPLEC_DRAW;
-                xof256_squeeze(&ctx, block, want);
+                xof256_squeeze(&ctx, block, SAMPLEC_DRAW); /* next block */
                 pos = 0;
-                avail = want;
-                drawn += want;
+                avail = SAMPLEC_DRAW;
             }
             j = get_le_masked(block + pos, BN, mask);
             pos += BN;
@@ -645,7 +642,13 @@ void sample_y(poly y[KVEC], const uint8_t seedY[SEEDBYTES])
 
     for (t = 0; t < XOF_STREAMS; t++) {
         gauss_stream gs;
+#ifdef MEASURE_JK
+        shuttle_jk_begin();
+#endif
         gauss_stream_init(&gs, DS_SAMPLE_Y, seedY, t);
         gauss_stream_chunk(&gs, ybar + (size_t)t * wy, wy);
+#ifdef MEASURE_JK
+        shuttle_jk_end();
+#endif
     }
 }

@@ -1,0 +1,98 @@
+=== SHUTTLE bulk-preset K* derivation ===
+date_utc: 2026-06-27T15:29:14Z
+criterion: K* = smallest K with P(J>K) <= 1/16
+calls/cell: 20000   lanes: XOF_STREAMS=16   samples/cell: 320000
+
+## sampler=expand_s mode=128
+# sampler=expand_s mode=128 calls=20000 lanes=16 samples=320000 jmax=7
+K* = 6   (P(J>K*) = 0.0002 <= 1/16)
+  J=0  n=0
+  J=1  n=0
+  J=2  n=0
+  J=3  n=0
+  J=4  n=6794
+  J=5  n=78854
+  J=6  n=234299
+  J=7  n=53
+
+## sampler=sample_y mode=128
+# sampler=sample_y mode=128 calls=20000 lanes=16 samples=320000 jmax=5
+K* = 5   (P(J>K*) = 0.0000 <= 1/16)
+  J=0  n=0
+  J=1  n=0
+  J=2  n=0
+  J=3  n=0
+  J=4  n=242547
+  J=5  n=77453
+
+## sampler=expand_s mode=256
+# sampler=expand_s mode=256 calls=20000 lanes=16 samples=320000 jmax=10
+K* = 9   (P(J>K*) = 0.0006 <= 1/16)
+  J=0  n=0
+  J=1  n=0
+  J=2  n=0
+  J=3  n=0
+  J=4  n=0
+  J=5  n=0
+  J=6  n=0
+  J=7  n=26478
+  J=8  n=255973
+  J=9  n=37349
+  J=10  n=200
+
+## sampler=sample_y mode=256
+# sampler=sample_y mode=256 calls=20000 lanes=16 samples=320000 jmax=8
+K* = 7   (P(J>K*) = 0.0511 <= 1/16)
+  J=0  n=0
+  J=1  n=0
+  J=2  n=0
+  J=3  n=0
+  J=4  n=0
+  J=5  n=0
+  J=6  n=0
+  J=7  n=303633
+  J=8  n=16367
+
+## sampler=expand_s mode=512
+# sampler=expand_s mode=512 calls=20000 lanes=16 samples=320000 jmax=18
+K* = 16   (P(J>K*) = 0.0295 <= 1/16)
+  J=0  n=0
+  J=1  n=0
+  J=2  n=0
+  J=3  n=0
+  J=4  n=0
+  J=5  n=0
+  J=6  n=0
+  J=7  n=0
+  J=8  n=0
+  J=9  n=0
+  J=10  n=0
+  J=11  n=0
+  J=12  n=0
+  J=13  n=15
+  J=14  n=6999
+  J=15  n=213341
+  J=16  n=90194
+  J=17  n=9443
+  J=18  n=8
+
+## sampler=sample_y mode=512
+# sampler=sample_y mode=512 calls=20000 lanes=16 samples=320000 jmax=14
+K* = 13   (P(J>K*) = 0.0138 <= 1/16)
+  J=0  n=0
+  J=1  n=0
+  J=2  n=0
+  J=3  n=0
+  J=4  n=0
+  J=5  n=0
+  J=6  n=0
+  J=7  n=0
+  J=8  n=0
+  J=9  n=0
+  J=10  n=0
+  J=11  n=0
+  J=12  n=0
+  J=13  n=315588
+  J=14  n=4412
+
+#endif

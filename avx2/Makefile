@@ -146,12 +146,12 @@ NTTGEN   = ../tools/ntt
 # of the byte-exactness milestone).  These are the SAME values the ref Makefile
 # records (see ref/Makefile KAT_<m>_<MODE>); byte-exactness is the gate.
 # Re-record in lock-step with ref on any output-changing diff.
-KAT_128_NGCC = 13926565390340745383
-KAT_256_NGCC = 1071740541928326239
-KAT_512_NGCC = 13704633541147262613
-KAT_128_SHA3 = 13188481003930633542
-KAT_256_SHA3 = 1193940268129441062
-KAT_512_SHA3 = 9382678739361523757
+KAT_128_NGCC = 694662423212676878
+KAT_256_NGCC = 11745380263243653264
+KAT_512_NGCC = 17695024177155876376
+KAT_128_SHA3 = 1782381705821950948
+KAT_256_SHA3 = 9515615424765577331
+KAT_512_SHA3 = 10862480012822980612
 MODELABEL = $(if $(filter SHA3,$(MODE)),SHA3,NGCC)
 
 .PHONY: all check check-kat check-no-avx512 check-refill check-consts sm3-test \
