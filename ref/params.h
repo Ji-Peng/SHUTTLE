@@ -344,10 +344,10 @@
  * RANS_RESERVED_BYTES
  *                      + POLYZ_LO_PACKEDBYTES
  *                    = 1183 / 2417 / 5001  (computed by tools/SigSize.py).
- * These EXCEED the spec-table targets 1005/2155/4552 because the
- * source-law entropy of (Q0,Qs,h) plus the raw low bits already exceeds
- * those targets (even the Shannon floor is ~1115/2316/4866 B): the table
- * values are aspirational pending empirical re-validation.  CRYPTO_BYTES is
+ * These MATCH the current spec table (tab:suf-parameters now lists
+ * 1183/2417/5001).  The older targets 1005/2155/4552 lay below the source-law
+ * entropy of (Q0,Qs,h) plus the raw low bits (even the Shannon floor is
+ * ~1115/2316/4866 B) and were dropped from the spec.  CRYPTO_BYTES is
  * the EXACT realized length: it equals SIG_PACKED_BYTES with no head-room
  * padding.  params.h precedes rans.h in the include order, so the literal
  * is mirrored here and packing.c static-asserts SIG_PACKED_BYTES ==

@@ -14,8 +14,8 @@
  * ============================
  *
  * SamplerU writes a uniform u in (0,1] as u = 2^-a * b, where the integer
- * exponent a >= 1 is the leading-zero count of the mantissa stream and the
- * mantissa b = 1 + m/2^kappa_b lies in [1,2) (kappa_b = 57).  The
+ * exponent a >= 1 is the leading-zero count of the exponent stream rho_a and
+ * the mantissa b = 1 + m/2^kappa_b lies in [1,2) (kappa_b = 57).  The
  * R-transition test only COMPARES log u, so a base-2 additive budget
  * eta_log <= 2^-57 is enough.  shuttle_log2_frac_q62(j, x_q64) returns the
  * FRACTIONAL part

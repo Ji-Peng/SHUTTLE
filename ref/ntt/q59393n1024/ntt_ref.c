@@ -2,7 +2,7 @@
  * ntt_ref.c -- portable SCALAR reference implementation of the complete n=1024
  * negacyclic NTT / INTT over Z_q[x]/(x^1024+1), q=59393, 16-bit Montgomery.
  *
- * COMPLETE NTT: q-1 = 2^11*29, so 2n=1024 | q-1; x^1024+1 splits into 512
+ * COMPLETE NTT: q-1 = 2^11*29, so 2n=2048 | q-1; x^1024+1 splits into 1024
  * linear factors, hence 10 butterfly levels and POINTWISE (coefficient-wise)
  * pointmul (no basemul).  This is the correctness oracle for ntt.S and the
  * scalar baseline in the speed benchmark; it mirrors gen_ntt.py exactly.
@@ -23,7 +23,7 @@
 
 static uint32_t RINV;            /* (2^16)^-1 mod q */
 static uint16_t ZMONT[NTT_N];    /* omega^{brv10(k)} * R mod q */
-static uint16_t NINVTOMONT;      /* 512^-1 * R^2 mod q */
+static uint16_t NINVTOMONT;      /* 1024^-1 * R^2 mod q */
 uint16_t ntt_ref_R2;             /* R^2 mod q (exported for pointwise) */
 
 static uint32_t powmod(uint32_t b, uint32_t e){

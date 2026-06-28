@@ -242,7 +242,7 @@ void expand_signing_seeds(uint8_t seedY[SEEDBYTES],
 
 /* Right-sized first/continuation slice for SampleC's partial Fisher-Yates.
  * The mean candidate need is sum_{i=n-tau}^{n-1} 2^DN/(i+1) BN-byte draws
- * (well under 256 B for every mode); TAU*BN*4 ceil-to-granularity gives a
+ * (well under 256 B for every mode); TAU*BN*2 ceil-to-granularity gives a
  * comfortable margin so the first slice covers the whole challenge in
  * essentially every call.  SampleC opens ONE ctx and is advanced by
  * repeated fixed-size SAMPLEC_DRAW squeezes off it. */
