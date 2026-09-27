@@ -547,7 +547,7 @@ static void reject_sample_oracle(xof_ctx *ctx, poly z[KVEC],
             }
             for (i = 0; i < KVEC; ++i)
                 for (k = 0; k < N; ++k)
-                    z[i].coeffs[k] += (int32_t)flag * v[i].coeffs[k];
+                    z[i].coeffs[k] -= (int32_t)flag * v[i].coeffs[k];
         }
     }
 }
@@ -658,13 +658,14 @@ static int test_reject_sample(void)
                         u <= ((__int128)hi << TEST_R2LN2_QSHIFT))
                         flag = 1;
                 }
-                /* applied shift is flag*v where v already carries the
+                /* applied shift is -flag*v where v already carries the
                  * sign-normalize sgn; net signed challenge coeff at j is
-                 * flag*sgn (multiplying sk.X^j). */
-                cp[j] = (int8_t)(flag * sgn);
+                 * -flag*sgn (multiplying sk.X^j). Interval hit (flag=+1)
+                 * therefore applies y-v, matching pv. */
+                cp[j] = (int8_t)(-(flag * sgn));
                 for (i = 0; i < KVEC; ++i)
                     for (k = 0; k < N; ++k)
-                        acc[i].coeffs[k] += (int32_t)flag * v[i].coeffs[k];
+                        acc[i].coeffs[k] -= (int32_t)flag * v[i].coeffs[k];
             }
         }
         /* now z must equal y + sum_j cp[j] * (sk.X^j). */

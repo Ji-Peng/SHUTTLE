@@ -7,7 +7,8 @@ FIXED 18 bytes (10 exponent + 8 mantissa) off the single 0x09||seed_y bulk
 buffer (drawn ONCE, sliced 18 B/transition in ascending-j order, K2/K3/K5).
 
 R-transition (alg:Ryv): form u = (2 r^2 ln2)*log2(U) at Q44, sign-normalize v
-so <z,v> > 0, run the 15 boundary-pair interval tests, apply z += flag*v.
+so <z,v> > 0, run the 15 boundary-pair interval tests, apply z -= flag*v
+(interval hit flag=+1 => y-v, matching pv).
 
 The R2LN2 fixed-point constant (R2LN2_QSHIFT / R2LN2_QF) is parsed from the
 committed ref/irs.c (no re-derivation -> no new magic numbers).
@@ -125,7 +126,7 @@ class IRS:
         f = flag
         for zi, vi in zip(z, v):
             for k in range(len(zi)):
-                zi[k] += f * vi[k]
+                zi[k] -= f * vi[k]
 
     # ---- RejectSample (irs.c reject_sample) ----
     def reject_sample(self, buf, y, c_coeffs, sk_tilde):

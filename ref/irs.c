@@ -10,7 +10,7 @@
  * Constant-time discipline (irs.h "ISOCHRONY / LEAKAGE"):
  *   - the ONLY branch on the IRS path is the ascending-j  if (c[j])  gate,
  *     whitelisted because c is PUBLIC (recomputed by the verifier);
- *   - the sign-normalize, the 15-pair interval test, and the z += flag*v
+ *   - the sign-normalize, the 15-pair interval test, and the z -= flag*v
  *     update are branchless (two's-complement masks);
  *   - no division/modulo; the u-vs-boundary comparison is exact in
  * __int128.
@@ -298,14 +298,15 @@ static void poly_shift_negacyclic(poly v[KVEC], const poly src[KVEC],
     }
 }
 
-/* z[i] += flag * v[i]  for every coeff, flag in {-1,+1}, branchless. */
+/* z[i] -= flag * v[i]  for every coeff, flag in {-1,+1}, branchless.
+ * Interval hit (flag=+1) applies y-v, matching pv(y) = Prob(return y-v). */
 static void poly_axpy_flag(poly z[KVEC], const poly v[KVEC], int64_t flag)
 {
     unsigned i, k;
     int32_t f = (int32_t)flag; /* -1 or +1 */
     for (i = 0; i < KVEC; ++i)
         for (k = 0; k < N; ++k)
-            z[i].coeffs[k] += f * v[i].coeffs[k];
+            z[i].coeffs[k] -= f * v[i].coeffs[k];
 }
 
 /* ===================================================================== *
@@ -338,7 +339,7 @@ static __int128 sampler_u_to_u_q44(sampler_u_res ell)
  * R_transition: draw ell from SamplerU(ctx) (already drawn and passed in
  * by the caller so the x2 batch can be wired -- see reject_sample), form
  * u, sign-normalize v so t = <y,v> > 0, run the 15 boundary-pair interval
- * tests, and apply z <- z + flag*v.  `v` is the shift sk_tilde.X^j; it is
+ * tests, and apply z <- z - flag*v.  `v` is the shift sk_tilde.X^j; it is
  * mutated (sign-normalized) in place.  z is mutated.
  *
  * Branchless throughout: the t<=0 flip and the flag selection use

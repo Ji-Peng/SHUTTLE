@@ -86,7 +86,7 @@
  * -- because the emitted response z = y + StretchS(sk) c' is EXACTLY
  * centered Gaussian D_{R,r} independent of sk (M_6 = 1 exact step,
  * Security.tex:701); (c) the per-transition arithmetic (SamplerU, the
- * inner products, the sign-normalize, the 15-pair interval loop, z +=
+ * inner products, the sign-normalize, the 15-pair interval loop, z -=
  * flag*v) is fully branchless / constant-time (no data-dependent jump,
  * index, shift, or divide); the loop bound is a fixed 15 and a fixed n;
  *   (d) the SamplerU byte consumption is fixed at 18*tau bytes (no
