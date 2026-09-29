@@ -13,7 +13,7 @@
  * RejectSample(ctx, z, y, c, sk_tilde) (Algorithm alg:RejectSample) maps
  * the masking sample y to the response
  *
- *     z = y + sk_tilde . c'        (Description.tex:1340)
+ *     z = y + sk_tilde . c'        (Description.tex:1343)
  *
  * where c' is the SIGNED challenge: c has only {0,1} entries (SampleC
  * output), and the per-position sign of each applied shift is decided by
@@ -72,7 +72,7 @@
  * ====================== ISOCHRONY / LEAKAGE
  * ==================
  *
- * Isochrony of IRS (Description.tex:1398-1445, 2172-2215; Security.tex
+ * Isochrony of IRS (Description.tex:1401-1448, 2188-2231; Security.tex
  * M_6). Unlike Fiat-Shamir-with-aborts, R is ABORT-FREE: it always outputs
  * one of y +- v, so RejectSample runs for a FIXED number of transitions
  * equal to the (public) challenge weight tau, independent of the secret
