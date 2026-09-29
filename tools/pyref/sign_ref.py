@@ -44,10 +44,11 @@ class Shuttle:
         self.rnd = Rounding(set_id)
         self.irs = IRS(set_id)
         self._rcdt = rcdt_tables()
-        # Right-sized per-refill blocks (mirror ref/polyvec.h
-        # gauss_block_bytes): each refill is its OWN single-squeeze ctx, so
-        # the block is the EXACT minimum holding one logical unit -- no
-        # granularity rounding, no +64 slack.  Tag-tuned:
+        # Right-sized per-squeeze blocks (mirror ref/polyvec.h
+        # gauss_block_bytes): each block is ONE squeeze off the lane's
+        # persisted ctx (single init, no refill re-init), so the block is the
+        # EXACT minimum holding one logical unit -- no granularity rounding,
+        # no +64 slack.  Tag-tuned:
         #   SampleY (tag 0x08): GAUSS_BLOCK_Y =
         #       SIGN_BYTES_PER_CHUNK + SIGN_PAD_AVX512(8) + MINIBATCH(672)
         #   ExpandS (tag 0x03): GAUSS_BLOCK_S = NOISE_MINIBATCH_RAND_BYTES(392)
@@ -91,7 +92,9 @@ class Shuttle:
         abar = [0] * na
         hbar = [0] * nh
         for t in range(16):
-            us = xof_ref.UniformStream(self.sha3, 0x02, seedA, t)
+            us = xof_ref.UniformStream(
+                self.sha3, 0x02, seedA, t,
+                xof_ref.uniform_draw(self.sha3, p))
             self._uniform_reject_chunk(us, abar, t * wa, wa, mask, q, p["BQ"])
             self._uniform_reject_chunk(us, hbar, t * wh, wh, mask, q, p["BQ"])
         agen = [abar[i * n:(i + 1) * n] for i in range(p["EM"])]
@@ -141,18 +144,19 @@ class Shuttle:
         mask = (1 << p["DN_BITS"]) - 1
         bn = p["BN"]
         c = [0] * n
-        nonce_pre = bytes([0x07]) + bytes(seedC) + (0).to_bytes(2, "little")
-        refill = 0
+        # ONE xof256 init (tag||seedC||LE16(0)); the stream is advanced by
+        # repeated fixed-size SAMPLEC_DRAW squeezes off the same persisted
+        # ctx (no refill re-init), mirroring ref/polyvec.c sample_c.
+        nonce = bytes([0x07]) + bytes(seedC) + (0).to_bytes(2, "little")
+        draw = xof_ref.samplec_draw(self.sha3, p)
+        ctx = xof_ref.xof256_init(self.sha3, nonce)
         block = b""
         pos, avail = 0, 0
         for i in range(n - tau, n):
             while True:
                 if pos + bn > avail:
-                    nonce = nonce_pre + refill.to_bytes(2, "little")
-                    refill += 1
-                    block = xof_ref.xof256_init(self.sha3, nonce).squeeze(
-                        xof_ref.UNIFORM_BLOCK)
-                    pos, avail = 0, xof_ref.UNIFORM_BLOCK
+                    block = ctx.squeeze(draw)
+                    pos, avail = 0, draw
                 j = 0
                 for b in range(bn):
                     j |= block[pos + b] << (8 * b)

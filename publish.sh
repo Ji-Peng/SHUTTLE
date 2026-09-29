@@ -36,7 +36,12 @@
 #   SEVENZIP_BIN          path to 7z / 7za / 7zz
 #   PROXY_URL             public URL prefix (default https://share.ji-peng.com)
 #   COS_HOST             COS host for server-side move (default derived from
-#                         ~/.cos.conf as <bucket>.cos.<region>.myqcloud.com)
+#                         $COS_CONF, i.e. ~/.cos-share.conf, as
+#                         <bucket>.cos.<region>.myqcloud.com)
+#
+# The coscmd config file defaults to ~/.cos-share.conf (override with COS_CONF);
+# every coscmd call below is passed -c "$COS_CONF" explicitly, so the archive
+# never depends on a ~/.cos.conf the host may or may not have.
 
 set -euo pipefail
 
@@ -46,7 +51,7 @@ BUCKET_DIR="SHUTTLE-Code"
 ARCHIVE_DIR="${BUCKET_DIR}/Archive"
 INDEX_KEY="${BUCKET_DIR}/index.html"
 PROXY_URL="${PROXY_URL:-https://share.ji-peng.com}"
-COS_CONF="${COS_CONF:-$HOME/.cos.conf}"
+COS_CONF="${COS_CONF:-$HOME/.cos-share.conf}"
 ZIP_PASSWORD="${SHUTTLE_ZIP_PASSWORD:-hycFkBh+okdvxYX2c5vbOwJGR7fTg/DZ}"
 
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
@@ -90,6 +95,12 @@ BUILD_ARTIFACT_EXCLUDES=(
 die() {
   echo "Error: $*" >&2
   exit 1
+}
+
+# coscmd anchored to $COS_CONF: coscmd's own default is ~/.cos.conf, which
+# this host does not have (the share config lives in ~/.cos-share.conf).
+coscmd_run() {
+  "$COSCMD" -c "$COS_CONF" "$@"
 }
 
 resolve_coscmd() {
@@ -220,8 +231,8 @@ build_archives() {
 
 upload_archives() {
   echo "Uploading archives to ${BUCKET_DIR}/ ..."
-  "$COSCMD" upload "$SHUTTLE_ZIP" "${BUCKET_DIR}/$(basename "$SHUTTLE_ZIP")"
-  "$COSCMD" upload "$NGCC_ZIP"   "${BUCKET_DIR}/$(basename "$NGCC_ZIP")"
+  coscmd_run upload "$SHUTTLE_ZIP" "${BUCKET_DIR}/$(basename "$SHUTTLE_ZIP")"
+  coscmd_run upload "$NGCC_ZIP"   "${BUCKET_DIR}/$(basename "$NGCC_ZIP")"
   echo "Uploaded:"
   echo "  ${PROXY_URL}/${BUCKET_DIR}/$(basename "$SHUTTLE_ZIP")"
   echo "  ${PROXY_URL}/${BUCKET_DIR}/$(basename "$NGCC_ZIP")"
@@ -236,7 +247,7 @@ rotate_archives() {
   keep_b="$(basename "$NGCC_ZIP")"
   host="$(resolve_cos_host)"
 
-  listing="$("$COSCMD" list "${BUCKET_DIR}/" -r 2>/dev/null || true)"
+  listing="$(coscmd_run list "${BUCKET_DIR}/" -r 2>/dev/null || true)"
   [[ -n "$listing" ]] || return 0
 
   local moved=0
@@ -249,7 +260,7 @@ rotate_archives() {
     name="$rel"
     [[ "$name" == "$keep_a" || "$name" == "$keep_b" ]] && continue  # keep new
     echo "Archiving older package: $name"
-    "$COSCMD" move "${host}/${BUCKET_DIR}/${name}" "${ARCHIVE_DIR}/${name}"
+    coscmd_run move "${host}/${BUCKET_DIR}/${name}" "${ARCHIVE_DIR}/${name}"
     moved=$((moved + 1))
   done < <(printf '%s\n' "$listing" | awk 'NF>=5 && $2 ~ /^[0-9]+$/ {print $1}')
 
@@ -271,7 +282,7 @@ update_index() {
   tmp_index="$(mktemp --suffix=.html)"
   TMP_FILES+=("$tmp_list" "$tmp_index")
 
-  if ! "$COSCMD" list "${BUCKET_DIR}/" -r >"$tmp_list" 2>/dev/null; then
+  if ! coscmd_run list "${BUCKET_DIR}/" -r >"$tmp_list" 2>/dev/null; then
     echo "Warning: failed to list ${BUCKET_DIR}/; index.html not refreshed." >&2
     return 0
   fi
@@ -384,7 +395,7 @@ PY
 
   [[ -s "$tmp_index" ]] || { echo "Warning: empty index.html; skipping." >&2; return 0; }
 
-  "$COSCMD" upload \
+  coscmd_run upload \
     -H "Cache-Control: no-cache, no-store, must-revalidate" \
     "$tmp_index" "$INDEX_KEY" >/dev/null
   echo "Index refreshed: ${PROXY_URL}/${INDEX_KEY}"

@@ -33,6 +33,17 @@ run_make() {
 run_make ref tables                  # materialize generated tables
 run_make ref check                   # correctness + KAT-accept, all TESTS x MODES
 run_make ref check-rans-failrate     # rANS overflow-restart rate <= 2^-35
+
+# Python reference end-to-end byte-exactness (the independent mirror of the
+# deterministic layers). Pure-Python keygen/sign, so this is the slowest gate:
+# skip it in a quick loop with SKIP_PYREF=1, but when it runs, a divergence is
+# FATAL (a mismatch means the C or the mirror drifted -- see
+# tools/pyref/README.md). It compiles the C ref itself, so no extra setup.
+if [ "${SKIP_PYREF:-0}" = 1 ]; then
+    printf '\n== tools/pyref run_pyref.py --sign: SKIP (SKIP_PYREF=1) ==\n'
+else
+    run python3 tools/pyref/run_pyref.py --sign
+fi
 run ./ct_scan_matrix.sh              # MANDATORY static CT scan (HARD gate)
 run ./security_audit_matrix.sh       # fault injection + parser-negative (+ trace-KAT)
 run ./integration_audit_matrix.sh    # cross-backend diff-fuzz + perf-checklist

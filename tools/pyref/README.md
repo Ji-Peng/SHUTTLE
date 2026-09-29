@@ -55,6 +55,32 @@ byte-for-byte. **Verified byte-exact: all 3 sets x {SHA3, NGCC} x {rANS, RAW}
 decode), the mod-2q commitment lift, MakeHint/UseHint, and the rANS sigEncode
 -- are all reproduced exactly.
 
+## Realignment with the current C XOF schedule (2026-09-29)
+
+The mirror had fallen out of sync: SHUTTLE commit `16dfdfc` (2026-06-27,
+"Remove XOF refill counter: single-init samplers + N-way bulk-preset gauss")
+replaced the per-lane **refill re-init** model (`nonce = tag||seed||LE16(lane)||LE16(refill)`,
+a fresh `XOF.Init` per block) with **one init per lane + a chain of fixed-size
+squeezes off the persisted ctx**, and re-recorded the KAT. `tools/pyref` was not
+updated then, so `xcheck_sign.py` failed on every configuration (pk/sk/sig all
+differed) from that commit until the realignment below.
+
+`xof_ref.py` / `sign_ref.py` now mirror the current schedule:
+
+| stream | tag | nonce | per-squeeze unit |
+|---|---|---|---|
+| ExpandA (`UniformStream`) | `0x02` | `tag‖seedA‖LE16(lane)` | `UNIFORM_DRAW` = `ceil(2·(EM·n·(1+ELL)/16)·BQ → granularity)` |
+| ExpandS (`GaussStream`) | `0x03` | `tag‖seedsk‖LE16(lane)` | `GAUSS_BLOCK_S` = `NOISE_MINIBATCH_RAND_BYTES` |
+| SampleY (`GaussStream`) | `0x08` | `tag‖seedY‖LE16(lane)` | `GAUSS_BLOCK_Y` = `SIGN_BYTES_PER_CHUNK + 8 + MINIBATCH_RAND_BYTES` |
+| SampleC (inline) | `0x07` | `tag‖seedC‖LE16(0)` | `SAMPLEC_DRAW` = `ceil(TAU·BN·2 → granularity)` |
+
+`granularity` is `XOF_SQUEEZE_GRANULARITY_BYTES` (SHAKE128 rate 168 under
+`SHA3_MODE`, the 32-word SM3 block 128 under `NGCC_MODE`). No refill counter
+survives on either side. `python3 run_pyref.py --sign` and
+`xcheck_sign.py --mode all [--ngcc] [--raw]` are byte-exact again across all
+3 sets x {SHA3, NGCC} x {rANS, RAW}; the end-to-end check is wired into
+`./run_tests.sh` (skippable with `SKIP_PYREF=1`).
+
 ## M4 empirical rANS validation
 
 `m4_validate.py` (+ `m4_dump.c`) signs N real messages with the C rANS path,

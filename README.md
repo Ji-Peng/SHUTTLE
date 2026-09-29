@@ -133,11 +133,11 @@ The two backends are distinct primitives and therefore define two distinct KAT s
 
 | Level | Default (SM3) backend | SHAKE backend |
 | --- | --- | --- |
-| SHUTTLE-128 | 13926565390340745383 | 13188481003930633542 |
-| SHUTTLE-256 | 1071740541928326239 | 1193940268129441062 |
-| SHUTTLE-512 | 13704633541147262613 | 9382678739361523757 |
+| SHUTTLE-128 | 11486952262273914864 | 6997426514966519864 |
+| SHUTTLE-256 | 13231489903054685845 | 17087775945720413227 |
+| SHUTTLE-512 | 7887990226066942058 | 3305270276154518466 |
 
-These are the production (entropy-coded signature path) hashes, verified to reproduce across the reference, AVX2, and AVX-512 backends for both symmetric backends.
+These are the production (entropy-coded signature path) hashes, verified to reproduce across the reference, AVX2, and AVX-512 backends for both symmetric backends. **Keep this table in sync with the `KAT_<level>_<MODE>` pins in `ref/Makefile` (also mirrored in `avx2/Makefile` and `avx512/Makefile`): the pins are authoritative, and every output-changing commit must re-record both.**
 
 ## Reproducible constants
 
@@ -173,7 +173,7 @@ The audit harness has two defense families.
 
   It compiles every secret-handling object across the full matrix of backend x level x compiler (gcc and clang) x optimization level (`-O3` and `-Os`) x symmetric backend, disassembles each, and flags any forbidden mnemonic -- division, gather/scatter, square root, float conversion -- unless it is explicitly allowlisted as operating on public data or a public-length count. Every allowlist entry cites a section of `SECRET_PUBLIC_AUDIT.md`. This is complemented by a statistical timing-leakage test (the dudect methodology, `./run_dudect_all.sh`) and an opt-in dynamic taint check (a patched-Valgrind run, enabled with `TIMECOP=1 ./run_tests.sh`).
 
-- Correctness/leakage bugs that pass functional tests (the class of divergences that are functionally clean but wrong on some input): defended by the independent Python reference model (`tools/pyref/`), the deterministic recorded KAT, byte-for-byte cross-backend equality, plus two matrices:
+- Correctness/leakage bugs that pass functional tests (the class of divergences that are functionally clean but wrong on some input): defended by the independent Python reference model (`tools/pyref/`), whose end-to-end `pk`/`sk`/`sig` byte-exactness against the C reference is now part of `./run_tests.sh` (`python3 tools/pyref/run_pyref.py --sign`; skip it in a quick loop with `SKIP_PYREF=1`), the deterministic recorded KAT, byte-for-byte cross-backend equality, plus two matrices:
 
   ```sh
   ./integration_audit_matrix.sh   # cross-backend differential fuzz

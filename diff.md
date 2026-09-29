@@ -128,3 +128,14 @@ identity checks that encode the transition update all PASS.
 If the repo path contains spaces, `gen_kat.sh`’s unquoted `$(for ...)`
 path expansion may break; run via a space-free symlink (e.g.
 `ln -sfn "$PWD" /tmp/shuttle && cd /tmp/shuttle && ./gen_kat.sh`).
+
+## Follow-up sync (2026-09-29)
+
+Everything downstream of the changed signatures/vectors has been resynced and re-verified:
+
+- **Vectors and package rebuilt.** `./gen_kat.sh` (NGCC) and `./gen_kat.sh --sha3` regenerated `dist/Test_Vectors/` (+ `SHA3/`); `./pack_ngcc.sh` rebuilt `dist/Implementations/` (Reference / Optimized AVX2 / Additional AVX-512 x 3 sets) and passed its self-containment check. We additionally built the packaged Reference implementation standalone: its `KAT_SIG_SHUTTLE-128.txt` is byte-identical to `dist/Test_Vectors/`.
+- **Docs resynced.** The `README.md` KAT table now matches the `Makefile` pins; `agent/SHUTTLE-NGCC/Plan/08-IRS-SamplerU.md`, `Plan/research/07-approxexp-approxlog.md` and `Plan/research/01-spec-params-toplevel.md` no longer describe `z += flag*v`; the tracker `Plan/Modify-Spec.tex` gained entry **MS-B9** (this fix) and **MS-C11** (the `16dfdfc` single-init XOF schedule, which is exactly what had desynced `tools/pyref`).
+- **Python mirror realigned.** `tools/pyref/xof_ref.py` + `sign_ref.py` now mirror the single-init + fixed-slice XOF schedule; `xcheck_sign.py` is byte-exact on all 3 sets x {SHA3, NGCC} x {rANS, RAW} (12 configurations), and the end-to-end check is wired into `run_tests.sh` (skippable via `SKIP_PYREF=1`).
+- **Spec PDF rebuilt.** `SHUTTLE-Spec/main.pdf` regenerated with `latexmk -xelatex`; Algorithm 22 now returns `y - flg*v` and the correction footnote is on the same page.
+- **Cross-backend.** `make -C avx2 check-kat` reproduces the same pinned hashes as `ref`; AVX-512 could not be executed here (host lacks the ISA), so it stays covered by the byte-exact fork review plus the AVX2 gate.
+- Full audit (attack equivalence, evidence, residual risks, remaining manual steps) is written up in `agent/audit/0929.tex`.

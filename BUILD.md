@@ -32,8 +32,10 @@ The mandated perf flags carry `-std=c99 -Wpedantic`, which warns on `__m256i`, i
 
 Every runtime constant lives in an `@@AUTOGEN:<name>@@ BEGIN/END` region inside a hand-written header, emitted by a `tools/gen_*.py` generator with an audit log in `tools/log/`. `make tables` regenerates all regions; `make check-consts` re-runs the generators and `cmp`s against the committed bytes (drift gate). `gen_params.py` (derived NTT/mask/size constants) and `gen_bounds.py` (integer squared-norm thresholds) both write `params.h` and `tools/log/{params,bounds}_derivation.txt`. No magic numbers.
 
-## Open placeholders (pinned once the corresponding component lands)
+## Open placeholders (all pinned; kept for provenance)
 
-- `CRYPTO_SECRETKEYBYTES` is a skEncode-layout estimate (confirmed against the KAT once keygen/packing land).
-- `CRYPTO_BYTES` is a generous placeholder over the spec-table sig-size target (the rANS encoder pins `RANS_RESERVED_BYTES`).
-- The KAT hashes in the avx2/avx512 Makefiles are `TBD` until the KAT recording step fills them in.
+- `CRYPTO_SECRETKEYBYTES` — pinned: the realized `skEncode` layout (`SEEDBYTES + 2*CHALLENGESEEDBYTES + ELL*POLYS + EM*POLYE + EM*POLYPK`) is compile-time asserted and reproduced by the KAT.
+- `CRYPTO_BYTES` — pinned: `SIG_PACKED_BYTES` (1183/2417/5001) with `RANS_RESERVED_BYTES` fixed by `tools/rans_model.py` + `tools/SigSize.py`; the reserve is re-derived by the generator, never hand-edited.
+- KAT hashes — recorded: the `KAT_<level>_<MODE>` pins live in `ref/Makefile` (mirrored in `avx2/` + `avx512/`) and are reproduced by `make -C ref check-kat` under both `MODE`s. Re-record on any output-changing diff; `SHUTTLE/README.md` carries the current table. Last re-recording: the IRS branch-sign fix (`06414fc`, 2026-09-27).
+
+Re-verified 2026-09-29 (x86-64): `make -C ref check` (all modes), `check-kat` under NGCC **and** SHA3, `make -C avx2 check-kat`, `gen_kat.sh` (both XOF sets) and `pack_ngcc.sh` (self-containment + KAT match) all pass. AVX-512 runtime checks remain impossible on this host (no AVX-512 ISA).
