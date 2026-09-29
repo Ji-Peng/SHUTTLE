@@ -345,13 +345,14 @@
  *                      + POLYZ_LO_PACKEDBYTES
  *                    = 1183 / 2417 / 5001  (computed by tools/SigSize.py).
  * These MATCH the current spec table (tab:suf-parameters now lists
- * 1183/2417/5001).  The older targets 1005/2155/4552 lay below the source-law
- * entropy of (Q0,Qs,h) plus the raw low bits (even the Shannon floor is
- * ~1115/2316/4866 B) and were dropped from the spec.  CRYPTO_BYTES is
- * the EXACT realized length: it equals SIG_PACKED_BYTES with no head-room
- * padding.  params.h precedes rans.h in the include order, so the literal
- * is mirrored here and packing.c static-asserts SIG_PACKED_BYTES ==
- * CRYPTO_BYTES as the drift gate.  Realized sig length == SIG_PACKED_BYTES
+ * 1183/2417/5001).  The older targets 1005/2155/4552 lay below the
+ * source-law entropy of (Q0,Qs,h) plus the raw low bits (even the Shannon
+ * floor is ~1115/2316/4866 B) and were dropped from the spec. CRYPTO_BYTES
+ * is the EXACT realized length: it equals SIG_PACKED_BYTES with no
+ * head-room padding.  params.h precedes rans.h in the include order, so
+ * the literal is mirrored here and packing.c static-asserts
+ * SIG_PACKED_BYTES == CRYPTO_BYTES as the drift gate.  Realized sig length
+ * == SIG_PACKED_BYTES
  * == CRYPTO_BYTES. */
 #if SHUTTLE_MODE == 128
 #    define CRYPTO_BYTES 1183 /* == SIG_PACKED_BYTES */

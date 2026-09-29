@@ -1,8 +1,8 @@
 # Build artifacts (per-backend out/ trees) — never committed.
 */out/
 
-# Python generator caches.
-tools/__pycache__/
+# Python generator caches (any depth: tools/, tools/ntt/, ...).
+__pycache__/
 
 # Local explore/scratch output.
 ref/explore/*.log

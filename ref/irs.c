@@ -299,7 +299,8 @@ static void poly_shift_negacyclic(poly v[KVEC], const poly src[KVEC],
 }
 
 /* z[i] -= flag * v[i]  for every coeff, flag in {-1,+1}, branchless.
- * Interval hit (flag=+1) applies y-v, matching pv(y) = Prob(return y-v). */
+ * Interval hit (flag=+1) applies y-v, matching pv(y) = Prob(return y-v).
+ */
 static void poly_axpy_flag(poly z[KVEC], const poly v[KVEC], int64_t flag)
 {
     unsigned i, k;
