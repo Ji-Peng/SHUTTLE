@@ -67,7 +67,12 @@ FRAC_QBITS = 62    # ApproxLog `frac` is Q62 (= SHUTTLE_LOG_POLY_QBITS).
 
 # Realized log error feeding the budget cross-check (from approx_log_poly):
 APPROXLOG_ABS_LOG2_BITS = mpmath.mpf("59.37")  # |Delta_{a,b}| <= 2^-59.37
-LNU_BIND = mpmath.mpf("50.53")  # binding |ln U| ~ 784 V / 2r^2 at SUF-256
+# Binding |ln U|: SamplerU gives U = 2^-a * b with a <= kappa_a+1 = 81 and
+# b in [1,2), so |ln U| <= 81*ln2 = 56.15 absolutely.  (Was 50.53 = 784V/2r^2,
+# the value for the old 28-term truncation; the implemented transition keeps
+# m = 0..29, whose smallest retained threshold is 841V/2r^2, so the old bound
+# was both stale and not an absolute one.)
+LNU_BIND = mpmath.mpf("56.15")
 
 
 def round_half_even(x):
@@ -89,7 +94,7 @@ def budget_check(F, R, relerr):
     e_trunc = mpmath.mpf(2) ** (-(F + mpmath.log(TWO_RSQ, 2)))    # u_frac >>62 round
     delta_log = e_approx + e_const + e_trunc
     Cvr = mpmath.mpf(2) ** mpmath.mpf("5.02")
-    tau_max = 114
+    tau_max = 115  # TAU of the largest set (params.h)
     acc = tau_max * Cvr * (mpmath.e ** delta_log - 1)
     return delta_log, acc
 

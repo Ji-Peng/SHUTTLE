@@ -14,9 +14,9 @@ u Q-form (irs.c R_transition):
 
 Error budget cross-check (delta_tau <= 2^-45):
   ApproxLog ln-additive       = ln2 * 2^-59.37 = 2^-59.8988
-  constant amplified (|lnU|<= 50.53) = 50.53*2^-65.1577 = 2^-59.4986
-  total delta_log             = 2^-58.6572
-  accumulated delta_tau       = 114 * 2^5.02 * (e^delta_log - 1) = 2^-46.8043   (< 2^-45)
+  constant amplified (|lnU|<= 56.15) = 56.15*2^-65.1577 = 2^-59.3464
+  total delta_log             = 2^-58.5703
+  accumulated delta_tau       = 114 * 2^5.02 * (e^delta_log - 1) = 2^-46.7048   (< 2^-45)
 
 __int128 range (no overflow):
   R2LN2_QF * frac_q62 <= 2^125.848  (< 2^128, unsigned __int128)

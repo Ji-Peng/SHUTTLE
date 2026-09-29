@@ -60,7 +60,7 @@
  * RejectSample is rejection-FREE: it runs EXACTLY tau transitions (irs.h),
  * each consuming a FIXED 18 bytes (10 exponent + 8 mantissa).  So the
  * IRS needs EXACTLY tau*18 bytes off the 0x09||seed_y stream
- * (756/1044/2052 for SHUTTLE-128/256/512), DETERMINISTIC and PUBLIC in
+ * (756/1044/2070 for SHUTTLE-128/256/512), DETERMINISTIC and PUBLIC in
  * length.
  *
  * Schedule: draw the WHOLE tau*18-byte buffer in ONE xof256_squeeze, then
@@ -251,9 +251,9 @@ static void irs_bulk_fill(xof_ctx *ctx, uint8_t *buf, size_t L)
  * 16599047320634951608 < 2^64)
  *
  * relative error of the rounded constant = 2^-65.1577; amplified additive
- * natural-log error |ln U|*relerr <= 50.53*2^-65.1577 ~ 2^-59.4986
- * (binding |ln U|); total delta_log ~ 2^-58.6572, accumulated delta_tau ~
- * 2^-46.8043
+ * natural-log error |ln U|*relerr <= 56.15*2^-65.1577 ~ 2^-59.3464
+ * (binding |ln U|); total delta_log ~ 2^-58.5703, accumulated delta_tau ~
+ * 2^-46.7048
  * (< 2^-45 budget).  See gen_irs_consts.py +
  * log/irs_consts_derivation.txt.
  */

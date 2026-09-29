@@ -361,7 +361,14 @@ static inline void sig_split_z(int32_t z, int b, int32_t *head,
 
 static inline int32_t sig_join_z(int32_t head, int32_t low, int b)
 {
-    return (head << b) | low; /* = 2^b*head + low, no mod */
+    /* = 2^b*head + low, no modular reduction.  Done in UNSIGNED arithmetic:
+     * `head` is a signed quotient whose low slot is negative (RANS_Q0_LO is
+     * -26/-17/-16, RANS_QS_LO is -15/-24), and C99 6.5.7 makes left-shifting
+     * a negative value undefined behaviour even though every compiler we use
+     * emits an arithmetic shift.  The bit pattern (hence the reconstructed
+     * coefficient) is identical to `(head << b) | low`; verified exhaustively
+     * over the reachable (head, low, b) ranges. */
+    return (int32_t)(((uint32_t)head << b) | (uint32_t)low);
 }
 
 /* pack_sig_zlow / unpack_sig_zlow: the raw low-bit body R, LSB-first per

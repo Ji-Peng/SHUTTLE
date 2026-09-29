@@ -1051,4 +1051,19 @@ int shuttle_rans_decode(int32_t *q0, int32_t *qs, int32_t *h, size_t nq0,
                         size_t nqs, size_t nh, const uint8_t *in,
                         size_t in_len);
 
+/* --- coding-support invariant: sigDecode must stay injective -----------
+ * A quotient slot is decoded as head*2^b + low with NO modular reduction,
+ * while verification re-derives the commitment and the norm mod q.  If two
+ * integers z and z +- q were both codable in the same slot, the same
+ * (seedC, hint) would admit two different accepted z_1 encodings and the
+ * SUF-CMA uniqueness argument would collapse.  A slot's support block
+ * spans N*2^b distinct values, so "N*2^b < q" is exactly the required
+ * invariant; pin it so regenerating the tables (or changing b0/bs) cannot
+ * break it silently.  Current margins: the binding case is the 512-bit z_s
+ * block, 48*2^7 = 6144 vs q = 59393 (>= 9.6x). */
+_Static_assert((int64_t)RANS_Q0_N *((int64_t)1 << RANS_B0) < (int64_t)Q,
+               "z_0 coding support must be narrower than q");
+_Static_assert((int64_t)RANS_QS_N *((int64_t)1 << RANS_BS) < (int64_t)Q,
+               "z_s coding support must be narrower than q");
+
 #endif /* SHUTTLE_RANS_H */
