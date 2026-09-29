@@ -72,7 +72,7 @@
  * ====================== ISOCHRONY / LEAKAGE
  * ==================
  *
- * Isochrony of IRS (Description.tex:1398-1445, 2174-2217; Security.tex
+ * Isochrony of IRS (Description.tex:1398-1445, 2172-2215; Security.tex
  * M_6). Unlike Fiat-Shamir-with-aborts, R is ABORT-FREE: it always outputs
  * one of y +- v, so RejectSample runs for a FIXED number of transitions
  * equal to the (public) challenge weight tau, independent of the secret
