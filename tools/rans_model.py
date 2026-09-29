@@ -17,11 +17,11 @@ on four counts:
     unlike the reference's signed ``[-M, M]`` hint alphabet, the SHUTTLE hint
     alphabet is the FULL ``[0, H_h)`` (the mod wrap makes negative crossings
     land near ``H_h``; coding the whole range keeps every honest ``h``
-    in-support and guarantees no CDF-hole -- Description.tex:2380-2401);
+    in-support and guarantees no CDF-hole -- Description.tex:2384-2405);
   * the overflow reserve targets ``2^-35`` per stream, not the reference's
     ``2^-100`` (SigSize.py).
 
-The three source laws (Description.tex:2363-2404), in the logical symbol order
+The three source laws (Description.tex:2367-2408), in the logical symbol order
 ``(Q0[.], Qs[.], h[.])`` (polynomial-major then coefficient-major):
 
   * Q0  -- high part of the constant block z0.  z0 = round(y/alpha_1),
@@ -161,7 +161,7 @@ def hint_pmf(r, ae, ah, Hh, hist=None):
     For each z2 (rounded Gaussian, divisor alpha_e), the displacement is
     d = 2*z2; the bucket-crossing count has magnitude a = floor(|d|/alpha_h)
     with prob 1-{|d|/alpha_h} and a+1 with prob {|d|/alpha_h}, signed by the
-    sign of z2, then reduced mod H_h into [0, H_h) (Description.tex:2380-2401).
+    sign of z2, then reduced mod H_h into [0, H_h) (Description.tex:2384-2405).
     The mod wrap sends negative crossings near H_h, so the support is bimodal
     (near 0 AND near H_h).  Coding the WHOLE [0, H_h) range (every symbol gets
     f_s >= 1) keeps any honest h in-support and gives the no-CDF-hole

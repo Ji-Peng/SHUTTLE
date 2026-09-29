@@ -350,8 +350,8 @@ int unpack_com(poly *comY_h, poly *comY_0,
  *   head = z >> b  (arithmetic shift = floor(z / 2^b) for negative z too);
  *   low  = z & (2^b - 1)  (always in [0, 2^b));
  * reconstruction z = (head << b) | low = 2^b*head + low, NO modular
- * reduction (Description.tex:2595 for the reconstruction line and the
- * canonical-decoding condition 2 at Description.tex:2614). */
+ * reduction (Description.tex:2599 for the reconstruction line and the
+ * canonical-decoding condition 2 at Description.tex:2618). */
 static inline void sig_split_z(int32_t z, int b, int32_t *head,
                                int32_t *low)
 {
